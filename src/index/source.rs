@@ -8,7 +8,7 @@ use super::{
 };
 use crate::{
     completion::{context::CurrentClassMember, type_resolver::java_source_type_to_descriptor},
-    index::intern_str,
+    index::{GlobalIndex, intern_str},
     language::{
         java::{
             JavaContextExtractor,
@@ -20,10 +20,153 @@ use crate::{
     },
 };
 
+/// Per-file type resolution context built from the file's own package + imports.
+/// Converts bare Java simple names → JVM internal names following JLS §7.5 priority.
+pub struct SourceTypeCtx {
+    package: Option<Arc<str>>,
+    /// Normalized import strings, e.g. `"java.util.List"` or `"java.util.*"`.
+    imports: Vec<Arc<str>>,
+    name_table: Option<Arc<crate::index::NameTable>>,
+}
+
+impl SourceTypeCtx {
+    pub fn new(
+        package: Option<Arc<str>>,
+        imports: Vec<Arc<str>>,
+        name_table: Option<Arc<crate::index::NameTable>>,
+    ) -> Self {
+        tracing::debug!(
+            package = ?package,
+            imports = imports.len(),
+            has_table = name_table.is_some(),
+            table_size = name_table.as_ref().map(|t| t.len()).unwrap_or(0),
+            "SourceTypeCtx created"
+        );
+
+        Self {
+            package,
+            imports,
+            name_table,
+        }
+    }
+
+    /// Convert a Java source-level type expression to a JVM descriptor fragment.
+    /// Handles arrays, generics (erasure), varargs, primitives.
+    pub fn to_descriptor(&self, ty: &str) -> String {
+        let ty = ty.trim();
+        // Vararg → treated as one extra array dimension
+        let (ty, extra_dim) = if ty.ends_with("...") {
+            (&ty[..ty.len() - 3], 1usize)
+        } else {
+            (ty, 0)
+        };
+        let mut dims = extra_dim;
+        let mut base = ty.trim();
+        while base.ends_with("[]") {
+            dims += 1;
+            base = base[..base.len() - 2].trim();
+        }
+        // Erase generics
+        let base = base.split('<').next().unwrap_or(base).trim();
+
+        let mut desc = String::new();
+        for _ in 0..dims {
+            desc.push('[');
+        }
+        match base {
+            "void" => desc.push('V'),
+            "boolean" => desc.push('Z'),
+            "byte" => desc.push('B'),
+            "char" => desc.push('C'),
+            "short" => desc.push('S'),
+            "int" => desc.push('I'),
+            "long" => desc.push('J'),
+            "float" => desc.push('F'),
+            "double" => desc.push('D'),
+            other => {
+                let resolved = self.resolve_simple(other);
+                desc.push('L');
+                desc.push_str(&resolved);
+                desc.push(';');
+            }
+        }
+        desc
+    }
+
+    /// Resolve a bare simple name to its JVM internal name.
+    /// Returns `simple` unchanged if unresolvable — never guesses.
+    pub fn resolve_simple(&self, simple: &str) -> String {
+        let result = self.resolve_simple_inner(simple);
+        if result.contains('/') && result != simple {
+            tracing::trace!(simple, resolved = %result, "type resolved");
+        } else if result == simple && !simple.contains('/') {
+            tracing::warn!(
+                simple,
+                has_table = self.name_table.is_some(),
+                "type UNRESOLVED — descriptor will be bare simple name"
+            );
+        }
+        result
+    }
+
+    fn resolve_simple_inner(&self, simple: &str) -> String {
+        if simple.contains('/') {
+            return simple.to_string(); // already internal
+        }
+        // Rule 1: Single-type-import — JLS §7.5.1
+        // The import text itself IS the full qualified name; no index lookup needed.
+        for imp in &self.imports {
+            let s = imp.as_ref();
+            if !s.ends_with(".*") && (s == simple || s.ends_with(&format!(".{}", simple))) {
+                return s.replace('.', "/");
+            }
+        }
+        // Rule 2: java.lang.* — JLS §7.5.3 (always implicit)
+        let java_lang = format!("java/lang/{}", simple);
+        if let Some(nt) = &self.name_table
+            && nt.exists(&java_lang)
+        {
+            return java_lang;
+        }
+
+        // Rule 3: Same package — JLS §6.4.1; verify via index, never assume
+        if let Some(pkg) = &self.package {
+            let candidate = format!("{}/{}", pkg, simple);
+            if self
+                .name_table
+                .as_ref()
+                .is_some_and(|nt| nt.exists(&candidate))
+            {
+                return candidate;
+            }
+        }
+        // Rule 4: Type-import-on-demand (wildcard) — JLS §7.5.2; requires index
+        if let Some(nt) = &self.name_table {
+            for imp in &self.imports {
+                let s = imp.as_ref();
+                if s.ends_with(".*") {
+                    let pkg = s.trim_end_matches(".*").replace('.', "/");
+                    let candidate = format!("{}/{}", pkg, simple);
+                    if nt.exists(&candidate) {
+                        return candidate;
+                    }
+                }
+            }
+        }
+        // Unresolvable
+        simple.to_string()
+    }
+}
+
 /// Parse the source file string and return all classes defined within it.
-pub fn parse_source_str(source: &str, lang: &str, origin: ClassOrigin) -> Vec<ClassMetadata> {
+pub fn parse_source_str(
+    source: &str,
+    lang: &str,
+    origin: ClassOrigin,
+    name_table: Option<Arc<crate::index::NameTable>>,
+) -> Vec<ClassMetadata> {
     match lang {
-        "java" => parse_java_source(source, origin),
+        "java" => parse_java_source(source, origin, name_table),
         "kotlin" => parse_kotlin_source(source, origin),
         other => {
             debug!("unsupported source lang: {}", other);
@@ -33,7 +176,11 @@ pub fn parse_source_str(source: &str, lang: &str, origin: ClassOrigin) -> Vec<Cl
 }
 
 /// Parse from file path (automatically determines language)
-pub fn parse_source_file(path: &std::path::Path, origin: ClassOrigin) -> Vec<ClassMetadata> {
+pub fn parse_source_file(
+    path: &std::path::Path,
+    origin: ClassOrigin,
+    name_table: Option<Arc<crate::index::NameTable>>,
+) -> Vec<ClassMetadata> {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) => {
@@ -46,10 +193,14 @@ pub fn parse_source_file(path: &std::path::Path, origin: ClassOrigin) -> Vec<Cla
         Some("kt") => "kotlin",
         _ => return vec![],
     };
-    parse_source_str(&content, lang, origin)
+    parse_source_str(&content, lang, origin, name_table)
 }
 
-pub fn parse_java_source(source: &str, origin: ClassOrigin) -> Vec<ClassMetadata> {
+pub fn parse_java_source(
+    source: &str,
+    origin: ClassOrigin,
+    name_table: Option<Arc<crate::index::NameTable>>,
+) -> Vec<ClassMetadata> {
     let ctx = JavaContextExtractor::for_indexing(source);
     let mut parser = make_java_parser();
     let tree = match parser.parse(source, None) {
@@ -59,8 +210,10 @@ pub fn parse_java_source(source: &str, origin: ClassOrigin) -> Vec<ClassMetadata
     let root = tree.root_node();
 
     let package = extract_package(&ctx, root);
+    let imports = crate::language::java::scope::extract_imports(&ctx, root);
+    let type_ctx = Arc::new(SourceTypeCtx::new(package.clone(), imports, name_table));
     let mut results = Vec::new();
-    collect_java_classes(&ctx, root, &package, None, &origin, &mut results);
+    collect_java_classes(&ctx, root, &package, None, &origin, &type_ctx, &mut results);
 
     results
 }
@@ -71,6 +224,7 @@ fn collect_java_classes(
     package: &Option<Arc<str>>,
     initial_outer: Option<Arc<str>>,
     origin: &ClassOrigin,
+    type_ctx: &Arc<SourceTypeCtx>,
     out: &mut Vec<ClassMetadata>,
 ) {
     let mut stack = vec![(root_node, initial_outer)];
@@ -85,7 +239,7 @@ fn collect_java_classes(
                 | "annotation_type_declaration"
                 | "record_declaration" => {
                     if let Some(meta) =
-                        parse_java_class(ctx, child, package, outer_class.clone(), origin)
+                        parse_java_class(ctx, child, package, outer_class.clone(), origin, type_ctx)
                     {
                         let inner_outer = Some(Arc::clone(&meta.name));
                         if let Some(body) = child.child_by_field_name("body") {
@@ -109,6 +263,7 @@ fn parse_java_class(
     package: &Option<Arc<str>>,
     outer_class: Option<Arc<str>>,
     origin: &ClassOrigin,
+    type_ctx: &SourceTypeCtx,
 ) -> Option<ClassMetadata> {
     let name_node = node.child_by_field_name("name")?;
     let class_name = ctx.node_text(name_node);
@@ -131,7 +286,7 @@ fn parse_java_class(
             superclass_node
                 .named_children(&mut superclass_node.walk())
                 .find(|c| c.kind() == "type_identifier")
-                .map(|c| intern_str(ctx.node_text(c)))
+                .map(|c| intern_str(&type_ctx.resolve_simple(ctx.node_text(c))))
         });
 
     // interfaces
@@ -143,7 +298,10 @@ fn parse_java_class(
                 let idx = q.capture_index_for_name("t").unwrap();
                 run_query(&q, iface_node, ctx.bytes(), None)
                     .into_iter()
-                    .filter_map(|caps| capture_text(&caps, idx, ctx.bytes()).map(intern_str))
+                    .filter_map(|caps| {
+                        capture_text(&caps, idx, ctx.bytes())
+                            .map(|s| intern_str(&type_ctx.resolve_simple(s)))
+                    })
                     .collect()
             } else {
                 vec![]
@@ -159,7 +317,7 @@ fn parse_java_class(
     let full_source = std::str::from_utf8(ctx.bytes()).unwrap_or("");
     let ctx = JavaContextExtractor::for_indexing(full_source);
     if let Some(b) = body {
-        for member in extract_class_members_from_body(&ctx, b) {
+        for member in extract_class_members_from_body(&ctx, b, type_ctx) {
             match member {
                 CurrentClassMember::Method(m) => methods.push((*m).clone()),
                 CurrentClassMember::Field(f) => fields.push((*f).clone()),
@@ -195,7 +353,11 @@ fn extract_java_access_flags(ctx: &JavaContextExtractor, node: Node) -> u16 {
     flags
 }
 
-pub fn build_java_descriptor(params_text: &str, ret_type: &str) -> String {
+pub fn build_java_descriptor(
+    params_text: &str,
+    ret_type: &str,
+    type_ctx: &SourceTypeCtx,
+) -> String {
     let inner = params_text
         .trim()
         .trim_start_matches('(')
@@ -205,28 +367,37 @@ pub fn build_java_descriptor(params_text: &str, ret_type: &str) -> String {
 
     if !inner.trim().is_empty() {
         for param in split_params(inner) {
-            let param = param.trim();
-            // Extract the type part (remove the variable name; the last token is the variable name)
-            let type_str = param
-                .split_whitespace()
-                .rev()
-                .nth(1)
-                .unwrap_or("")
-                // Remove array parentheses
-                .trim_end_matches(']')
-                .trim();
-            // Process arrays (may be "int[]" or "int []")
-            let array_depth = param.chars().filter(|&c| c == '[').count();
-            for _ in 0..array_depth {
-                desc.push('[');
-            }
-            desc.push_str(&java_source_type_to_descriptor(type_str));
+            desc.push_str(&type_ctx.to_descriptor(extract_param_type(param.trim())));
         }
     }
 
     desc.push(')');
-    desc.push_str(&java_source_type_to_descriptor(ret_type.trim()));
+    desc.push_str(&type_ctx.to_descriptor(ret_type.trim()));
     desc
+}
+
+/// Extract the type portion from a formal parameter string.
+/// Handles generics, arrays, varargs, annotations, and `final`.
+/// Walks backward to find the last whitespace outside angle brackets:
+/// everything to the left is the type, the rightmost token is the name.
+fn extract_param_type(param: &str) -> &str {
+    let mut depth = 0i32;
+    let mut last_sep = None;
+    for (i, b) in param.bytes().enumerate().rev() {
+        match b {
+            b'>' => depth += 1,
+            b'<' => depth -= 1,
+            b' ' | b'\t' if depth == 0 => {
+                last_sep = Some(i);
+                break;
+            }
+            _ => {}
+        }
+    }
+    match last_sep {
+        Some(pos) => param[..pos].trim(),
+        None => param,
+    }
 }
 
 /// Parameters are separated by commas, ignoring commas within generic angle brackets.
@@ -251,28 +422,61 @@ fn split_params(s: &str) -> Vec<&str> {
     result
 }
 
-pub fn parse_kotlin_source(source: &str, origin: ClassOrigin) -> Vec<ClassMetadata> {
-    let mut parser = make_kotlin_parser();
-    let tree = match parser.parse(source, None) {
-        Some(t) => t,
-        None => return vec![],
-    };
+/// AST-based 精准符号范围查找 (供 Goto Definition 使用)
+pub fn find_symbol_range(
+    content: &str,
+    target_internal: &str,
+    member_name: Option<&str>,
+    descriptor: Option<&str>,
+    index: &GlobalIndex,
+) -> Option<tower_lsp::lsp_types::Range> {
+    let ctx = JavaContextExtractor::for_indexing(content);
+    let mut parser = make_java_parser();
+    let tree = parser.parse(content, None)?;
     let root = tree.root_node();
-    let bytes = source.as_bytes();
+    let package = extract_package(&ctx, root);
+    let imports = crate::language::java::scope::extract_imports(&ctx, root);
+    let type_ctx = SourceTypeCtx::new(package, imports, Some(index.build_name_table()));
 
-    let package = extract_kotlin_package(root, bytes);
-    let mut results = Vec::new();
-    collect_kotlin_classes(root, bytes, &package, None, &origin, &mut results);
-    results
+    let target_simple = target_internal
+        .rsplit('/')
+        .next()
+        .unwrap_or(target_internal);
+    let class_node = find_class_node(root, target_simple, ctx.bytes())?;
+
+    let target_node = if let Some(m_name) = member_name {
+        let body = class_node.child_by_field_name("body")?;
+        find_member_node(&ctx, body, m_name, descriptor, &type_ctx)?
+    } else {
+        class_node
+    };
+
+    // 为了体验更好，跳转时光标应该落在 identifier 上，而不是包含注解的整个方法/类块上
+    let focus_node = target_node
+        .child_by_field_name("name")
+        .unwrap_or(target_node);
+    let start = focus_node.start_position();
+    let end = focus_node.end_position();
+
+    Some(tower_lsp::lsp_types::Range {
+        start: tower_lsp::lsp_types::Position {
+            line: start.row as u32,
+            character: start.column as u32,
+        },
+        end: tower_lsp::lsp_types::Position {
+            line: end.row as u32,
+            character: end.column as u32,
+        },
+    })
 }
 
-/// 实时按需提取 Javadoc（用于 Hover 等 LSP 功能，避免常驻内存）
+/// 按需提取 Javadoc (供 Hover 使用)
 pub fn get_javadoc_on_the_fly(
     origin: &ClassOrigin,
     target_internal: &str,
     member_name: Option<&str>,
+    descriptor: Option<&str>,
 ) -> Option<String> {
-    // 1. 根据 Origin 从磁盘或 Zip 读取源码
     let content = match origin {
         ClassOrigin::SourceFile(uri) => {
             let path = uri.strip_prefix("file://").unwrap_or(uri);
@@ -289,29 +493,31 @@ pub fn get_javadoc_on_the_fly(
             std::io::Read::read_to_string(&mut entry, &mut buf).ok()?;
             buf
         }
-        _ => return None, // Unknown or Jar (without zip source)
+        _ => return None,
     };
 
-    // 暂时只用 Java Parser 提取（JDK source 和多数情况都是 Java）
     let ctx = JavaContextExtractor::for_indexing(&content);
     let mut parser = make_java_parser();
     let tree = parser.parse(&content, None)?;
+    let root = tree.root_node();
+    let package = extract_package(&ctx, root);
+    let imports = crate::language::java::scope::extract_imports(&ctx, root);
+    let type_ctx = SourceTypeCtx::new(package, imports, None);
 
-    // 2. 找到目标 Class 的 Node
     let target_simple = target_internal
         .rsplit('/')
         .next()
         .unwrap_or(target_internal);
-    let class_node = find_class_node(tree.root_node(), target_simple, ctx.bytes())?;
+    let class_node = find_class_node(root, target_simple, ctx.bytes())?;
 
-    // 3. 提取 Class 或 Member 的 Javadoc
-    if let Some(m_name) = member_name {
+    let target_node = if let Some(m_name) = member_name {
         let body = class_node.child_by_field_name("body")?;
-        let member_node = find_member_node(body, m_name, ctx.bytes())?;
-        extract_javadoc(member_node, ctx.bytes()).map(|s| s.to_string())
+        find_member_node(&ctx, body, m_name, descriptor, &type_ctx)?
     } else {
-        extract_javadoc(class_node, ctx.bytes()).map(|s| s.to_string())
-    }
+        class_node
+    };
+
+    extract_javadoc(target_node, ctx.bytes()).map(|s| clean_javadoc(&s))
 }
 
 fn find_class_node<'a>(node: Node<'a>, target_name: &str, bytes: &[u8]) -> Option<Node<'a>> {
@@ -323,7 +529,6 @@ fn find_class_node<'a>(node: Node<'a>, target_name: &str, bytes: &[u8]) -> Optio
                 | "interface_declaration"
                 | "enum_declaration"
                 | "record_declaration"
-                | "annotation_type_declaration"
         ) && let Some(name_node) = n.child_by_field_name("name")
             && name_node.utf8_text(bytes).unwrap_or("") == target_name
         {
@@ -338,26 +543,108 @@ fn find_class_node<'a>(node: Node<'a>, target_name: &str, bytes: &[u8]) -> Optio
     None
 }
 
-fn find_member_node<'a>(body: Node<'a>, name: &str, bytes: &[u8]) -> Option<Node<'a>> {
+fn find_member_node<'a>(
+    ctx: &JavaContextExtractor,
+    body: Node<'a>,
+    name: &str,
+    descriptor: Option<&str>,
+    type_ctx: &SourceTypeCtx,
+) -> Option<Node<'a>> {
+    let _span =
+        tracing::debug_span!("find_member_node", name = %name, target_desc = ?descriptor).entered();
+
     let mut cursor = body.walk();
     for child in body.children(&mut cursor) {
-        if child.kind() == "method_declaration" {
-            if let Some(name_node) = child.child_by_field_name("name")
-                && name_node.utf8_text(bytes).unwrap_or("") == name
-            {
-                // TODO: 如果遇到同名重载方法，这里会返回第一个找到的。
-                // 对于 Hover 来说，第一段 Javadoc 通常也是足够的，后续如果需要可以引入 desc 做精准匹配
-                return Some(child);
+        let kind = child.kind();
+        if kind == "method_declaration" || kind == "constructor_declaration" {
+            let m_name = child
+                .child_by_field_name("name")
+                .map(|n| ctx.node_text(n))
+                .unwrap_or("");
+            if m_name == name || (child.kind() == "constructor_declaration" && name == "<init>") {
+                tracing::debug!(kind = %kind, method_name = %m_name, "potential name match found");
+
+                if let Some(target_desc) = descriptor {
+                    // 重载判定：利用 AST 即时构造当前遍历方法的 Descriptor 进行等值对比
+                    let mut ret_type = "void";
+                    let mut params_node = None;
+                    let mut wc = child.walk();
+                    for c in child.children(&mut wc) {
+                        match c.kind() {
+                            "void_type"
+                            | "integral_type"
+                            | "floating_point_type"
+                            | "boolean_type"
+                            | "type_identifier"
+                            | "array_type"
+                            | "generic_type" => {
+                                ret_type = ctx.node_text(c);
+                            }
+                            "formal_parameters" => params_node = Some(c),
+                            _ => {}
+                        }
+                    }
+                    let params_text = params_node.map(|n| ctx.node_text(n)).unwrap_or("()");
+                    let actual_desc = build_java_descriptor(params_text, ret_type, type_ctx);
+
+                    tracing::debug!(
+                        actual = %actual_desc,
+                        target = %target_desc,
+                        params = %params_text,
+                        ret = %ret_type,
+                        match_ok = (actual_desc == target_desc),
+                        "descriptor comparison"
+                    );
+
+                    if actual_desc == target_desc {
+                        tracing::debug!(">>> find_member_node: MATCH SUCCESS");
+                        return Some(child);
+                    }
+                } else {
+                    tracing::debug!(">>> find_member_node: MATCH SUCCESS (no descriptor required)");
+                    return Some(child);
+                }
             }
-        } else if child.kind() == "field_declaration" {
-            let text = child.utf8_text(bytes).unwrap_or("");
+        } else if child.kind() == "field_declaration" && descriptor.is_none() {
+            let text = child.utf8_text(ctx.bytes()).unwrap_or("");
             if text.contains(name) {
-                // 简单处理，因为 field 可能有多个 declarator (int x, y;)
                 return Some(child);
             }
         }
     }
     None
+}
+
+fn clean_javadoc(raw: &str) -> String {
+    let mut cleaned = String::new();
+    for line in raw.lines() {
+        let stripped = line
+            .trim()
+            .strip_prefix("/**")
+            .unwrap_or(line.trim())
+            .strip_prefix("*/")
+            .unwrap_or_else(|| line.trim().strip_prefix('*').unwrap_or(line.trim()));
+        if !stripped.trim().is_empty() || !cleaned.is_empty() {
+            cleaned.push_str(stripped.trim());
+            cleaned.push('\n');
+        }
+    }
+    cleaned.trim_end().to_string()
+}
+
+pub fn parse_kotlin_source(source: &str, origin: ClassOrigin) -> Vec<ClassMetadata> {
+    let mut parser = make_kotlin_parser();
+    let tree = match parser.parse(source, None) {
+        Some(t) => t,
+        None => return vec![],
+    };
+    let root = tree.root_node();
+    let bytes = source.as_bytes();
+
+    let package = extract_kotlin_package(root, bytes);
+    let mut results = Vec::new();
+    collect_kotlin_classes(root, bytes, &package, None, &origin, &mut results);
+    results
 }
 
 fn collect_kotlin_classes(
@@ -744,7 +1031,7 @@ public class Main {
     }
 }
 "#;
-        let classes = parse_java_source(src, ClassOrigin::Unknown);
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
         let nested = classes
             .iter()
             .find(|c| c.name.as_ref() == "NestedClass")
@@ -766,7 +1053,7 @@ public class Main {
     }
 }
 "#;
-        let classes = parse_java_source(src, ClassOrigin::Unknown);
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
         let nested = classes
             .iter()
             .find(|c| c.name.as_ref() == "NestedClass")
@@ -784,7 +1071,7 @@ public class Main {
     }
 }
 "#;
-        let classes = parse_java_source(src, ClassOrigin::Unknown);
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
         let nested = classes
             .iter()
             .find(|c| c.name.as_ref() == "NestedClass")
@@ -801,7 +1088,7 @@ public class Main {
     #[test]
     fn test_super_name_no_extends_keyword() {
         let src = "public class Child extends Parent implements Runnable, Serializable {}";
-        let classes = parse_java_source(src, ClassOrigin::Unknown);
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
         let child = classes.iter().find(|c| c.name.as_ref() == "Child").unwrap();
         assert_eq!(
             child.super_name.as_deref(),
@@ -821,7 +1108,7 @@ public class Main {
     #[test]
     fn test_super_name_strips_extends_keyword() {
         let src = "public class Child extends Parent implements Runnable {}";
-        let classes = parse_java_source(src, ClassOrigin::Unknown);
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
         let child = classes.iter().find(|c| c.name.as_ref() == "Child").unwrap();
         assert_eq!(
             child.super_name.as_deref(),
@@ -835,7 +1122,7 @@ public class Main {
     #[test]
     fn test_extract_java_class_generic_signature() {
         let src = "public class MyMap<K, V> { }";
-        let classes = parse_java_source(src, ClassOrigin::Unknown);
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
         let meta = classes.first().unwrap();
 
         assert_eq!(
@@ -847,7 +1134,7 @@ public class Main {
     #[test]
     fn test_extract_java_method_generic_signature() {
         let src = "public class Utils { public <T> T getFirst(List<T> list) { return null; } }";
-        let classes = parse_java_source(src, ClassOrigin::Unknown);
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
         let method = classes.first().unwrap().methods.first().unwrap();
 
         // 验证方法上的泛型 T 被正确抓取，并且携带了后续的 descriptor

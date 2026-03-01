@@ -32,6 +32,7 @@ impl CompletionProvider for MemberProvider {
                 receiver_type,
                 member_prefix,
                 receiver_expr,
+                ..
             } => (
                 receiver_type.as_ref(),
                 member_prefix.as_str(),
@@ -777,6 +778,7 @@ mod tests {
                 receiver_type: Some(Arc::from(receiver_internal)),
                 member_prefix: prefix.to_string(),
                 receiver_expr: "someObj".to_string(),
+                arguments: None,
             },
             prefix,
             vec![],
@@ -798,6 +800,7 @@ mod tests {
                 receiver_type: None,
                 member_prefix: prefix.to_string(),
                 receiver_expr: "this".to_string(),
+                arguments: None,
             },
             prefix,
             vec![],
@@ -984,6 +987,7 @@ mod tests {
                 receiver_type: None,
                 member_prefix: "".to_string(),
                 receiver_expr: "getMain2()".to_string(),
+                arguments: None,
             },
             "",
             vec![],

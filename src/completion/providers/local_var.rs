@@ -183,6 +183,7 @@ mod tests {
                 receiver_type: None,
                 member_prefix: "".to_string(),
                 receiver_expr: "cl".to_string(),
+                arguments: None,
             },
             "",
             vec![LocalVar {

@@ -261,6 +261,7 @@ impl<'s> KotlinContextExtractor<'s> {
                 receiver_type: None,
                 member_prefix: member_prefix.clone(),
                 receiver_expr,
+                arguments: None, // TODO: extract kotlin method argumants
             },
             member_prefix,
         )
@@ -293,6 +294,7 @@ impl<'s> KotlinContextExtractor<'s> {
                         receiver_type: None,
                         member_prefix: member_prefix.clone(),
                         receiver_expr: receiver.to_string(),
+                        arguments: None,
                     },
                     member_prefix,
                 )

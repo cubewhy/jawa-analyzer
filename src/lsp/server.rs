@@ -51,34 +51,6 @@ impl Backend {
         let workspace = Arc::clone(&self.workspace);
         let client = self.client.clone();
         tokio::spawn(async move {
-            // Codebase
-            with_progress(
-                &client,
-                "java-analyzer/index/codebase",
-                "Indexing workspace",
-                || async {
-                    let codebase = tokio::task::spawn_blocking({
-                        let root = root.clone();
-                        move || index_codebase(&root)
-                    })
-                    .await;
-                    match codebase {
-                        Ok(result) => {
-                            let msg = format!(
-                                "✓ Codebase: {} files, {} classes",
-                                result.file_count,
-                                result.classes.len()
-                            );
-                            workspace.index.write().await.add_classes(result.classes);
-                            client.log_message(MessageType::INFO, msg).await;
-                            client.semantic_tokens_refresh().await.ok();
-                        }
-                        Err(e) => error!(error = %e, "codebase indexing panicked"),
-                    }
-                },
-            )
-            .await;
-
             // JDK
             with_progress(
                 &client,
@@ -116,6 +88,36 @@ impl Backend {
                 || async {
                     for jar_dir in find_jar_dirs(&root) {
                         workspace.load_jars_from_dir(jar_dir).await;
+                    }
+                },
+            )
+            .await;
+
+            let name_table = workspace.index.read().await.build_name_table();
+
+            // Codebase
+            with_progress(
+                &client,
+                "java-analyzer/index/codebase",
+                "Indexing workspace",
+                || async {
+                    let codebase = tokio::task::spawn_blocking({
+                        let root = root.clone();
+                        move || index_codebase(&root, Some(name_table))
+                    })
+                    .await;
+                    match codebase {
+                        Ok(result) => {
+                            let msg = format!(
+                                "✓ Codebase: {} files, {} classes",
+                                result.file_count,
+                                result.classes.len()
+                            );
+                            workspace.index.write().await.add_classes(result.classes);
+                            client.log_message(MessageType::INFO, msg).await;
+                            client.semantic_tokens_refresh().await.ok();
+                        }
+                        Err(e) => error!(error = %e, "codebase indexing panicked"),
                     }
                 },
             )
@@ -222,7 +224,8 @@ impl LanguageServer for Backend {
 
         // 增量更新索引
         let uri_str = td.uri.to_string();
-        let classes = index_source_text(&uri_str, &td.text, &td.language_id);
+        let name_table = self.workspace.index.read().await.build_name_table();
+        let classes = index_source_text(&uri_str, &td.text, &td.language_id, Some(name_table));
         let origin = ClassOrigin::SourceFile(Arc::from(uri_str.as_str()));
         self.workspace
             .index
@@ -260,7 +263,8 @@ impl LanguageServer for Backend {
 
         // 增量更新索引（去抖动 TODO: 生产实现可加 500ms debounce）
         let uri_str = uri.to_string();
-        let classes = index_source_text(&uri_str, &content, &lang_id);
+        let name_table = self.workspace.index.read().await.build_name_table();
+        let classes = index_source_text(&uri_str, &content, &lang_id, Some(name_table));
         let origin = ClassOrigin::SourceFile(Arc::from(uri_str.as_str()));
         self.workspace
             .index
@@ -285,7 +289,8 @@ impl LanguageServer for Backend {
 
             if Self::is_supported(&lang_id) {
                 let uri_str = uri.to_string();
-                let classes = index_source_text(&uri_str, &text, &lang_id);
+                let name_table = self.workspace.index.read().await.build_name_table();
+                let classes = index_source_text(&uri_str, &text, &lang_id, Some(name_table));
                 let origin = ClassOrigin::SourceFile(Arc::from(uri_str.as_str()));
                 self.workspace
                     .index

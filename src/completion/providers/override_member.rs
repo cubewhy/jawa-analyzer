@@ -790,6 +790,7 @@ mod tests {
                 receiver_type: None,
                 member_prefix: "pub".to_string(),
                 receiver_expr: "obj".to_string(),
+                arguments: None,
             },
             "pub",
             vec![],

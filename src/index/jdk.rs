@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
-use crate::index::{ClassOrigin, cache, parse_class_data_bytes};
+use crate::index::{ClassOrigin, cache, merge_source_into_bytecode, parse_class_data_bytes};
 
 use super::{ClassMetadata, index_jar};
 
@@ -40,8 +40,9 @@ impl JdkIndexer {
             info!("detected JDK 9+ (jimage)");
             let mut bytecode_classes = Self::index_jimage(&modules);
             if src_zip.exists() {
-                let source_classes = Self::parse_jdk_source_zip(&src_zip);
-                Self::merge_source_into_bytecode(&mut bytecode_classes, source_classes);
+                let name_table = crate::index::NameTable::from_classes(&bytecode_classes);
+                let source_classes = Self::parse_jdk_source_zip(&src_zip, Some(name_table));
+                merge_source_into_bytecode(&mut bytecode_classes, source_classes);
             }
             return bytecode_classes;
         }
@@ -55,13 +56,15 @@ impl JdkIndexer {
                 vec![]
             });
             if src_zip.exists() {
-                let source_classes = Self::parse_jdk_source_zip(&src_zip);
-                Self::merge_source_into_bytecode(&mut bytecode_classes, source_classes);
+                let name_table = crate::index::NameTable::from_classes(&bytecode_classes);
+                let source_classes = Self::parse_jdk_source_zip(&src_zip, Some(name_table));
+                merge_source_into_bytecode(&mut bytecode_classes, source_classes);
             }
             return bytecode_classes;
         }
 
         // JDK 8 alternative layout (some distros)
+        // TODO: merge source
         let rt_jar_alt = java_home.join("lib").join("rt.jar");
         if rt_jar_alt.exists() {
             info!("detected JDK 8 alt layout (lib/rt.jar)");
@@ -149,7 +152,16 @@ impl JdkIndexer {
         results
     }
 
-    fn parse_jdk_source_zip(path: &Path) -> Vec<ClassMetadata> {
+    fn parse_jdk_source_zip(
+        path: &Path,
+        name_table: Option<Arc<crate::index::NameTable>>,
+    ) -> Vec<ClassMetadata> {
+        tracing::info!(
+            path = %path.display(),
+            table_size = name_table.as_ref().map(|t| t.len()).unwrap_or(0),
+            "parse_jdk_source_zip: starting with name_table"
+        );
+
         if let Some(cached) = crate::index::cache::load_cached(path) {
             tracing::info!(count = cached.len(), "JDK source index loaded from cache");
             return cached;
@@ -192,7 +204,7 @@ impl JdkIndexer {
                     zip_path: Arc::clone(&zip_path),
                     entry_name: Arc::from(name.as_str()),
                 };
-                crate::index::source::parse_source_str(&content, "java", origin)
+                crate::index::source::parse_source_str(&content, "java", origin, name_table.clone())
             })
             .collect();
 
@@ -203,32 +215,6 @@ impl JdkIndexer {
         });
 
         results
-    }
-
-    fn merge_source_into_bytecode(bytecode: &mut [ClassMetadata], source: Vec<ClassMetadata>) {
-        let mut source_map: rustc_hash::FxHashMap<Arc<str>, ClassMetadata> = source
-            .into_iter()
-            .map(|c| (c.internal_name.clone(), c))
-            .collect();
-
-        for b_class in bytecode.iter_mut() {
-            if let Some(s_class) = source_map.remove(&b_class.internal_name) {
-                b_class.origin = s_class.origin; // Upgrade origin to point to the Zip file
-
-                for b_method in b_class.methods.iter_mut() {
-                    let b_param_count =
-                        crate::completion::type_resolver::count_params(&b_method.descriptor);
-                    if let Some(s_method) = s_class
-                        .methods
-                        .iter()
-                        .find(|m| m.name == b_method.name && m.param_names.len() == b_param_count)
-                    {
-                        b_method.param_names = s_method.param_names.clone();
-                    }
-                }
-            }
-        }
-        info!("merged JDK source metadata into bytecode index");
     }
 }
 

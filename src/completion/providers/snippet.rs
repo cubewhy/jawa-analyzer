@@ -426,6 +426,7 @@ mod tests {
             receiver_type: None,
             member_prefix: "class".to_string(),
             receiver_expr: "obj".to_string(),
+            arguments: None,
         };
         assert!(SnippetProvider.provide(&c, &mut idx).is_empty());
     }

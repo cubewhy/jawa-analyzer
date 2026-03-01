@@ -188,6 +188,7 @@ impl CompletionEngine {
                     receiver_type,
                     receiver_expr,
                     member_prefix,
+                    ..
                 } = &ctx.location
                     && receiver_type.is_none()
                 {
@@ -610,6 +611,8 @@ mod tests {
                 receiver_type: None,
                 member_prefix: "f".to_string(),
                 receiver_expr: "cl".to_string(),
+
+                arguments: None,
             },
             "f",
             vec![LocalVar {
@@ -641,6 +644,7 @@ mod tests {
                 receiver_type: None,
                 member_prefix: "".to_string(),
                 receiver_expr: "cl".to_string(),
+                arguments: None,
             },
             "",
             vec![LocalVar {
@@ -668,6 +672,7 @@ mod tests {
                 receiver_type: None,
                 member_prefix: "f".to_string(),
                 receiver_expr: "cl".to_string(),
+                arguments: None,
             },
             "f",
             vec![LocalVar {
@@ -735,6 +740,7 @@ mod tests {
                 receiver_type: None,
                 member_prefix: "".to_string(),
                 receiver_expr: "System.out".to_string(),
+                arguments: None,
             },
             "",
             vec![],
@@ -846,6 +852,7 @@ mod tests {
                 receiver_type: None,
                 member_prefix: "".to_string(),
                 receiver_expr: "str".to_string(),
+                arguments: None,
             },
             "",
             vec![
@@ -918,6 +925,7 @@ mod tests {
                 receiver_type: None,
                 member_prefix: "".to_string(),
                 receiver_expr: "str".to_string(),
+                arguments: None,
             },
             "",
             vec![
@@ -978,6 +986,7 @@ mod tests {
                 receiver_type: None,
                 member_prefix: "".to_string(),
                 receiver_expr: "str".to_string(),
+                arguments: None,
             },
             "",
             vec![LocalVar {
@@ -1098,6 +1107,7 @@ mod tests {
                 receiver_type: None,
                 member_prefix: "".to_string(),
                 receiver_expr: "getMain2()".to_string(),
+                arguments: None,
             },
             "",
             vec![],
@@ -1132,6 +1142,7 @@ mod tests {
                 receiver_type: None,
                 member_prefix: "".to_string(),
                 receiver_expr: "a".to_string(),
+                arguments: None,
             },
             "",
             vec![
@@ -1169,6 +1180,7 @@ mod tests {
                 receiver_type: None,
                 member_prefix: "".to_string(),
                 receiver_expr: "x".to_string(),
+                arguments: None,
             },
             "",
             vec![
@@ -1227,6 +1239,7 @@ mod tests {
                 receiver_type: None,
                 member_prefix: "".to_string(),
                 receiver_expr: "b[0]".to_string(),
+                arguments: None,
             },
             "",
             vec![LocalVar {
@@ -1270,6 +1283,7 @@ mod tests {
                 receiver_type: None,
                 member_prefix: "ArrayL".to_string(),
                 receiver_expr: "java.util".to_string(),
+                arguments: None,
             },
             "ArrayL",
             vec![],
@@ -1296,6 +1310,7 @@ mod tests {
                 receiver_type: None,
                 member_prefix: "foo".to_string(),
                 receiver_expr: "unknownPkg".to_string(),
+                arguments: None,
             },
             "foo",
             vec![],
@@ -1335,6 +1350,7 @@ mod tests {
                 receiver_type: None,
                 member_prefix: "".to_string(),
                 receiver_expr: "strItem".to_string(), // 触发位置
+                arguments: None,
             },
             "",
             vec![
@@ -1433,6 +1449,7 @@ mod tests {
                 receiver_type: None,
                 member_prefix: "".to_string(),
                 receiver_expr: "item".to_string(),
+                arguments: None,
             },
             "",
             vec![LocalVar {
@@ -1480,6 +1497,7 @@ mod tests {
                 receiver_type: None,
                 member_prefix: "".to_string(),
                 receiver_expr: "m".to_string(), // m.a
+                arguments: None,
             },
             "",
             vec![LocalVar {
@@ -1529,6 +1547,7 @@ mod tests {
                 receiver_type: None,
                 member_prefix: "".to_string(),
                 receiver_expr: "res[0][0]".to_string(), // 多维数组访问
+                arguments: None,
             },
             "",
             vec![LocalVar {
@@ -1603,6 +1622,7 @@ mod tests {
                 receiver_type: None,
                 member_prefix: "".to_string(),
                 receiver_expr: "m.arr[0][0][0][0]".to_string(), // 4层访问
+                arguments: None,
             },
             "",
             vec![LocalVar {

@@ -262,7 +262,7 @@ mod tests {
     use super::*;
     use tree_sitter::Parser;
 
-    fn setup_ctx<'a>(source: &'a str, offset: usize) -> (JavaContextExtractor, tree_sitter::Tree) {
+    fn setup_ctx(source: &str, offset: usize) -> (JavaContextExtractor, tree_sitter::Tree) {
         let mut parser = Parser::new();
         parser
             .set_language(&tree_sitter_java::LANGUAGE.into())

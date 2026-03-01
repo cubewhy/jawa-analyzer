@@ -138,7 +138,7 @@ impl<'idx> TypeResolver<'idx> {
                 continue;
             }
 
-            let method = Self::select_overload(&candidates, arg_count, arg_types);
+            let method = self.select_overload(&candidates, arg_count, arg_types);
             let sig = method
                 .generic_signature
                 .as_deref()
@@ -167,33 +167,73 @@ impl<'idx> TypeResolver<'idx> {
         None
     }
 
-    fn select_overload<'a>(
+    pub fn select_overload<'a>(
+        &self,
         candidates: &[&'a MethodSummary],
         arg_count: i32,
         arg_types: &[TypeName],
     ) -> &'a MethodSummary {
-        match candidates.len() {
-            1 => candidates[0],
+        if candidates.is_empty() {
+            return candidates[0];
+        }
+
+        if candidates.len() == 1 {
+            return candidates[0];
+        }
+
+        // 1. 严格按参数数量过滤
+        let by_count: Vec<&MethodSummary> = candidates
+            .iter()
+            .copied()
+            .filter(|m| count_params(&m.descriptor) == arg_count as usize)
+            .collect();
+
+        if by_count.is_empty() {
+            tracing::warn!(
+                arg_count,
+                "no method matches parameter count, falling back to candidates[0]"
+            );
+            return candidates[0];
+        }
+
+        if by_count.len() == 1 {
+            return by_count[0];
+        }
+
+        // 2. 寻找得分最高者
+        let mut best_score = -1;
+        // 初始值设为 None，而不是 by_count[0]，防止 -1 分时误选
+        let mut best_match: Option<&MethodSummary> = None;
+
+        for m in &by_count {
+            let score = self.score_params(&m.descriptor, arg_types);
+
+            // 【添加关键日志】
+            tracing::debug!(
+                method = %m.name,
+                desc = %m.descriptor,
+                score = score,
+                "evaluating candidate"
+            );
+
+            if score > best_score {
+                best_score = score;
+                best_match = Some(*m);
+            }
+        }
+
+        match best_match {
+            Some(m) if best_score >= 0 => {
+                tracing::debug!(selected = %m.descriptor, score = best_score, "selected best match");
+                m
+            }
             _ => {
-                if arg_count >= 0 {
-                    let by_count: Vec<&MethodSummary> = candidates
-                        .iter()
-                        .copied()
-                        .filter(|m| count_params(&m.descriptor) == arg_count as usize)
-                        .collect();
-                    match by_count.len() {
-                        0 => candidates[0],
-                        1 => by_count[0],
-                        _ if !arg_types.is_empty() => by_count
-                            .iter()
-                            .copied()
-                            .find(|m| params_match(&m.descriptor, arg_types))
-                            .unwrap_or(by_count[0]),
-                        _ => by_count[0],
-                    }
-                } else {
-                    candidates[0]
-                }
+                // 如果所有 1 参数方法都匹配失败了，至少返回 by_count 的第一个
+                // 这样能保证它跳到一个 1 参数的方法，而不是 0 参数的
+                tracing::warn!(
+                    "all overloads failed type scoring, falling back to first count-matched method"
+                );
+                by_count[0]
             }
         }
     }
@@ -278,33 +318,128 @@ impl<'idx> TypeResolver<'idx> {
         }
         current_type
     }
-}
 
-/// Check if the descriptor's parameter types match the given arg_types.
-/// arg_types are internal names (e.g. "java/lang/String", "long", "int").
-/// Matching is best-effort: primitive types and object types are compared.
-fn params_match(descriptor: &str, arg_types: &[TypeName]) -> bool {
-    let inner = match descriptor.find('(').zip(descriptor.find(')')) {
-        Some((l, r)) => &descriptor[l + 1..r],
-        None => return false,
-    };
+    pub fn score_params(&self, descriptor: &str, arg_types: &[TypeName]) -> i32 {
+        let inner = match descriptor.find('(').zip(descriptor.find(')')) {
+            Some((l, r)) => &descriptor[l + 1..r],
+            None => {
+                tracing::warn!(descriptor = %descriptor, "invalid descriptor format");
+                return -1;
+            }
+        };
 
-    let mut param_descs = Vec::new();
-    let mut s = inner;
-    while !s.is_empty() {
-        let (ty, rest) = consume_one_descriptor_type(s);
-        param_descs.push(ty);
-        s = rest;
+        let mut param_descs = Vec::new();
+        let mut s = inner;
+        while !s.is_empty() {
+            let (ty_str, rest) = consume_one_descriptor_type(s);
+            param_descs.push(ty_str);
+            s = rest;
+        }
+
+        if param_descs.len() != arg_types.len() {
+            tracing::debug!(
+                desc_len = param_descs.len(),
+                args_len = arg_types.len(),
+                "score: -1 (length mismatch)"
+            );
+            return -1;
+        }
+
+        let mut total_score = 0;
+        for (i, (desc, arg_ty)) in param_descs.iter().zip(arg_types.iter()).enumerate() {
+            let score = self.score_single_descriptor(desc, arg_ty.as_str());
+            if score < 0 {
+                tracing::debug!(param_index = i, "score: -1 (param mismatch)");
+                return -1;
+            }
+            total_score += score;
+        }
+
+        tracing::debug!(total_score = total_score, "score_params finished");
+        total_score
     }
 
-    if param_descs.len() != arg_types.len() {
-        return false;
-    }
+    pub fn score_single_descriptor(&self, desc: &str, ty: &str) -> i32 {
+        let span = tracing::debug_span!("score_single", desc = desc, ty = ty);
+        let _enter = span.enter();
 
-    param_descs
-        .iter()
-        .zip(arg_types.iter())
-        .all(|(desc, arg_ty)| singleton_descriptor_matches_type(desc, arg_ty.as_str()))
+        // 1. 数组处理
+        if desc.starts_with('[') {
+            if ty.ends_with("[]") {
+                let desc_elem = &desc[1..];
+                let ty_elem = ty.strip_suffix("[]").unwrap().trim();
+                tracing::debug!("recursive array match: {} -> {}", desc_elem, ty_elem);
+                return self.score_single_descriptor(desc_elem, ty_elem);
+            } else {
+                tracing::debug!("score: -1 (array vs non-array)");
+                return -1;
+            }
+        }
+
+        // 2. 标准化描述符 (Ljava/lang/Object; -> java/lang/Object)
+        let resolved_desc = match desc {
+            "B" => "byte",
+            "C" => "char",
+            "D" => "double",
+            "F" => "float",
+            "I" => "int",
+            "J" => "long",
+            "S" => "short",
+            "Z" => "boolean",
+            "V" => "void",
+            _ if desc.starts_with('L') && desc.ends_with(';') => &desc[1..desc.len() - 1],
+            _ => desc,
+        };
+
+        // 标准化输入类型 (java.lang.Main -> java/lang/Main)
+        let normalized_ty = ty.replace('.', "/");
+        tracing::debug!(resolved_desc = %resolved_desc, normalized_ty = %normalized_ty, "normalized types");
+
+        // 3. 基本类型判定
+        let is_primitive = |t: &str| {
+            matches!(
+                t,
+                "byte"
+                    | "char"
+                    | "double"
+                    | "float"
+                    | "int"
+                    | "long"
+                    | "short"
+                    | "boolean"
+                    | "void"
+            )
+        };
+
+        // 4. 精确匹配
+        if resolved_desc == normalized_ty {
+            tracing::debug!("score: 10 (exact match)");
+            return 10;
+        }
+
+        // 5. 【核心修复】Object 通配引用类型
+        // 在 Java 中，如果参数定义为 Object，任何非基本类型（Main, String 等）都可以传进去
+        if resolved_desc == "java/lang/Object" {
+            if !is_primitive(&normalized_ty) {
+                tracing::debug!("score: 5 (reference type matched to Object)");
+                return 5;
+            } else {
+                tracing::debug!("score: -1 (primitive type cannot match Object without boxing)");
+                return -1;
+            }
+        }
+
+        // 6. 简单名匹配 (例如 com/foo/Main 匹配 Main)
+        let s1 = resolved_desc.rsplit('/').next().unwrap_or(resolved_desc);
+        let s2 = normalized_ty.rsplit('/').next().unwrap_or(&normalized_ty);
+        if s1 == s2 {
+            tracing::debug!(s1 = %s1, s2 = %s2, "score: 10 (simple name match)");
+            return 10;
+        }
+
+        tracing::debug!("score: -1 (no match found)");
+        -1
+    }
 }
 
 pub fn descriptor_to_source_type(desc: &str, provider: &impl SymbolProvider) -> Option<String> {
@@ -448,26 +583,6 @@ pub(crate) fn singleton_descriptor_to_type(desc: &str) -> Option<&str> {
         _ if desc.starts_with('L') && desc.ends_with(';') => Some(&desc[1..desc.len() - 1]),
         _ => None,
     }
-}
-
-/// Compare a single parameter descriptor against an inferred type internal name.
-fn singleton_descriptor_matches_type(desc: &str, ty: &str) -> bool {
-    let Some(resolved_ty) = singleton_descriptor_to_type(desc) else {
-        return false;
-    };
-
-    if resolved_ty == ty {
-        return true;
-    }
-
-    if desc.starts_with('L') {
-        let s1 = resolved_ty.rsplit('/').next();
-        let s2 = ty.rsplit('/').next();
-
-        return s1.is_some() && s1 == s2;
-    }
-
-    false
 }
 
 pub(crate) fn consume_one_descriptor_type(s: &str) -> (&str, &str) {
@@ -1031,30 +1146,6 @@ mod tests {
     }
 
     #[test]
-    fn test_params_match_primitive_long() {
-        assert!(singleton_descriptor_matches_type("J", "long"));
-        assert!(!singleton_descriptor_matches_type("J", "int"));
-        assert!(singleton_descriptor_matches_type("I", "int"));
-        assert!(!singleton_descriptor_matches_type("I", "long"));
-    }
-
-    #[test]
-    fn test_params_match_object_type() {
-        assert!(singleton_descriptor_matches_type(
-            "Ljava/lang/String;",
-            "java/lang/String"
-        ));
-        assert!(singleton_descriptor_matches_type(
-            "Ljava/lang/String;",
-            "String"
-        )); // simple name match
-        assert!(!singleton_descriptor_matches_type(
-            "Ljava/util/List;",
-            "java/lang/String"
-        ));
-    }
-
-    #[test]
     fn test_resolve_chain_bare_method_call() {
         use crate::index::{ClassMetadata, ClassOrigin, MethodSummary};
         use rust_asm::constants::ACC_PUBLIC;
@@ -1220,5 +1311,50 @@ mod tests {
 
         // char[][] 提取出一层下标后应为 char[]，底层 JVM internal_name 表示为 `[C`
         assert_eq!(result.as_deref(), Some("char[]"));
+    }
+
+    #[test]
+    fn test_scoring_system_primitive_match() {
+        let idx = GlobalIndex::new();
+        let resolver = TypeResolver::new(&idx);
+        assert_eq!(resolver.score_single_descriptor("I", "int"), 10);
+        assert_eq!(resolver.score_single_descriptor("I", "long"), -1);
+    }
+
+    #[test]
+    fn test_overload_resolution_prioritizes_specific_over_object() {
+        use crate::index::MethodSummary;
+        use rust_asm::constants::ACC_PUBLIC;
+
+        let method_object = MethodSummary {
+            name: Arc::from("println"),
+            descriptor: Arc::from("(Ljava/lang/Object;)V"),
+            param_names: vec![],
+            access_flags: ACC_PUBLIC,
+            is_synthetic: false,
+            generic_signature: None,
+            return_type: None,
+        };
+
+        let method_string = MethodSummary {
+            name: Arc::from("println"),
+            descriptor: Arc::from("(Ljava/lang/String;)V"),
+            param_names: vec![],
+            access_flags: ACC_PUBLIC,
+            is_synthetic: false,
+            generic_signature: None,
+            return_type: None,
+        };
+
+        let idx = GlobalIndex::new();
+        let resolver = TypeResolver::new(&idx);
+        let candidates = vec![&method_object, &method_string];
+
+        // 当传入 java/lang/String 时，println(String) 应该得到 10 分，println(Object) 得到 5 分。
+        // 因此，应该胜出的是 String 重载。
+        let args = vec![TypeName::new("java/lang/String")];
+        let best = resolver.select_overload(&candidates, 1, &args);
+
+        assert_eq!(best.descriptor.as_ref(), "(Ljava/lang/String;)V");
     }
 }

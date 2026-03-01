@@ -33,6 +33,7 @@ impl CompletionProvider for StaticMemberProvider {
                 receiver_expr,
                 member_prefix,
                 receiver_type: None,
+                arguments: None,
             } if is_likely_static_receiver(receiver_expr, ctx) => {
                 (receiver_expr.as_str(), member_prefix.as_str())
             }
@@ -746,6 +747,7 @@ mod tests {
                 receiver_type: None,
                 member_prefix: "FIELD".to_string(),
                 receiver_expr: "myClass".to_string(),
+                arguments: None,
             },
             "FIELD",
             vec![], // no locals named myClass

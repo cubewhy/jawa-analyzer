@@ -144,19 +144,24 @@ impl JavaContextExtractor {
         let enclosing_internal_name =
             utils::build_internal_name(&enclosing_package, &enclosing_class);
         let existing_imports = scope::extract_imports(&self, root);
+        let type_ctx = crate::index::source::SourceTypeCtx::new(
+            enclosing_package.clone(),
+            existing_imports.clone(),
+            None, // completion path 没有 index 快照，None 触发 hardcode java.lang fallback
+        );
         let existing_static_imports = scope::extract_static_imports(&self, root);
         let current_class_members = cursor_node
             .and_then(|n| utils::find_ancestor(n, "class_declaration"))
             .and_then(|cls| cls.child_by_field_name("body"))
-            .map(|body| members::extract_class_members_from_body(&self, body))
+            .map(|body| members::extract_class_members_from_body(&self, body, &type_ctx))
             .or_else(|| {
                 // Fallback: find top-level ERROR node anywhere under program
                 let error_node = utils::find_top_error_node(root)?;
                 let mut members = Vec::new();
-                members::collect_members_from_node(&self, error_node, &mut members);
+                members::collect_members_from_node(&self, error_node, &type_ctx, &mut members);
                 let snapshot = members.clone();
                 members.extend(members::parse_partial_methods_from_error(
-                    &self, error_node, &snapshot,
+                    &self, &type_ctx, error_node, &snapshot,
                 ));
                 Some(members)
             })
@@ -165,7 +170,7 @@ impl JavaContextExtractor {
             .and_then(|n| utils::find_ancestor(n, "method_declaration"))
             .or_else(|| find_method_by_offset(root, self.offset))
             .or_else(|| utils::find_enclosing_method_in_error(root, self.offset))
-            .and_then(|m| members::parse_method_node(&self, m));
+            .and_then(|m| members::parse_method_node(&self, &type_ctx, m));
         let char_after_cursor = self.source[self.offset..]
             .chars()
             .find(|c| !(c.is_alphanumeric() || *c == '_'));
@@ -517,7 +522,7 @@ mod tests {
     }
 
     #[test]
-    fn test_direct_call_with_paren_is_expression() {
+    fn test_direct_call_with_paren_is_member_access() {
         // fun|() — No receiver, should be parsed as an Expression, prefix = "fun"
         let src = indoc::indoc! {r#"
         class A {
@@ -533,8 +538,8 @@ mod tests {
         let col = raw.find("fun").unwrap() as u32 + 3;
         let ctx = at(src, line, col);
         assert!(
-            matches!(&ctx.location, CursorLocation::Expression { prefix } if prefix == "fun"),
-            "direct call fun() should give Expression{{fun}}, got {:?}",
+            matches!(&ctx.location, CursorLocation::MemberAccess { member_prefix, .. } if member_prefix == "fun"),
+            "direct call fun() should give MemberAccess{{fun}}, got {:?}",
             ctx.location
         );
     }
@@ -1363,9 +1368,12 @@ mod tests {
             .collect();
         insta::assert_snapshot!("error_children", children_info.join("\n"));
 
+        let type_ctx = crate::index::source::SourceTypeCtx::new(None, vec![], None);
+
         // Snapshot what parse_partial_methods_from_error returns
         let snapshot: Vec<CurrentClassMember> = vec![];
-        let partial = members::parse_partial_methods_from_error(&extractor, error_node, &snapshot);
+        let partial =
+            members::parse_partial_methods_from_error(&extractor, &type_ctx, error_node, &snapshot);
         let mut result: Vec<String> = partial
             .iter()
             .map(|m| {

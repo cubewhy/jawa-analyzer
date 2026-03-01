@@ -127,11 +127,40 @@ fn handle_member_access(ctx: &JavaContextExtractor, node: Node) -> (CursorLocati
             let text = name_node
                 .map(|n| cursor_truncated_text(ctx, *n))
                 .unwrap_or_default();
+            let clean = strip_sentinel(&text);
+
+            let arguments = if node.kind() == "method_invocation" {
+                node.child_by_field_name("arguments")
+                    .map(|n| ctx.node_text(n).to_string())
+            } else if let Some(parent) = node.parent() {
+                if parent.kind() == "method_invocation" {
+                    parent
+                        .child_by_field_name("arguments")
+                        .map(|n| ctx.node_text(n).to_string())
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            if arguments.is_some() {
+                return (
+                    CursorLocation::MemberAccess {
+                        receiver_type: None,
+                        member_prefix: clean.clone(),
+                        receiver_expr: String::new(), // 空字符串代表隐式 this
+                        arguments,
+                    },
+                    clean,
+                );
+            }
+
             return (
                 CursorLocation::Expression {
-                    prefix: text.clone(),
+                    prefix: clean.clone(),
                 },
-                text,
+                clean,
             );
         }
     };
@@ -188,11 +217,28 @@ fn handle_member_access(ctx: &JavaContextExtractor, node: Node) -> (CursorLocati
         .map(|n| ctx.node_text(n).to_string())
         .unwrap_or_default();
 
+    // Check if this member access is part of a method invocation to extract arguments
+    let arguments = if node.kind() == "method_invocation" {
+        node.child_by_field_name("arguments")
+            .map(|n| ctx.node_text(n).to_string())
+    } else if let Some(parent) = node.parent() {
+        if parent.kind() == "method_invocation" {
+            parent
+                .child_by_field_name("arguments")
+                .map(|n| ctx.node_text(n).to_string())
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
     (
         CursorLocation::MemberAccess {
             receiver_type: None,
             member_prefix: member_prefix.clone(),
             receiver_expr,
+            arguments,
         },
         member_prefix,
     )
@@ -353,6 +399,7 @@ fn handle_argument_list(ctx: &JavaContextExtractor, node: Node) -> (CursorLocati
                 receiver_type: None,
                 member_prefix: member_prefix.clone(),
                 receiver_expr,
+                arguments: None,
             },
             member_prefix,
         );

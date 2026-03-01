@@ -66,6 +66,8 @@ pub enum CursorLocation {
         member_prefix: String,
         /// Receiver expression plaintext, used by TypeResolver
         receiver_expr: String,
+        /// Raw arguments text if this is a method invocation, e.g., "(1)"
+        arguments: Option<String>,
     },
     /// `ClassName.|` (static access)
     StaticAccess {
@@ -99,6 +101,7 @@ pub struct CompletionContext {
     pub enclosing_class: Option<Arc<str>>,
     pub enclosing_internal_name: Option<Arc<str>>,
     pub enclosing_package: Option<Arc<str>>,
+    /// Existing imports, contains wildcard imports
     pub existing_imports: Vec<Arc<str>>,
     pub static_imports: Vec<Arc<str>>,
     pub query: String,

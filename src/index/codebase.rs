@@ -19,7 +19,10 @@ pub struct CodebaseIndex {
 /// - Recursively scan all `.java` / `.kt` files under `root`
 /// - Parallel parsing
 /// - Skip directories such as `target/`, `build/`, `.git/`, etc.
-pub fn index_codebase<P: AsRef<Path>>(root: P) -> CodebaseIndex {
+pub fn index_codebase<P: AsRef<Path>>(
+    root: P,
+    name_table: Option<Arc<crate::index::NameTable>>,
+) -> CodebaseIndex {
     // TODO: respect .gitignore
     let root = root.as_ref();
     info!(root = %root.display(), "scanning codebase");
@@ -46,7 +49,7 @@ pub fn index_codebase<P: AsRef<Path>>(root: P) -> CodebaseIndex {
             let uri = path_to_uri_str(&path);
             let origin = ClassOrigin::SourceFile(Arc::from(uri.as_str()));
             debug!(path = %path.display(), "parsing source file");
-            parse_source_file(&path, origin)
+            parse_source_file(&path, origin, name_table.clone())
         })
         .collect();
 
@@ -58,18 +61,15 @@ pub fn index_codebase<P: AsRef<Path>>(root: P) -> CodebaseIndex {
     }
 }
 
-/// Scan a single file and return its class (for incremental updates when the document is saved)
-pub fn index_source_file<P: AsRef<Path>>(path: P) -> Vec<ClassMetadata> {
-    let path = path.as_ref();
-    let uri = path_to_uri_str(path);
-    let origin = ClassOrigin::SourceFile(Arc::from(uri.as_str()));
-    parse_source_file(path, origin)
-}
-
 /// Parse source text from memory (for LSP textDocument/didChange)
-pub fn index_source_text(uri: &str, content: &str, lang: &str) -> Vec<ClassMetadata> {
+pub fn index_source_text(
+    uri: &str,
+    content: &str,
+    lang: &str,
+    name_table: Option<Arc<crate::index::NameTable>>,
+) -> Vec<ClassMetadata> {
     let origin = ClassOrigin::SourceFile(Arc::from(uri));
-    super::source::parse_source_str(content, lang, origin)
+    super::source::parse_source_str(content, lang, origin, name_table)
 }
 
 fn is_excluded(path: &Path) -> bool {
@@ -147,7 +147,7 @@ class Bar(val value: String) {
     #[test]
     fn test_index_codebase_finds_files() {
         let dir = make_test_dir();
-        let result = index_codebase(dir.path());
+        let result = index_codebase(dir.path(), None);
 
         assert_eq!(
             result.file_count, 2,
@@ -168,14 +168,14 @@ class Bar(val value: String) {
     #[test]
     fn test_index_codebase_skips_excluded() {
         let dir = make_test_dir();
-        let result = index_codebase(dir.path());
+        let result = index_codebase(dir.path(), None);
         assert!(result.classes.iter().all(|c| c.name.as_ref() != "Ignored"));
     }
 
     #[test]
     fn test_index_codebase_package() {
         let dir = make_test_dir();
-        let result = index_codebase(dir.path());
+        let result = index_codebase(dir.path(), None);
         let foo = result
             .classes
             .iter()
@@ -188,7 +188,7 @@ class Bar(val value: String) {
     #[test]
     fn test_index_codebase_inner_class() {
         let dir = make_test_dir();
-        let result = index_codebase(dir.path());
+        let result = index_codebase(dir.path(), None);
         let inner = result.classes.iter().find(|c| c.name.as_ref() == "Inner");
         assert!(inner.is_some(), "Inner class should be indexed");
         assert_eq!(inner.unwrap().inner_class_of.as_deref(), Some("Foo"));
@@ -204,7 +204,7 @@ public class MyService {
     public int getCount() { return count; }
 }
 "#;
-        let classes = index_source_text("file:///MyService.java", src, "java");
+        let classes = index_source_text("file:///MyService.java", src, "java", None);
         assert_eq!(classes.len(), 1);
         let cls = &classes[0];
         assert_eq!(cls.name.as_ref(), "MyService");
@@ -223,7 +223,7 @@ class UserRepo(val db: String) {
     fun save(entity: String) {}
 }
 "#;
-        let classes = index_source_text("file:///UserRepo.kt", src, "kotlin");
+        let classes = index_source_text("file:///UserRepo.kt", src, "kotlin", None);
         assert!(
             classes.iter().any(|c| c.name.as_ref() == "UserRepo"),
             "classes: {:?}",
@@ -241,7 +241,7 @@ class UserRepo(val db: String) {
     fn test_index_source_text_origin() {
         let src = "package x;\npublic class A {}";
         let uri = "file:///workspace/A.java";
-        let classes = index_source_text(uri, src, "java");
+        let classes = index_source_text(uri, src, "java", None);
         assert!(
             classes
                 .iter()

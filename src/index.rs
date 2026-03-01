@@ -124,32 +124,16 @@ fn index_jar_uncached(path: &Path) -> anyhow::Result<Vec<ClassMetadata>> {
         }
     }
 
-    // 先解析源文件（优先级高）
-    let source_internal_names: std::collections::HashSet<Arc<str>> = {
-        let parsed = parse_source_files_parallel(&source_files, &jar_str);
-        parsed
-            .iter()
-            .map(|c| Arc::clone(&c.internal_name))
-            .collect()
-    };
-    let mut source_results = parse_source_files_parallel(&source_files, &jar_str);
-
     // 解析字节码（跳过已有源文件的类）
-    let bytecode_results: Vec<ClassMetadata> = class_files
+    let mut bytecode_results: Vec<ClassMetadata> = class_files
         .into_par_iter()
-        .filter_map(|(name, bytes)| {
-            let meta = parse_class_data_bytes(&name, &bytes, Arc::clone(&jar_str))?;
-            // 如果源文件已经解析了这个类，跳过字节码版本
-            if source_internal_names.contains(&meta.internal_name) {
-                None
-            } else {
-                Some(meta)
-            }
-        })
+        .filter_map(|(name, bytes)| parse_class_data_bytes(&name, &bytes, Arc::clone(&jar_str)))
         .collect();
 
-    source_results.extend(bytecode_results);
-    Ok(source_results)
+    let source_results = parse_source_files_parallel(&source_files, &jar_str);
+    merge_source_into_bytecode(&mut bytecode_results, source_results);
+
+    Ok(bytecode_results)
 }
 
 /// Parse class bytes with an explicit origin.
@@ -315,6 +299,85 @@ fn parse_class_data_with_origin(bytes: &[u8], origin: ClassOrigin) -> Option<Cla
     })
 }
 
+/// 将源码中的参数名称合并到字节码索引中，并使用简单的类型名称比对解决重载冲突
+pub fn merge_source_into_bytecode(bytecode: &mut [ClassMetadata], source: Vec<ClassMetadata>) {
+    let mut source_map: rustc_hash::FxHashMap<Arc<str>, ClassMetadata> = source
+        .into_iter()
+        .map(|c| (c.internal_name.clone(), c))
+        .collect();
+
+    for b_class in bytecode.iter_mut() {
+        // 如果在源码中找到了对应的类
+        if let Some(s_class) = source_map.remove(&b_class.internal_name) {
+            b_class.origin = s_class.origin; // 提升来源标识为源码(方便跳转)
+
+            for b_method in b_class.methods.iter_mut() {
+                let b_param_count =
+                    crate::completion::type_resolver::count_params(&b_method.descriptor);
+
+                // 找同名、同参数数量的候选
+                let candidates: Vec<&MethodSummary> = s_class
+                    .methods
+                    .iter()
+                    .filter(|m| {
+                        m.name == b_method.name
+                            && crate::completion::type_resolver::count_params(&m.descriptor)
+                                == b_param_count
+                    })
+                    .collect();
+
+                if candidates.len() == 1 {
+                    b_method.param_names = candidates[0].param_names.clone();
+                } else if candidates.len() > 1 {
+                    // 发生重载冲突时，使用参数的简单名称进行模糊匹配对齐 (例如 String 匹配 java/lang/String)
+                    let b_simple = extract_simple_types(&b_method.descriptor);
+                    if let Some(best) = candidates
+                        .iter()
+                        .find(|m| extract_simple_types(&m.descriptor) == b_simple)
+                    {
+                        b_method.param_names = best.param_names.clone();
+                    } else {
+                        b_method.param_names = candidates[0].param_names.clone(); // 保底
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn extract_simple_types(desc: &str) -> Vec<String> {
+    let inner = match desc.find('(').zip(desc.find(')')) {
+        Some((l, r)) => &desc[l + 1..r],
+        None => return vec![],
+    };
+    let mut types = vec![];
+    let mut s = inner;
+    while !s.is_empty() {
+        let (ty, rest) = crate::completion::type_resolver::consume_one_descriptor_type(s);
+        if ty.is_empty() {
+            break;
+        }
+
+        let mut ty_str = ty;
+        let mut prefix = String::new();
+        while ty_str.starts_with('[') {
+            prefix.push('[');
+            ty_str = &ty_str[1..];
+        }
+
+        let simple = if ty_str.starts_with('L') && ty_str.ends_with(';') {
+            let internal = &ty_str[1..ty_str.len() - 1];
+            internal.rsplit('/').next().unwrap_or(internal)
+        } else {
+            ty_str
+        };
+
+        types.push(format!("{}{}", prefix, simple));
+        s = rest;
+    }
+    types
+}
+
 fn intern_str(s: &str) -> Arc<str> {
     static POOL: OnceLock<DashSet<Arc<str>>> = OnceLock::new();
     let pool = POOL.get_or_init(DashSet::new);
@@ -326,6 +389,36 @@ fn intern_str(s: &str) -> Arc<str> {
     let arc: Arc<str> = Arc::from(s);
     pool.insert(Arc::clone(&arc));
     arc
+}
+
+/// Lightweight index snapshot: a set of all JVM internal names.
+/// `Send + Sync + 'static` — safe to clone into `spawn_blocking` closures.
+pub struct NameTable(FxHashSet<Arc<str>>);
+
+impl NameTable {
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    pub fn exists(&self, internal_name: &str) -> bool {
+        self.0.contains(internal_name)
+    }
+
+    /// Build directly from a class slice — no GlobalIndex needed.
+    /// Used by JDK indexer to resolve source types against already-parsed bytecode.
+    pub fn from_classes(classes: &[ClassMetadata]) -> Arc<Self> {
+        Arc::new(NameTable(
+            classes
+                .iter()
+                .map(|c| Arc::clone(&c.internal_name))
+                .collect(),
+        ))
+    }
 }
 
 type MroCacheMap = dashmap::DashMap<Arc<str>, (Vec<Arc<MethodSummary>>, Vec<Arc<FieldSummary>>)>;
@@ -475,8 +568,26 @@ impl GlobalIndex {
     }
 
     pub fn update_source(&mut self, origin: ClassOrigin, classes: Vec<ClassMetadata>) {
+        let mut filtered = Vec::new();
+
+        for c in classes {
+            if let Some(existing) = self.exact_match.get(&c.internal_name)
+                && matches!(existing.origin, ClassOrigin::Jar(_))
+            {
+                // the LSP only trusts .class
+                tracing::warn!(class = %c.internal_name, "BLOCKED: Prevented source AST from corrupting bytecode index!");
+                continue;
+            }
+
+            filtered.push(c);
+        }
+
+        if filtered.is_empty() {
+            return;
+        }
+
         self.remove_by_origin(&origin);
-        self.add_classes(classes);
+        self.add_classes(filtered);
     }
 
     pub fn get_class(&self, internal_name: &str) -> Option<Arc<ClassMetadata>> {
@@ -514,16 +625,6 @@ impl GlobalIndex {
         self.package_index
             .get(normalized.as_str())
             .is_some_and(|v| !v.is_empty())
-    }
-
-    /// 先按内部名精确查，失败时按简单名回退（处理 source 解析时只有简单名的继承关系）
-    pub fn resolve_class_name(&self, name: &str) -> Option<Arc<ClassMetadata>> {
-        if let Some(c) = self.get_class(name) {
-            return Some(c);
-        }
-        // 简单名回退：取最后一段（"extends Parent" 修复后不再需要，但保留防御）
-        let simple = name.rsplit('/').next().unwrap_or(name);
-        self.get_classes_by_simple_name(simple).first().cloned()
     }
 
     pub fn resolve_imports(&self, imports: &[Arc<str>]) -> Vec<Arc<ClassMetadata>> {
@@ -572,12 +673,17 @@ impl GlobalIndex {
         // Track seen method signatures to implement shadowing
         let mut seen_methods: FxHashSet<(Arc<str>, Arc<str>)> = Default::default();
         let mut seen_fields: FxHashSet<Arc<str>> = Default::default();
+        let mut seen_classes: FxHashSet<Arc<str>> = Default::default();
         let mut queue: std::collections::VecDeque<Arc<str>> = Default::default();
 
         queue.push_back(Arc::from(class_internal));
 
         while let Some(internal) = queue.pop_front() {
-            let meta = match self.resolve_class_name(&internal) {
+            if !seen_classes.insert(Arc::clone(&internal)) {
+                continue; // Prevent infinite loop on cyclic or fuzzy-resolved inheritance
+            }
+
+            let meta = match self.get_class(&internal) {
                 Some(m) => m,
                 None => continue,
             };
@@ -628,7 +734,7 @@ impl GlobalIndex {
             if !seen.insert(internal.clone()) {
                 continue; // avoid cycles (e.g. broken index)
             }
-            let meta = match self.resolve_class_name(&internal) {
+            let meta = match self.get_class(&internal) {
                 Some(m) => m,
                 None => continue,
             };
@@ -703,6 +809,11 @@ impl GlobalIndex {
     pub fn iter_all_classes(&self) -> impl Iterator<Item = &Arc<ClassMetadata>> {
         self.exact_match.values()
     }
+
+    /// Build a lightweight snapshot for use across `spawn_blocking` boundaries.
+    pub fn build_name_table(&self) -> Arc<NameTable> {
+        Arc::new(NameTable(self.exact_match.keys().cloned().collect()))
+    }
 }
 
 impl Default for GlobalIndex {
@@ -734,7 +845,7 @@ fn parse_source_files_parallel(
                 "java"
             };
             let origin = ClassOrigin::Jar(Arc::clone(jar_origin));
-            source::parse_source_str(content, lang, origin)
+            source::parse_source_str(content, lang, origin, None)
         })
         .collect()
 }
@@ -1129,7 +1240,7 @@ public class Calculator {
     public int getResult() { return result; }
 }
 "#;
-        let classes = index_source_text("file:///Calculator.java", src, "java");
+        let classes = index_source_text("file:///Calculator.java", src, "java", None);
         assert_eq!(classes.len(), 1);
 
         let mut idx = GlobalIndex::new();
@@ -1160,7 +1271,7 @@ object UserFactory {
     fun create(): UserService = UserService("")
 }
 "#;
-        let classes = index_source_text("file:///UserService.kt", src, "kotlin");
+        let classes = index_source_text("file:///UserService.kt", src, "kotlin", None);
         // UserService + UserFactory
         assert!(
             classes.iter().any(|c| c.name.as_ref() == "UserService"),
@@ -1246,9 +1357,15 @@ class Main {
             "file:///RandomClass.java",
             random_class_src,
             "java",
+            None,
         ));
         // 再 index Main
-        idx.add_classes(index_source_text("file:///Main.java", main_src, "java"));
+        idx.add_classes(index_source_text(
+            "file:///Main.java",
+            main_src,
+            "java",
+            None,
+        ));
 
         // 验证 RandomClass 在索引里
         let cls = idx.get_class("org/cubewhy/RandomClass");
@@ -1287,23 +1404,6 @@ class Main {
     }
 
     #[test]
-    fn test_mro_simple_name_fallback_for_interface() {
-        let mut idx = GlobalIndex::new();
-        let mut iface = make_class("java/lang", "Runnable", ClassOrigin::Unknown);
-        iface.methods.push(make_method("run", "()V"));
-        let mut child = make_class("com/example", "MyThread", ClassOrigin::Unknown);
-        // source 解析只有简单名
-        child.interfaces = vec!["Runnable".into()];
-        idx.add_classes(vec![iface, child]);
-
-        let (methods, _) = idx.collect_inherited_members("com/example/MyThread");
-        assert!(
-            methods.iter().any(|m| m.name.as_ref() == "run"),
-            "run() from Runnable should be inherited via simple-name fallback"
-        );
-    }
-
-    #[test]
     fn test_has_classes_in_package() {
         let mut idx = GlobalIndex::new();
         idx.add_classes(vec![make_class(
@@ -1324,7 +1424,7 @@ public class Calc {
     public int add(int a, int b) { return a + b; }
 }
 "#;
-        let classes = index_source_text("file:///Calc.java", src, "java");
+        let classes = index_source_text("file:///Calc.java", src, "java", None);
         let method = classes[0]
             .methods
             .iter()

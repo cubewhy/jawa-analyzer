@@ -3,6 +3,7 @@ use std::sync::Arc;
 use crate::completion::context::CursorLocation;
 use crate::completion::type_resolver::symbol_resolver::{ResolvedSymbol, SymbolResolver};
 use crate::index::ClassOrigin;
+use crate::index::source::find_symbol_range;
 use crate::lsp::server::{Backend, language_id_from_uri};
 use tower_lsp::lsp_types::*;
 use tracing::instrument;
@@ -62,27 +63,29 @@ pub async fn handle_goto_definition(
     };
     tracing::debug!(symbol = ?symbol, "goto: resolved symbol");
 
-    let (target_internal, member_name, decl_kind): (Arc<str>, Option<Arc<str>>, DeclKind) =
-        match &symbol {
-            ResolvedSymbol::Class(name) => {
-                let simple_name = name.rsplit('/').next().unwrap_or(name.as_ref());
-                (
-                    Arc::clone(name),
-                    Some(Arc::from(simple_name)),
-                    DeclKind::Type,
-                )
-            }
-            ResolvedSymbol::Method { owner, summary } => (
-                Arc::clone(owner),
-                Some(Arc::clone(&summary.name)),
-                DeclKind::Method,
-            ),
-            ResolvedSymbol::Field { owner, summary } => (
-                Arc::clone(owner),
-                Some(Arc::clone(&summary.name)),
-                DeclKind::Field,
-            ),
-        };
+    let (target_internal, member_name, descriptor, decl_kind) = match &symbol {
+        ResolvedSymbol::Class(name) => {
+            let simple_name = name.rsplit('/').next().unwrap_or(name.as_ref());
+            (
+                Arc::clone(name),
+                Some(Arc::from(simple_name)),
+                None,
+                DeclKind::Type,
+            )
+        }
+        ResolvedSymbol::Method { owner, summary } => (
+            Arc::clone(owner),
+            Some(Arc::clone(&summary.name)),
+            Some(Arc::clone(&summary.descriptor)),
+            DeclKind::Method,
+        ),
+        ResolvedSymbol::Field { owner, summary } => (
+            Arc::clone(owner),
+            Some(Arc::clone(&summary.name)),
+            None,
+            DeclKind::Field,
+        ),
+    };
 
     let meta = match index_guard.get_class(&target_internal) {
         Some(m) => m,
@@ -91,7 +94,6 @@ pub async fn handle_goto_definition(
             return None;
         }
     };
-    drop(index_guard);
 
     match &meta.origin {
         ClassOrigin::SourceFile(uri_str) => {
@@ -114,7 +116,14 @@ pub async fn handle_goto_definition(
                             .ok()
                             .and_then(|p| std::fs::read_to_string(p).ok())
                     })?;
-                find_declaration_range(&content, name, decl_kind)
+                find_symbol_range(
+                    &content,
+                    &target_internal,
+                    Some(name),
+                    descriptor.as_deref(),
+                    &index_guard,
+                )
+                .or_else(|| find_declaration_range(&content, name, decl_kind))
             });
             Some(GotoDefinitionResponse::Scalar(Location {
                 uri: target_uri,
@@ -163,7 +172,14 @@ pub async fn handle_goto_definition(
 
             let range = member_name.as_ref().and_then(|name| {
                 let content = std::fs::read_to_string(&cache_path).ok()?;
-                find_declaration_range(&content, name, decl_kind)
+                find_symbol_range(
+                    &content,
+                    &target_internal,
+                    Some(name),
+                    descriptor.as_deref(),
+                    &index_guard,
+                )
+                .or_else(|| find_declaration_range(&content, name, decl_kind))
             });
             let target_uri = match Url::from_file_path(&cache_path) {
                 Ok(u) => u,
@@ -201,7 +217,14 @@ pub async fn handle_goto_definition(
 
             let range = member_name.as_ref().and_then(|name| {
                 let content = std::fs::read_to_string(&cache_path).ok()?;
-                find_declaration_range(&content, name, decl_kind)
+                find_symbol_range(
+                    &content,
+                    &target_internal,
+                    Some(name),
+                    descriptor.as_deref(),
+                    &index_guard,
+                )
+                .or_else(|| find_declaration_range(&content, name, decl_kind))
             });
 
             let target_uri = match Url::from_file_path(&cache_path) {

@@ -3,11 +3,8 @@ use std::sync::Arc;
 use tree_sitter::Node;
 
 use crate::{
-    completion::{
-        context::CurrentClassMember,
-        type_resolver::{java_type_to_descriptor, parse_return_type_from_descriptor},
-    },
-    index::{FieldSummary, MethodSummary},
+    completion::{context::CurrentClassMember, type_resolver::parse_return_type_from_descriptor},
+    index::{FieldSummary, MethodSummary, source::SourceTypeCtx},
     language::java::{
         JavaContextExtractor,
         utils::{extract_generic_signature, parse_java_modifiers},
@@ -48,22 +45,25 @@ pub fn is_java_keyword(name: &str) -> bool {
 pub fn extract_class_members_from_body(
     ctx: &JavaContextExtractor,
     body: Node,
+    type_ctx: &SourceTypeCtx,
 ) -> Vec<CurrentClassMember> {
     let mut members = Vec::new();
-    collect_members_from_node(ctx, body, &mut members);
+    collect_members_from_node(ctx, body, type_ctx, &mut members);
+
     members
 }
 
 pub fn collect_members_from_node(
     ctx: &JavaContextExtractor,
     node: Node,
+    type_ctx: &SourceTypeCtx,
     members: &mut Vec<CurrentClassMember>,
 ) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         match child.kind() {
             "method_declaration" => {
-                if let Some(m) = parse_method_node(ctx, child) {
+                if let Some(m) = parse_method_node(ctx, type_ctx, child) {
                     members.push(m);
                 }
                 if let Some(block) = child.child_by_field_name("body") {
@@ -73,13 +73,15 @@ pub fn collect_members_from_node(
                     while i < block_children.len() {
                         let bc = block_children[i];
                         if bc.kind() == "ERROR" {
-                            if let Some(m) = parse_method_node(ctx, bc) {
+                            if let Some(m) = parse_method_node(ctx, type_ctx, bc) {
                                 members.push(m);
                             }
-                            members.extend(parse_field_node(ctx, bc));
-                            collect_members_from_node(ctx, bc, members);
+                            members.extend(parse_field_node(ctx, type_ctx, bc));
+                            collect_members_from_node(ctx, bc, type_ctx, members);
                             let snapshot = members.clone();
-                            members.extend(parse_partial_methods_from_error(ctx, bc, &snapshot));
+                            members.extend(parse_partial_methods_from_error(
+                                ctx, type_ctx, bc, &snapshot,
+                            ));
                         } else if bc.kind() == "local_variable_declaration" {
                             let next = block_children.get(i + 1);
                             if let Some(next_node) = next
@@ -87,7 +89,7 @@ pub fn collect_members_from_node(
                                 && ctx.source[next_node.start_byte()..next_node.end_byte()]
                                     .trim_start()
                                     .starts_with('(')
-                                && let Some(m) = parse_misread_method(ctx, bc, *next_node)
+                                && let Some(m) = parse_misread_method(ctx, type_ctx, bc, *next_node)
                             {
                                 members.push(m);
                                 i += 1;
@@ -98,7 +100,7 @@ pub fn collect_members_from_node(
                 }
             }
             "field_declaration" => {
-                members.extend(parse_field_node(ctx, child));
+                members.extend(parse_field_node(ctx, type_ctx, child));
             }
             "class_declaration"
             | "interface_declaration"
@@ -107,12 +109,14 @@ pub fn collect_members_from_node(
             | "interface_body"
             | "enum_body"
             | "program" => {
-                collect_members_from_node(ctx, child, members);
+                collect_members_from_node(ctx, child, type_ctx, members);
             }
             "ERROR" => {
-                collect_members_from_node(ctx, child, members);
+                collect_members_from_node(ctx, child, type_ctx, members);
                 let snapshot = members.clone();
-                members.extend(parse_partial_methods_from_error(ctx, child, &snapshot));
+                members.extend(parse_partial_methods_from_error(
+                    ctx, type_ctx, child, &snapshot,
+                ));
             }
             _ => {}
         }
@@ -120,12 +124,15 @@ pub fn collect_members_from_node(
 
     if node.kind() == "ERROR" {
         let snapshot = members.clone();
-        members.extend(parse_partial_methods_from_error(ctx, node, &snapshot));
+        members.extend(parse_partial_methods_from_error(
+            ctx, type_ctx, node, &snapshot,
+        ));
     }
 }
 
 pub fn parse_partial_methods_from_error(
     ctx: &JavaContextExtractor,
+    type_ctx: &SourceTypeCtx,
     error_node: Node,
     already_found: &[CurrentClassMember],
 ) -> Vec<CurrentClassMember> {
@@ -184,8 +191,11 @@ pub fn parse_partial_methods_from_error(
             .map(|n| ctx.node_text(*n))
             .unwrap_or("void");
 
-        let descriptor =
-            crate::index::source::build_java_descriptor(ctx.node_text(params_node), ret_type);
+        let descriptor = crate::index::source::build_java_descriptor(
+            ctx.node_text(params_node),
+            ret_type,
+            type_ctx,
+        );
 
         result.push(CurrentClassMember::Method(Arc::new(MethodSummary {
             name: Arc::from(name),
@@ -267,7 +277,7 @@ pub fn parse_partial_methods_from_error(
             .child_by_field_name("arguments")
             .map(|n| ctx.node_text(n))
             .unwrap_or("()");
-        let descriptor = crate::index::source::build_java_descriptor(args, ret_type);
+        let descriptor = crate::index::source::build_java_descriptor(args, ret_type, type_ctx);
 
         result.push(CurrentClassMember::Method(Arc::new(MethodSummary {
             name: Arc::from(name),
@@ -283,7 +293,11 @@ pub fn parse_partial_methods_from_error(
     result
 }
 
-pub fn parse_method_node(ctx: &JavaContextExtractor, node: Node) -> Option<CurrentClassMember> {
+pub fn parse_method_node(
+    ctx: &JavaContextExtractor,
+    type_ctx: &SourceTypeCtx,
+    node: Node,
+) -> Option<CurrentClassMember> {
     let mut name: Option<&str> = None;
     let mut flags = 0;
     let mut ret_type = "void";
@@ -313,7 +327,7 @@ pub fn parse_method_node(ctx: &JavaContextExtractor, node: Node) -> Option<Curre
 
     let name = name.filter(|n| *n != "<init>" && *n != "<clinit>" && !is_java_keyword(n))?;
     let params_text = params_node.map(|n| ctx.node_text(n)).unwrap_or("()");
-    let descriptor = crate::index::source::build_java_descriptor(params_text, ret_type);
+    let descriptor = crate::index::source::build_java_descriptor(params_text, ret_type, type_ctx);
 
     let generic_signature = extract_generic_signature(node, ctx.bytes(), &descriptor);
 
@@ -330,7 +344,11 @@ pub fn parse_method_node(ctx: &JavaContextExtractor, node: Node) -> Option<Curre
     })))
 }
 
-fn parse_field_node(ctx: &JavaContextExtractor, node: Node) -> Vec<CurrentClassMember> {
+fn parse_field_node(
+    ctx: &JavaContextExtractor,
+    type_ctx: &SourceTypeCtx,
+    node: Node,
+) -> Vec<CurrentClassMember> {
     let mut flags = 0;
     let mut field_type = "Object";
     let mut names = Vec::new();
@@ -369,7 +387,7 @@ fn parse_field_node(ctx: &JavaContextExtractor, node: Node) -> Vec<CurrentClassM
     names
         .into_iter()
         .map(|name| {
-            let desc = java_type_to_descriptor(field_type);
+            let desc = type_ctx.to_descriptor(field_type);
             CurrentClassMember::Field(Arc::new(FieldSummary {
                 name: Arc::from(name.as_str()),
                 descriptor: Arc::from(desc.as_str()),
@@ -383,6 +401,7 @@ fn parse_field_node(ctx: &JavaContextExtractor, node: Node) -> Vec<CurrentClassM
 
 fn parse_misread_method(
     ctx: &JavaContextExtractor,
+    type_ctx: &SourceTypeCtx,
     decl_node: Node,
     error_node: Node,
 ) -> Option<CurrentClassMember> {
@@ -428,6 +447,7 @@ fn parse_misread_method(
     let descriptor = crate::index::source::build_java_descriptor(
         params_node.map(|n| ctx.node_text(n)).unwrap_or("()"),
         ret_type,
+        type_ctx,
     );
 
     Some(CurrentClassMember::Method(Arc::new(MethodSummary {
@@ -490,8 +510,9 @@ mod tests {
         }
         "#};
         let (ctx, tree) = setup(src);
+        let type_ctx = SourceTypeCtx::new(None, vec![], None);
         let mut members = Vec::new();
-        collect_members_from_node(&ctx, tree.root_node(), &mut members);
+        collect_members_from_node(&ctx, tree.root_node(), &type_ctx, &mut members);
 
         let a = members.iter().find(|m| m.name().as_ref() == "a").unwrap();
         assert!(!a.is_method() && !a.is_static() && !a.is_private());
@@ -522,8 +543,9 @@ mod tests {
         }
         "#};
         let (ctx, tree) = setup(src);
+        let type_ctx = SourceTypeCtx::new(None, vec![], None);
         let mut members = Vec::new();
-        collect_members_from_node(&ctx, tree.root_node(), &mut members);
+        collect_members_from_node(&ctx, tree.root_node(), &type_ctx, &mut members);
 
         assert!(members.iter().any(|m| m.name().as_ref() == "normalMethod"));
         assert!(!members.iter().any(|m| m.name().as_ref() == "<init>"));
@@ -539,8 +561,9 @@ mod tests {
         }
         "#};
         let (ctx, tree) = setup(src);
+        let type_ctx = SourceTypeCtx::new(None, vec![], None);
         let mut members = Vec::new();
-        collect_members_from_node(&ctx, tree.root_node(), &mut members);
+        collect_members_from_node(&ctx, tree.root_node(), &type_ctx, &mut members);
 
         let x = members.iter().find(|m| m.name().as_ref() == "x").unwrap();
         assert!(!x.is_method() && x.is_static() && x.is_private());
@@ -560,8 +583,9 @@ mod tests {
         }
         "#};
         let (ctx, tree) = setup(src);
+        let type_ctx = SourceTypeCtx::new(None, vec![], None);
         let mut members = Vec::new();
-        collect_members_from_node(&ctx, tree.root_node(), &mut members);
+        collect_members_from_node(&ctx, tree.root_node(), &type_ctx, &mut members);
 
         let swallowed = members
             .iter()
@@ -582,8 +606,9 @@ mod tests {
         }
         "#};
         let (ctx, tree) = setup(src);
+        let type_ctx = SourceTypeCtx::new(None, vec![], None);
         let mut members = Vec::new();
-        collect_members_from_node(&ctx, tree.root_node(), &mut members);
+        collect_members_from_node(&ctx, tree.root_node(), &type_ctx, &mut members);
 
         let misread = members
             .iter()
@@ -608,8 +633,9 @@ mod tests {
         "#};
 
         let (ctx, tree) = setup(src);
+        let type_ctx = SourceTypeCtx::new(None, vec![], None);
         let mut members = Vec::new();
-        collect_members_from_node(&ctx, tree.root_node(), &mut members);
+        collect_members_from_node(&ctx, tree.root_node(), &type_ctx, &mut members);
 
         let salvaged1 = members
             .iter()

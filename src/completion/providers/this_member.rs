@@ -483,6 +483,7 @@ mod tests {
             receiver_type: None,
             member_prefix: "fi".to_string(),
             receiver_expr: "this".to_string(),
+            arguments: None,
         };
         let results = ThisMemberProvider.provide(&ctx, &mut idx);
         assert!(

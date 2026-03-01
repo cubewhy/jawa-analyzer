@@ -131,20 +131,20 @@ fn parse_field_symbols(node: Node, bytes: &[u8]) -> Vec<DocumentSymbol> {
         .children(&mut cursor)
         .filter(|c| c.kind() == "variable_declarator")
     {
-        if let Some(name_node) = declarator.child_by_field_name("name") {
-            if let Ok(name) = name_node.utf8_text(bytes) {
-                #[allow(deprecated)]
-                results.push(DocumentSymbol {
-                    name: name.to_string(),
-                    detail: type_text.clone(),
-                    kind: SymbolKind::FIELD,
-                    tags: None,
-                    deprecated: None,
-                    range: ts_node_to_range(&node), // 整个 field_declaration 范围
-                    selection_range: ts_node_to_range(&name_node),
-                    children: None,
-                });
-            }
+        if let Some(name_node) = declarator.child_by_field_name("name")
+            && let Ok(name) = name_node.utf8_text(bytes)
+        {
+            #[allow(deprecated)]
+            results.push(DocumentSymbol {
+                name: name.to_string(),
+                detail: type_text.clone(),
+                kind: SymbolKind::FIELD,
+                tags: None,
+                deprecated: None,
+                range: ts_node_to_range(&node), // 整个 field_declaration 范围
+                selection_range: ts_node_to_range(&name_node),
+                children: None,
+            });
         }
     }
     results

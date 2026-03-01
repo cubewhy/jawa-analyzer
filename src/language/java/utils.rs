@@ -117,10 +117,12 @@ pub(crate) fn strip_sentinel_from_location(loc: CursorLocation) -> CursorLocatio
             receiver_type,
             member_prefix,
             receiver_expr,
+            arguments,
         } => CursorLocation::MemberAccess {
             receiver_type,
             member_prefix: strip_sentinel(&member_prefix),
             receiver_expr: strip_sentinel(&receiver_expr),
+            arguments: arguments.map(|a| strip_sentinel(&a)),
         },
         CursorLocation::ConstructorCall {
             class_prefix,
