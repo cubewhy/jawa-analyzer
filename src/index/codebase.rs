@@ -1,7 +1,6 @@
 use rayon::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tracing::{debug, info};
 use walkdir::WalkDir;
 
 use super::source::parse_source_file;
@@ -25,7 +24,7 @@ pub fn index_codebase<P: AsRef<Path>>(
 ) -> CodebaseIndex {
     // TODO: respect .gitignore
     let root = root.as_ref();
-    info!(root = %root.display(), "Two-pass indexing started");
+    tracing::info!(root = %root.display(), "codebase indexing started");
 
     let source_files: Vec<PathBuf> = WalkDir::new(root)
         .follow_links(false)
@@ -57,12 +56,18 @@ pub fn index_codebase<P: AsRef<Path>>(
         .flatten()
         .collect();
 
+    let discovered_names_len = discovered_names.len();
+
     let enriched_name_table = match name_table {
         Some(existing) => existing.extend_with(discovered_names),
         None => crate::index::NameTable::from_names(discovered_names),
     };
 
-    debug!("full structural analysis...");
+    tracing::debug!(
+        discovered_names_len,
+        enriched_name_table_len = enriched_name_table.len(),
+        "full structural analysis",
+    );
     let classes: Vec<ClassMetadata> = source_files
         .into_par_iter()
         .flat_map(|path| {
@@ -72,7 +77,7 @@ pub fn index_codebase<P: AsRef<Path>>(
         })
         .collect();
 
-    info!(
+    tracing::info!(
         classes = classes.len(),
         files = file_count,
         "Codebase indexing complete"
