@@ -184,6 +184,17 @@ impl<'a> SymbolResolver<'a> {
     }
 
     fn infer_receiver_type(&self, ctx: &CompletionContext, expr: &str) -> Option<Arc<str>> {
+        // handle constructor calls
+        if let Some(rest) = expr.strip_prefix("new ") {
+            let boundary = rest.find(['(', '<', '[', '{']).unwrap_or(rest.len());
+            let ty = rest[..boundary].trim();
+            if !ty.is_empty()
+                && let Some(internal) = self.resolve_type_name(ctx, ty)
+            {
+                return Some(internal);
+            }
+        }
+
         let as_internal = expr.replace('.', "/");
         if self.index.get_class(&as_internal).is_some() {
             return Some(Arc::from(as_internal));
