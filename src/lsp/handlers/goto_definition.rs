@@ -31,7 +31,7 @@ pub async fn handle_goto_definition(
         location = ?ctx.location,
         enclosing_class = ?ctx.enclosing_class,
         enclosing_internal = ?ctx.enclosing_internal_name,
-        locals = ctx.local_variables.len(),
+        locals = ?ctx.local_variables,
         "goto: parsed context"
     );
 

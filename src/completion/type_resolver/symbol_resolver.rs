@@ -18,7 +18,7 @@ pub enum ResolvedSymbol {
 }
 
 pub struct SymbolResolver<'a> {
-    index: &'a GlobalIndex,
+    pub index: &'a GlobalIndex,
 }
 
 impl<'a> SymbolResolver<'a> {
@@ -235,7 +235,7 @@ impl<'a> SymbolResolver<'a> {
         Some(current)
     }
 
-    fn resolve_type_name(&self, ctx: &CompletionContext, name: &str) -> Option<Arc<str>> {
+    pub fn resolve_type_name(&self, ctx: &CompletionContext, name: &str) -> Option<Arc<str>> {
         // already internal name
         if name.contains('/') {
             return Some(Arc::from(name));

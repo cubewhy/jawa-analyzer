@@ -20,6 +20,7 @@ use crate::completion::providers::package::PackageProvider;
 use crate::completion::providers::snippet::SnippetProvider;
 use crate::completion::providers::static_import_member::StaticImportMemberProvider;
 use crate::completion::providers::this_member::ThisMemberProvider;
+use crate::completion::type_resolver::symbol_resolver::SymbolResolver;
 use crate::completion::type_resolver::type_name::TypeName;
 use crate::completion::type_resolver::{
     ChainSegment, parse_single_type_to_internal, singleton_descriptor_to_type,
@@ -187,6 +188,7 @@ impl<'a> ContextEnricher<'a> {
                 })
                 .collect();
 
+            // infer `var`
             for (idx_in_vec, init_expr) in to_resolve {
                 if let Some(resolved) = resolve_var_init_expr(
                     &init_expr,
@@ -199,6 +201,17 @@ impl<'a> ContextEnricher<'a> {
                 ) {
                     ctx.local_variables[idx_in_vec].type_internal = resolved;
                 }
+            }
+
+            let sym = SymbolResolver::new(self.index);
+            let new_types: Vec<TypeName> = ctx
+                .local_variables
+                .iter()
+                .map(|lv| expand_local_type_strict(&sym, ctx, &lv.type_internal))
+                .collect();
+
+            for (lv, new_ty) in ctx.local_variables.iter_mut().zip(new_types) {
+                lv.type_internal = new_ty;
             }
         }
     }
@@ -255,6 +268,60 @@ impl CompletionEngine {
 
 fn looks_like_array_access(expr: &str) -> bool {
     expr.contains('[') && expr.trim_end().ends_with(']')
+}
+
+fn expand_local_type_strict(
+    sym: &SymbolResolver,
+    ctx: &CompletionContext,
+    ty: &TypeName,
+) -> TypeName {
+    let s = ty.as_str();
+
+    // primitives/unknown/var 不动
+    if matches!(
+        s,
+        "var"
+            | "unknown"
+            | "byte"
+            | "short"
+            | "int"
+            | "long"
+            | "float"
+            | "double"
+            | "boolean"
+            | "char"
+            | "void"
+    ) {
+        return ty.clone();
+    }
+
+    // array dims: Foo[][]
+    let mut base = s;
+    let mut dims = 0usize;
+    while let Some(stripped) = base.strip_suffix("[]") {
+        dims += 1;
+        base = stripped.trim();
+    }
+
+    // strip generics: List<String> -> List
+    let base = base.split('<').next().unwrap_or(base).trim();
+
+    // 已经 internal 或 index 可命中：不展开
+    if base.contains('/') || sym.index.get_class(base).is_some() {
+        return ty.clone();
+    }
+
+    // strict 展开 simple name -> internal
+    let mut out = if let Some(internal) = sym.resolve_type_name(ctx, base) {
+        TypeName::from(internal)
+    } else {
+        ty.clone()
+    };
+
+    for _ in 0..dims {
+        out = out.wrap_array();
+    }
+    out
 }
 
 fn resolve_array_access_type(
@@ -1171,7 +1238,7 @@ mod tests {
             .iter()
             .find(|v| v.name.as_ref() == "a")
             .unwrap();
-        assert_eq!(a_var.type_internal.as_ref(), "String");
+        assert_eq!(a_var.type_internal.as_ref(), "java/lang/String");
     }
 
     #[test]
