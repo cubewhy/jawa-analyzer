@@ -28,6 +28,182 @@ use crate::completion::{LocalVar, post_processor};
 use crate::index::GlobalIndex;
 use std::sync::Arc;
 
+pub struct ContextEnricher<'a> {
+    index: &'a GlobalIndex,
+}
+
+impl<'a> ContextEnricher<'a> {
+    pub fn new(index: &'a GlobalIndex) -> Self {
+        Self { index }
+    }
+
+    pub fn enrich(&self, ctx: &mut CompletionContext) {
+        {
+            let resolver = TypeResolver::new(self.index);
+            let to_resolve: Vec<(usize, String)> = ctx
+                .local_variables
+                .iter()
+                .enumerate()
+                .filter_map(|(i, lv)| {
+                    if lv.type_internal.as_ref() == "var" {
+                        lv.init_expr.as_deref().map(|e| (i, e.to_string()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            for (idx_in_vec, init_expr) in to_resolve {
+                if let Some(resolved) = resolve_var_init_expr(
+                    &init_expr,
+                    &ctx.local_variables,
+                    ctx.enclosing_internal_name.as_ref(),
+                    &resolver,
+                    &ctx.existing_imports,
+                    ctx.enclosing_package.as_deref(),
+                    self.index,
+                ) {
+                    ctx.local_variables[idx_in_vec].type_internal = resolved;
+                }
+            }
+        }
+
+        if let CursorLocation::MemberAccess {
+            receiver_type,
+            receiver_expr,
+            ..
+        } = &mut ctx.location
+            && receiver_type.is_none()
+            && !receiver_expr.is_empty()
+        {
+            let resolver = TypeResolver::new(self.index);
+            let resolved = if looks_like_array_access(receiver_expr) {
+                resolve_array_access_type(
+                    receiver_expr,
+                    &ctx.local_variables,
+                    ctx.enclosing_internal_name.as_ref(),
+                    &resolver,
+                    &ctx.existing_imports,
+                    ctx.enclosing_package.as_deref(),
+                    self.index,
+                )
+            } else {
+                let chain = parse_chain_from_expr(receiver_expr);
+                tracing::debug!(?chain, receiver_expr, "enrich_context: parsed chain");
+
+                if chain.is_empty() {
+                    let r = resolver.resolve(
+                        receiver_expr,
+                        &ctx.local_variables,
+                        ctx.enclosing_internal_name.as_ref(),
+                    );
+                    tracing::debug!(
+                        ?r,
+                        receiver_expr,
+                        "enrich_context: chain is empty, resolver.resolve returned"
+                    );
+                    r
+                } else {
+                    let r = evaluate_chain(
+                        &chain,
+                        &ctx.local_variables,
+                        ctx.enclosing_internal_name.as_ref(),
+                        &resolver,
+                        &ctx.existing_imports,
+                        ctx.enclosing_package.as_deref(),
+                        self.index,
+                    );
+                    tracing::debug!(?r, "enrich_context: evaluate_chain returned");
+                    r
+                }
+            };
+
+            tracing::debug!(?resolved, "enrich_context: resolved before final match");
+
+            // If the result is a simple name (without '/'), it needs to be further parsed into an internal name.
+            *receiver_type = match resolved {
+                None => {
+                    tracing::debug!("enrich_context: final match -> None");
+                    None
+                }
+                Some(ref ty) if ty.contains_slash() => Some(ty.to_arc()),
+                Some(ty) => {
+                    let r = resolve_simple_to_internal(
+                        ty.as_str(),
+                        &ctx.existing_imports,
+                        ctx.enclosing_package.as_deref(),
+                        self.index,
+                    );
+                    tracing::debug!(
+                        ?r,
+                        ?ty,
+                        "enrich_context: final match -> resolve_simple_to_internal returned"
+                    );
+                    r
+                }
+            };
+
+            // receiver_expr 是已知包名 -> 转成 Import
+            let import_location: Option<(CursorLocation, String)> =
+                if let CursorLocation::MemberAccess {
+                    receiver_type,
+                    receiver_expr,
+                    member_prefix,
+                    ..
+                } = &ctx.location
+                    && receiver_type.is_none()
+                {
+                    let pkg_normalized = receiver_expr.replace('.', "/");
+                    if self.index.has_package(&pkg_normalized) {
+                        let prefix = format!("{}.{}", receiver_expr, member_prefix);
+                        let query = member_prefix.clone();
+                        Some((CursorLocation::Import { prefix }, query))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+            if let Some((loc, query)) = import_location {
+                ctx.location = loc;
+                ctx.query = query;
+            }
+        }
+
+        // Resolve `var` local variables
+        {
+            let resolver = TypeResolver::new(self.index);
+            let to_resolve: Vec<(usize, String)> = ctx
+                .local_variables
+                .iter()
+                .enumerate()
+                .filter_map(|(i, lv)| {
+                    if lv.type_internal.as_ref() == "var" {
+                        lv.init_expr.as_deref().map(|e| (i, e.to_string()))
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            for (idx_in_vec, init_expr) in to_resolve {
+                if let Some(resolved) = resolve_var_init_expr(
+                    &init_expr,
+                    &ctx.local_variables,
+                    ctx.enclosing_internal_name.as_ref(),
+                    &resolver,
+                    &ctx.existing_imports,
+                    ctx.enclosing_package.as_deref(),
+                    self.index,
+                ) {
+                    ctx.local_variables[idx_in_vec].type_internal = resolved;
+                }
+            }
+        }
+    }
+}
+
 pub struct CompletionEngine {
     providers: Vec<Box<dyn CompletionProvider>>,
 }
@@ -65,7 +241,7 @@ impl CompletionEngine {
         index: &mut GlobalIndex,
     ) -> Vec<CompletionCandidate> {
         // infer type
-        self.enrich_context(&mut ctx, index);
+        ContextEnricher::new(index).enrich(&mut ctx);
 
         let candidates: Vec<CompletionCandidate> = self
             .providers
@@ -74,172 +250,6 @@ impl CompletionEngine {
             .collect();
 
         post_processor::process(candidates, &ctx.query)
-    }
-
-    fn enrich_context(&self, ctx: &mut CompletionContext, index: &GlobalIndex) {
-        {
-            let resolver = TypeResolver::new(index);
-            let to_resolve: Vec<(usize, String)> = ctx
-                .local_variables
-                .iter()
-                .enumerate()
-                .filter_map(|(i, lv)| {
-                    if lv.type_internal.as_ref() == "var" {
-                        lv.init_expr.as_deref().map(|e| (i, e.to_string()))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            for (idx_in_vec, init_expr) in to_resolve {
-                if let Some(resolved) = resolve_var_init_expr(
-                    &init_expr,
-                    &ctx.local_variables,
-                    ctx.enclosing_internal_name.as_ref(),
-                    &resolver,
-                    &ctx.existing_imports,
-                    ctx.enclosing_package.as_deref(),
-                    index,
-                ) {
-                    ctx.local_variables[idx_in_vec].type_internal = resolved;
-                }
-            }
-        }
-
-        if let CursorLocation::MemberAccess {
-            receiver_type,
-            receiver_expr,
-            ..
-        } = &mut ctx.location
-            && receiver_type.is_none()
-            && !receiver_expr.is_empty()
-        {
-            let resolver = TypeResolver::new(index);
-            let resolved = if looks_like_array_access(receiver_expr) {
-                resolve_array_access_type(
-                    receiver_expr,
-                    &ctx.local_variables,
-                    ctx.enclosing_internal_name.as_ref(),
-                    &resolver,
-                    &ctx.existing_imports,
-                    ctx.enclosing_package.as_deref(),
-                    index,
-                )
-            } else {
-                let chain = parse_chain_from_expr(receiver_expr);
-                tracing::debug!(?chain, receiver_expr, "enrich_context: parsed chain");
-
-                if chain.is_empty() {
-                    let r = resolver.resolve(
-                        receiver_expr,
-                        &ctx.local_variables,
-                        ctx.enclosing_internal_name.as_ref(),
-                    );
-                    tracing::debug!(
-                        ?r,
-                        receiver_expr,
-                        "enrich_context: chain is empty, resolver.resolve returned"
-                    );
-                    r
-                } else {
-                    let r = evaluate_chain(
-                        &chain,
-                        &ctx.local_variables,
-                        ctx.enclosing_internal_name.as_ref(),
-                        &resolver,
-                        &ctx.existing_imports,
-                        ctx.enclosing_package.as_deref(),
-                        index,
-                    );
-                    tracing::debug!(?r, "enrich_context: evaluate_chain returned");
-                    r
-                }
-            };
-
-            tracing::debug!(?resolved, "enrich_context: resolved before final match");
-
-            // If the result is a simple name (without '/'), it needs to be further parsed into an internal name.
-            *receiver_type = match resolved {
-                None => {
-                    tracing::debug!("enrich_context: final match -> None");
-                    None
-                }
-                Some(ref ty) if ty.contains_slash() => Some(ty.to_arc()),
-                Some(ty) => {
-                    let r = resolve_simple_to_internal(
-                        ty.as_str(),
-                        &ctx.existing_imports,
-                        ctx.enclosing_package.as_deref(),
-                        index,
-                    );
-                    tracing::debug!(
-                        ?r,
-                        ?ty,
-                        "enrich_context: final match -> resolve_simple_to_internal returned"
-                    );
-                    r
-                }
-            };
-
-            // receiver_expr 是已知包名 -> 转成 Import
-            let import_location: Option<(CursorLocation, String)> =
-                if let CursorLocation::MemberAccess {
-                    receiver_type,
-                    receiver_expr,
-                    member_prefix,
-                    ..
-                } = &ctx.location
-                    && receiver_type.is_none()
-                {
-                    let pkg_normalized = receiver_expr.replace('.', "/");
-                    if index.has_package(&pkg_normalized) {
-                        let prefix = format!("{}.{}", receiver_expr, member_prefix);
-                        let query = member_prefix.clone();
-                        Some((CursorLocation::Import { prefix }, query))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-            if let Some((loc, query)) = import_location {
-                ctx.location = loc;
-                ctx.query = query;
-            }
-        }
-
-        // Resolve `var` local variables
-        {
-            let resolver = TypeResolver::new(index);
-            let to_resolve: Vec<(usize, String)> = ctx
-                .local_variables
-                .iter()
-                .enumerate()
-                .filter_map(|(i, lv)| {
-                    if lv.type_internal.as_ref() == "var" {
-                        lv.init_expr.as_deref().map(|e| (i, e.to_string()))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            for (idx_in_vec, init_expr) in to_resolve {
-                if let Some(resolved) = resolve_var_init_expr(
-                    &init_expr,
-                    &ctx.local_variables,
-                    ctx.enclosing_internal_name.as_ref(),
-                    &resolver,
-                    &ctx.existing_imports,
-                    ctx.enclosing_package.as_deref(),
-                    index,
-                ) {
-                    ctx.local_variables[idx_in_vec].type_internal = resolved;
-                }
-            }
-        }
     }
 }
 
@@ -605,7 +615,6 @@ mod tests {
     #[test]
     fn test_enrich_context_resolves_simple_name_via_import() {
         let idx = make_index_with_random_class();
-        let engine = CompletionEngine::new();
         let mut ctx = CompletionContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
@@ -625,7 +634,7 @@ mod tests {
             Some(Arc::from("org/cubewhy/a")),
             vec!["org.cubewhy.RandomClass".into()],
         );
-        engine.enrich_context(&mut ctx, &idx);
+        ContextEnricher::new(&idx).enrich(&mut ctx);
         if let CursorLocation::MemberAccess { receiver_type, .. } = &ctx.location {
             assert_eq!(
                 receiver_type.as_deref(),
@@ -638,7 +647,6 @@ mod tests {
     #[test]
     fn test_enrich_context_resolves_simple_name_via_wildcard_import() {
         let idx = make_index_with_random_class();
-        let engine = CompletionEngine::new();
         let mut ctx = CompletionContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
@@ -657,7 +665,7 @@ mod tests {
             Some(Arc::from("org/cubewhy/a")),
             vec!["org.cubewhy.*".into()],
         );
-        engine.enrich_context(&mut ctx, &idx);
+        ContextEnricher::new(&idx).enrich(&mut ctx);
         if let CursorLocation::MemberAccess { receiver_type, .. } = &ctx.location {
             assert_eq!(receiver_type.as_deref(), Some("org/cubewhy/RandomClass"),);
         }
@@ -666,7 +674,6 @@ mod tests {
     #[test]
     fn test_complete_returns_f_method() {
         let mut idx = make_index_with_random_class();
-        let engine = CompletionEngine::new();
         let ctx = CompletionContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
@@ -685,6 +692,7 @@ mod tests {
             Some(Arc::from("org/cubewhy/a")),
             vec!["org.cubewhy.RandomClass".into()],
         );
+        let engine = CompletionEngine::new();
         let results = engine.complete(ctx, &mut idx);
         assert!(
             results.iter().any(|c| c.label.as_ref() == "f"),
@@ -733,7 +741,6 @@ mod tests {
             },
         ]);
 
-        let engine = CompletionEngine::new();
         // 模拟用户输入了 System.out.|
         let mut ctx = CompletionContext::new(
             CursorLocation::MemberAccess {
@@ -750,7 +757,7 @@ mod tests {
             vec!["java.lang.System".into()], // 确保 System 能够被解析
         );
 
-        engine.enrich_context(&mut ctx, &idx);
+        ContextEnricher::new(&idx).enrich(&mut ctx);
 
         if let CursorLocation::MemberAccess { receiver_type, .. } = &ctx.location {
             assert_eq!(
@@ -846,7 +853,6 @@ mod tests {
             inner_class_of: None,
             origin: ClassOrigin::Unknown,
         }]);
-        let engine = CompletionEngine::new();
         let mut ctx = CompletionContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
@@ -872,7 +878,7 @@ mod tests {
             None,
             vec![],
         );
-        engine.enrich_context(&mut ctx, &idx);
+        ContextEnricher::new(&idx).enrich(&mut ctx);
         let str_var = ctx
             .local_variables
             .iter()
@@ -919,7 +925,6 @@ mod tests {
             inner_class_of: None,
             origin: ClassOrigin::Unknown,
         }]);
-        let engine = CompletionEngine::new();
         let mut ctx = CompletionContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
@@ -945,7 +950,7 @@ mod tests {
             None,
             vec![],
         );
-        engine.enrich_context(&mut ctx, &idx);
+        ContextEnricher::new(&idx).enrich(&mut ctx);
         let str_var = ctx
             .local_variables
             .iter()
@@ -980,7 +985,6 @@ mod tests {
             inner_class_of: None,
             origin: ClassOrigin::Unknown,
         }]);
-        let engine = CompletionEngine::new();
         let mut ctx = CompletionContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
@@ -999,7 +1003,7 @@ mod tests {
             None,
             vec![],
         );
-        engine.enrich_context(&mut ctx, &idx);
+        ContextEnricher::new(&idx).enrich(&mut ctx);
         let str_var = ctx
             .local_variables
             .iter()
@@ -1136,7 +1140,6 @@ mod tests {
             inner_class_of: None,
             origin: ClassOrigin::Unknown,
         }]);
-        let engine = CompletionEngine::new();
         let mut ctx = CompletionContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
@@ -1162,7 +1165,7 @@ mod tests {
             None,
             vec![],
         );
-        engine.enrich_context(&mut ctx, &idx);
+        ContextEnricher::new(&idx).enrich(&mut ctx);
         let a_var = ctx
             .local_variables
             .iter()
@@ -1174,7 +1177,6 @@ mod tests {
     #[test]
     fn test_var_primitive_array_element_not_resolved() {
         let idx = GlobalIndex::new();
-        let engine = CompletionEngine::new();
         let mut ctx = CompletionContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
@@ -1200,7 +1202,7 @@ mod tests {
             None,
             vec![],
         );
-        engine.enrich_context(&mut ctx, &idx);
+        ContextEnricher::new(&idx).enrich(&mut ctx);
         let x_var = ctx
             .local_variables
             .iter()
@@ -1233,7 +1235,6 @@ mod tests {
             inner_class_of: None,
             origin: ClassOrigin::Unknown,
         }]);
-        let engine = CompletionEngine::new();
         let mut ctx = CompletionContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
@@ -1252,7 +1253,7 @@ mod tests {
             None,
             vec![],
         );
-        engine.enrich_context(&mut ctx, &idx);
+        ContextEnricher::new(&idx).enrich(&mut ctx);
         if let CursorLocation::MemberAccess { receiver_type, .. } = &ctx.location {
             assert_eq!(receiver_type.as_deref(), Some("java/lang/String"));
         }
@@ -1260,7 +1261,6 @@ mod tests {
 
     #[test]
     fn test_package_path_becomes_import_location() {
-        use crate::completion::engine::CompletionEngine;
         use crate::index::{ClassMetadata, ClassOrigin, GlobalIndex};
         use rust_asm::constants::ACC_PUBLIC;
         let mut idx = GlobalIndex::new();
@@ -1277,7 +1277,6 @@ mod tests {
             inner_class_of: None,
             origin: ClassOrigin::Unknown,
         }]);
-        let engine = CompletionEngine::new();
         let mut ctx = CompletionContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
@@ -1292,7 +1291,7 @@ mod tests {
             None,
             vec![],
         );
-        engine.enrich_context(&mut ctx, &idx);
+        ContextEnricher::new(&idx).enrich(&mut ctx);
         assert!(matches!(
             &ctx.location,
             CursorLocation::Import { prefix } if prefix == "java.util.ArrayL"
@@ -1301,10 +1300,7 @@ mod tests {
 
     #[test]
     fn test_unknown_receiver_stays_member_access() {
-        use crate::completion::engine::CompletionEngine;
-        use crate::index::GlobalIndex;
         let idx = GlobalIndex::new();
-        let engine = CompletionEngine::new();
         let mut ctx = CompletionContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
@@ -1319,7 +1315,7 @@ mod tests {
             None,
             vec![],
         );
-        engine.enrich_context(&mut ctx, &idx);
+        ContextEnricher::new(&idx).enrich(&mut ctx);
         assert!(matches!(&ctx.location, CursorLocation::MemberAccess { .. }));
     }
 
@@ -1344,7 +1340,6 @@ mod tests {
             origin: ClassOrigin::Unknown,
         }]);
 
-        let engine = CompletionEngine::new();
         let mut ctx = CompletionContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
@@ -1388,7 +1383,7 @@ mod tests {
         // 注入默认 java.lang.* import 来确保 String 能正常被 resolve_simple_to_internal 解析
         ctx.existing_imports.push(Arc::from("java.lang.*"));
 
-        engine.enrich_context(&mut ctx, &idx);
+        ContextEnricher::new(&idx).enrich(&mut ctx);
 
         // 校验 c (arr[0]) 被推断为 char
         let c_var = ctx
@@ -1443,7 +1438,6 @@ mod tests {
             origin: ClassOrigin::Unknown,
         }]);
 
-        let engine = CompletionEngine::new();
         let mut ctx = CompletionContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
@@ -1462,7 +1456,7 @@ mod tests {
             None,
             vec![],
         );
-        engine.enrich_context(&mut ctx, &idx);
+        ContextEnricher::new(&idx).enrich(&mut ctx);
         let item = ctx
             .local_variables
             .iter()
@@ -1491,7 +1485,6 @@ mod tests {
             origin: ClassOrigin::Unknown,
         }]);
 
-        let engine = CompletionEngine::new();
         let mut ctx = CompletionContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
@@ -1511,7 +1504,7 @@ mod tests {
             vec![],
         );
 
-        engine.enrich_context(&mut ctx, &idx);
+        ContextEnricher::new(&idx).enrich(&mut ctx);
 
         // 如果 var 优先被解析，这里就能推导出 receiver_expr 是 org/cubewhy/Main
         if let CursorLocation::MemberAccess { receiver_type, .. } = &ctx.location {
@@ -1541,7 +1534,6 @@ mod tests {
             origin: ClassOrigin::Unknown,
         }]);
 
-        let engine = CompletionEngine::new();
         let mut ctx = CompletionContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
@@ -1561,7 +1553,7 @@ mod tests {
             vec![],
         );
 
-        engine.enrich_context(&mut ctx, &idx);
+        ContextEnricher::new(&idx).enrich(&mut ctx);
 
         if let CursorLocation::MemberAccess { receiver_type, .. } = &ctx.location {
             assert_eq!(
@@ -1616,7 +1608,6 @@ mod tests {
             },
         ]);
 
-        let engine = CompletionEngine::new();
         let mut ctx = CompletionContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
@@ -1636,7 +1627,7 @@ mod tests {
             vec![],
         );
 
-        engine.enrich_context(&mut ctx, &idx);
+        ContextEnricher::new(&idx).enrich(&mut ctx);
 
         if let CursorLocation::MemberAccess { receiver_type, .. } = &ctx.location {
             assert_eq!(

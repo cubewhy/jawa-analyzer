@@ -130,6 +130,12 @@ impl<'idx> TypeResolver<'idx> {
         arg_count: i32,
         arg_types: &[TypeName],
     ) -> Option<TypeName> {
+        tracing::debug!(
+            receiver_internal,
+            method_name,
+            ?arg_types,
+            "resolve_method_return"
+        );
         let (base_receiver, _receiver_type_args) = split_internal_name(receiver_internal);
 
         // Use base_receiver to find MRO in the index
@@ -178,6 +184,8 @@ impl<'idx> TypeResolver<'idx> {
         arg_count: i32,
         arg_types: &[TypeName],
     ) -> Option<&'a MethodSummary> {
+        tracing::debug!(?candidates, ?arg_types, "select_overload");
+
         if candidates.is_empty() {
             return None;
         }

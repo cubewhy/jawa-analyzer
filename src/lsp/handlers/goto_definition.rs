@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use crate::completion::context::CursorLocation;
+use crate::completion::engine::ContextEnricher;
 use crate::completion::type_resolver::symbol_resolver::{ResolvedSymbol, SymbolResolver};
 use crate::index::ClassOrigin;
 use crate::index::source::find_symbol_range;
@@ -19,7 +20,12 @@ pub async fn handle_goto_definition(
     let doc = backend.workspace.documents.get(uri)?;
     let lang = backend.registry.find(language_id_from_uri(uri))?;
     let full_end = token_end_character(&doc.content, pos.line, pos.character);
-    let ctx = lang.parse_completion_context(&doc.content, pos.line, full_end, None)?;
+
+    let index_guard = backend.workspace.index.read().await;
+    let mut ctx = lang.parse_completion_context(&doc.content, pos.line, full_end, None)?;
+
+    // enrich context
+    ContextEnricher::new(&index_guard).enrich(&mut ctx);
 
     tracing::debug!(
         location = ?ctx.location,
@@ -52,7 +58,6 @@ pub async fn handle_goto_definition(
     }
 
     // Index 符号解析
-    let index_guard = backend.workspace.index.read().await;
     let resolver = SymbolResolver::new(&index_guard);
     let symbol = match resolver.resolve(&ctx) {
         Some(s) => s,
