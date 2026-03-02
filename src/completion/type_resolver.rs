@@ -364,7 +364,7 @@ impl<'idx> TypeResolver<'idx> {
         let span = tracing::debug_span!("score_single", desc = desc, ty = ty);
         let _enter = span.enter();
 
-        // 1. 数组处理
+        // parse array
         if let Some(desc_elem) = desc.strip_prefix('[') {
             if ty.ends_with("[]") {
                 let ty_elem = ty.strip_suffix("[]").unwrap().trim();
@@ -391,11 +391,9 @@ impl<'idx> TypeResolver<'idx> {
             _ => desc,
         };
 
-        // 标准化输入类型 (java.lang.Main -> java/lang/Main)
         let normalized_ty = ty.replace('.', "/");
         tracing::debug!(resolved_desc = %resolved_desc, normalized_ty = %normalized_ty, "normalized types");
 
-        // 3. 基本类型判定
         let is_primitive = |t: &str| {
             matches!(
                 t,
@@ -411,14 +409,38 @@ impl<'idx> TypeResolver<'idx> {
             )
         };
 
-        // 4. 精确匹配
+        // exact match
         if resolved_desc == normalized_ty {
             tracing::debug!("score: 10 (exact match)");
             return 10;
         }
 
-        // 5. 【核心修复】Object 通配引用类型
-        // 在 Java 中，如果参数定义为 Object，任何非基本类型（Main, String 等）都可以传进去
+        // wrapper type
+        let is_wrapper_match = matches!(
+            (resolved_desc, normalized_ty.as_str()),
+            ("int", "java/lang/Integer")
+                | ("java/lang/Integer", "int")
+                | ("boolean", "java/lang/Boolean")
+                | ("java/lang/Boolean", "boolean")
+                | ("long", "java/lang/Long")
+                | ("java/lang/Long", "long")
+                | ("double", "java/lang/Double")
+                | ("java/lang/Double", "double")
+                | ("float", "java/lang/Float")
+                | ("java/lang/Float", "float")
+                | ("char", "java/lang/Character")
+                | ("java/lang/Character", "char")
+                | ("byte", "java/lang/Byte")
+                | ("java/lang/Byte", "byte")
+                | ("short", "java/lang/Short")
+                | ("java/lang/Short", "short")
+        );
+
+        if is_wrapper_match {
+            tracing::debug!("score: 8 (autoboxing/unboxing match)");
+            return 8;
+        }
+
         if resolved_desc == "java/lang/Object" {
             if !is_primitive(&normalized_ty) {
                 tracing::debug!("score: 5 (reference type matched to Object)");
@@ -429,7 +451,7 @@ impl<'idx> TypeResolver<'idx> {
             }
         }
 
-        // 6. 简单名匹配 (例如 com/foo/Main 匹配 Main)
+        // fallback: simple name match
         let s1 = resolved_desc.rsplit('/').next().unwrap_or(resolved_desc);
         let s2 = normalized_ty.rsplit('/').next().unwrap_or(&normalized_ty);
         if s1 == s2 {
@@ -1356,5 +1378,82 @@ mod tests {
         let best = resolver.select_overload(&candidates, 1, &args);
 
         assert_eq!(best.descriptor.as_ref(), "(Ljava/lang/String;)V");
+    }
+
+    #[test]
+    fn test_boolean_literal_recognized() {
+        let (idx, locals) = make_resolver();
+        let r = TypeResolver::new(&idx);
+        assert_eq!(r.resolve("true", &locals, None).as_deref(), Some("boolean"));
+        assert_eq!(
+            r.resolve("false", &locals, None).as_deref(),
+            Some("boolean")
+        );
+    }
+
+    #[test]
+    fn test_scoring_system_autoboxing() {
+        let idx = GlobalIndex::new();
+        let resolver = TypeResolver::new(&idx);
+
+        // Primitive expected, wrapper provided (Unboxing)
+        assert_eq!(
+            resolver.score_single_descriptor("I", "java/lang/Integer"),
+            8
+        );
+        assert_eq!(
+            resolver.score_single_descriptor("Z", "java/lang/Boolean"),
+            8
+        );
+
+        // Wrapper expected, primitive provided (Autoboxing)
+        assert_eq!(
+            resolver.score_single_descriptor("Ljava/lang/Integer;", "int"),
+            8
+        );
+        assert_eq!(
+            resolver.score_single_descriptor("Ljava/lang/Boolean;", "boolean"),
+            8
+        );
+    }
+
+    #[test]
+    fn test_overload_resolution_prefers_exact_over_autoboxing() {
+        use crate::index::MethodSummary;
+        use rust_asm::constants::ACC_PUBLIC;
+
+        let method_wrapper = MethodSummary {
+            name: Arc::from("process"),
+            descriptor: Arc::from("(Ljava/lang/Integer;)V"),
+            param_names: vec![],
+            access_flags: ACC_PUBLIC,
+            is_synthetic: false,
+            generic_signature: None,
+            return_type: None,
+        };
+
+        let method_primitive = MethodSummary {
+            name: Arc::from("process"),
+            descriptor: Arc::from("(I)V"),
+            param_names: vec![],
+            access_flags: ACC_PUBLIC,
+            is_synthetic: false,
+            generic_signature: None,
+            return_type: None,
+        };
+
+        let idx = GlobalIndex::new();
+        let resolver = TypeResolver::new(&idx);
+        let candidates = vec![&method_wrapper, &method_primitive];
+
+        // 传入 int，应该优先匹配 process(int) 而不是 process(Integer)
+        let args_prim = vec![TypeName::new("int")];
+        let best_prim = resolver.select_overload(&candidates, 1, &args_prim);
+        assert_eq!(best_prim.descriptor.as_ref(), "(I)V");
+
+        // 传入 java/lang/Integer，应该优先匹配 process(Integer)
+        let args_wrapper = vec![TypeName::new("java/lang/Integer")];
+        let best_wrapper = resolver.select_overload(&candidates, 1, &args_wrapper);
+        assert_eq!(best_wrapper.descriptor.as_ref(), "(Ljava/lang/Integer;)V");
     }
 }

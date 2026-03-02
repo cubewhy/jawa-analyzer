@@ -709,11 +709,9 @@ fn find_member_node<'a>(
                     );
 
                     if actual_desc == target_desc {
-                        tracing::debug!(">>> find_member_node: MATCH SUCCESS");
                         return Some(child);
                     }
                 } else {
-                    tracing::debug!(">>> find_member_node: MATCH SUCCESS (no descriptor required)");
                     return Some(child);
                 }
             }
