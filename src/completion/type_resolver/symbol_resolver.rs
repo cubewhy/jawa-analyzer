@@ -71,6 +71,13 @@ impl<'a> SymbolResolver<'a> {
                 self.resolve_type_name(ctx, prefix)
                     .map(ResolvedSymbol::Class)
             }
+            CursorLocation::Annotation { prefix, .. } => {
+                if prefix.is_empty() {
+                    return None;
+                }
+                self.resolve_type_name(ctx, prefix)
+                    .map(ResolvedSymbol::Class)
+            }
             _ => None,
         }
     }
