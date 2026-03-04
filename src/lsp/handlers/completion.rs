@@ -4,8 +4,9 @@ use tracing::debug;
 
 use super::super::converters::candidate_to_lsp;
 use crate::completion::engine::CompletionEngine;
-use crate::completion::{CandidateKind, CursorLocation};
+use crate::completion::CandidateKind;
 use crate::language::LanguageRegistry;
+use crate::semantic::CursorLocation;
 use crate::workspace::Workspace;
 
 pub async fn handle_completion(
@@ -48,7 +49,7 @@ pub async fn handle_completion(
         }
     })?;
 
-    // 3) 在 read 闭包里：直接用缓存 tree + rope 构造 CompletionContext
+    // 3) 在 read 闭包里：直接用缓存 tree + rope 构造 SemanticContext
     //    同时把 source clone 出来（后面生成 textEdit 需要 &str，且我们会 await index lock）
     let (ctx, source_for_edits) = workspace.documents.with_doc(uri, |doc| {
         let tree = doc.tree.as_ref()?;
@@ -61,7 +62,8 @@ pub async fn handle_completion(
                 position.character,
                 trigger,
             )?
-            .with_file_uri(Arc::from(uri_str));
+            .with_file_uri(Arc::from(uri_str))
+            .with_language_id(crate::language::LanguageId::new(lang_id.clone()));
 
         Some((ctx, doc.text.clone()))
     })??;
@@ -70,7 +72,7 @@ pub async fn handle_completion(
 
     // 4) completion engine（这里会 await，所以不能在 DashMap guard 里做）
     let mut index = workspace.index.write().await;
-    let candidates = engine.complete(ctx.clone(), &mut index);
+    let candidates = engine.complete(ctx.clone(), lang, &mut index);
     drop(index);
 
     if candidates.is_empty() {
@@ -88,10 +90,7 @@ pub async fn handle_completion(
         .map(|c| {
             let mut item = candidate_to_lsp(c, &source_for_edits);
 
-            if matches!(
-                ctx.location,
-                crate::completion::context::CursorLocation::Import { .. }
-            ) {
+            if matches!(ctx.location, CursorLocation::Import { .. }) {
                 if let Some(edit) = crate::completion::import_completion::make_import_text_edit(
                     &c.insert_text,
                     &source_for_edits,

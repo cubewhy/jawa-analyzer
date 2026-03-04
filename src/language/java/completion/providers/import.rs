@@ -1,9 +1,8 @@
-use super::super::{
-    candidate::CompletionCandidate,
-    context::{CompletionContext, CursorLocation},
+use crate::{
+    completion::{CompletionCandidate, provider::CompletionProvider},
+    index::GlobalIndex,
+    semantic::context::{CursorLocation, SemanticContext},
 };
-use super::CompletionProvider;
-use crate::index::GlobalIndex;
 
 pub struct ImportProvider;
 
@@ -12,11 +11,7 @@ impl CompletionProvider for ImportProvider {
         "import"
     }
 
-    fn provide(
-        &self,
-        ctx: &CompletionContext,
-        index: &mut GlobalIndex,
-    ) -> Vec<CompletionCandidate> {
+    fn provide(&self, ctx: &SemanticContext, index: &mut GlobalIndex) -> Vec<CompletionCandidate> {
         let prefix = match &ctx.location {
             CursorLocation::Import { prefix } => prefix.as_str(),
             _ => return vec![],
@@ -28,8 +23,8 @@ impl CompletionProvider for ImportProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::completion::context::{CompletionContext, CursorLocation};
     use crate::index::{ClassMetadata, ClassOrigin, GlobalIndex};
+    use crate::semantic::context::{CursorLocation, SemanticContext};
     use rust_asm::constants::ACC_PUBLIC;
     use std::sync::Arc;
 
@@ -62,8 +57,8 @@ mod tests {
         }
     }
 
-    fn import_ctx(prefix: &str) -> CompletionContext {
-        CompletionContext::new(
+    fn import_ctx(prefix: &str) -> SemanticContext {
+        SemanticContext::new(
             CursorLocation::Import {
                 prefix: prefix.to_string(),
             },
@@ -79,7 +74,7 @@ mod tests {
     #[test]
     fn test_non_import_location_returns_empty() {
         let mut idx = make_index();
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::Expression {
                 prefix: "Ma".to_string(),
             },

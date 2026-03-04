@@ -5,15 +5,15 @@ use tree_sitter::{Node, Parser, Query};
 
 use super::Language;
 use super::ts_utils::{capture_text, run_query};
-use crate::completion::type_resolver::type_name::TypeName;
-use crate::completion::{
-    CompletionCandidate, CompletionContext,
-    context::{CursorLocation, LocalVar},
-};
+use crate::completion::CompletionCandidate;
+use crate::completion::provider::CompletionProvider;
 use crate::language::rope_utils::rope_line_col_to_offset;
+use crate::semantic::{CursorLocation, LocalVar, SemanticContext, types::type_name::TypeName};
 
 #[derive(Debug)]
 pub struct KotlinLanguage;
+
+static KOTLIN_COMPLETION_PROVIDERS: [&dyn CompletionProvider; 0] = [];
 
 impl Language for KotlinLanguage {
     fn id(&self) -> &'static str {
@@ -38,7 +38,7 @@ impl Language for KotlinLanguage {
         line: u32,
         character: u32,
         trigger_char: Option<char>,
-    ) -> Option<CompletionContext> {
+    ) -> Option<SemanticContext> {
         let rope = Rope::from_str(source);
         let offset = rope_line_col_to_offset(&rope, line, character)?;
         debug!(line, character, trigger = ?trigger_char, "kotlin: parsing context");
@@ -51,10 +51,14 @@ impl Language for KotlinLanguage {
         )
     }
 
+    fn completion_providers(&self) -> &[&'static dyn CompletionProvider] {
+        &KOTLIN_COMPLETION_PROVIDERS
+    }
+
     fn post_process_candidates(
         &self,
         mut candidates: Vec<CompletionCandidate>,
-        _ctx: &CompletionContext,
+        _ctx: &SemanticContext,
     ) -> Vec<CompletionCandidate> {
         for c in &mut candidates {
             let name = c.label.as_ref();
@@ -101,7 +105,7 @@ impl<'s> KotlinContextExtractor<'s> {
         }
     }
 
-    fn extract(self, root: Node, trigger_char: Option<char>) -> CompletionContext {
+    fn extract(self, root: Node, trigger_char: Option<char>) -> SemanticContext {
         let cursor_node =
             root.named_descendant_for_byte_range(self.offset.saturating_sub(1), self.offset);
 
@@ -116,7 +120,7 @@ impl<'s> KotlinContextExtractor<'s> {
         };
         let existing_imports = self.extract_imports(root);
 
-        CompletionContext::new(
+        SemanticContext::new(
             location,
             query,
             local_variables,
@@ -569,9 +573,9 @@ pub fn kotlin_type_to_internal(ty: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::completion::context::CursorLocation;
+    use crate::semantic::context::CursorLocation;
 
-    fn at(src: &str, line: u32, col: u32) -> CompletionContext {
+    fn at(src: &str, line: u32, col: u32) -> SemanticContext {
         KotlinLanguage
             .parse_completion_context(src, line, col, None)
             .unwrap()
@@ -774,7 +778,7 @@ mod tests {
     fn test_post_process_lowers_getter_score() {
         use crate::completion::candidate::{CandidateKind, CompletionCandidate};
 
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::Expression { prefix: "".into() },
             "",
             vec![],

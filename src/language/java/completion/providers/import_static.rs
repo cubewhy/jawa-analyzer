@@ -2,14 +2,10 @@ use std::sync::Arc;
 
 use rust_asm::constants::ACC_STATIC;
 
-use super::super::{
-    candidate::CompletionCandidate,
-    context::{CompletionContext, CursorLocation},
-};
-use super::CompletionProvider;
 use crate::{
-    completion::CandidateKind,
+    completion::{CandidateKind, CompletionCandidate, provider::CompletionProvider},
     index::{ClassMetadata, GlobalIndex},
+    semantic::context::{CursorLocation, SemanticContext},
 };
 
 pub struct ImportStaticProvider;
@@ -19,11 +15,7 @@ impl CompletionProvider for ImportStaticProvider {
         "import_static"
     }
 
-    fn provide(
-        &self,
-        ctx: &CompletionContext,
-        index: &mut GlobalIndex,
-    ) -> Vec<CompletionCandidate> {
+    fn provide(&self, ctx: &SemanticContext, index: &mut GlobalIndex) -> Vec<CompletionCandidate> {
         let prefix = match &ctx.location {
             CursorLocation::ImportStatic { prefix } => prefix.as_str(),
             _ => return vec![],
@@ -118,10 +110,10 @@ fn static_members_for_import(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::completion::context::{CompletionContext, CursorLocation};
     use crate::index::{
         ClassMetadata, ClassOrigin, FieldSummary, GlobalIndex, MethodParams, MethodSummary,
     };
+    use crate::semantic::context::{CursorLocation, SemanticContext};
     use rust_asm::constants::{ACC_PUBLIC, ACC_STATIC};
     use std::sync::Arc;
 
@@ -190,8 +182,8 @@ mod tests {
         idx
     }
 
-    fn import_static_ctx(prefix: &str) -> CompletionContext {
-        CompletionContext::new(
+    fn import_static_ctx(prefix: &str) -> SemanticContext {
+        SemanticContext::new(
             CursorLocation::ImportStatic {
                 prefix: prefix.to_string(),
             },
@@ -207,7 +199,7 @@ mod tests {
     #[test]
     fn test_wrong_location_returns_empty() {
         let mut idx = math_index();
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::Expression {
                 prefix: "abs".to_string(),
             },

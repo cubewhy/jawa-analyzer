@@ -1,6 +1,5 @@
 use dashmap::DashMap;
 use ropey::Rope;
-use std::sync::Arc;
 use tower_lsp::lsp_types::Url;
 use tree_sitter::Tree;
 
@@ -65,12 +64,12 @@ impl DocumentStore {
 
     /// Read-only access without cloning the whole doc
     pub fn with_doc<R>(&self, uri: &Url, f: impl FnOnce(&Document) -> R) -> Option<R> {
-        self.docs.get(uri).map(|d| f(&*d))
+        self.docs.get(uri).map(|d| f(&d))
     }
 
     /// Mutable access without cloning; do NOT .await inside f
     pub fn with_doc_mut<R>(&self, uri: &Url, f: impl FnOnce(&mut Document) -> R) -> Option<R> {
-        self.docs.get_mut(uri).map(|mut d| f(&mut *d))
+        self.docs.get_mut(uri).map(|mut d| f(&mut d))
     }
 }
 

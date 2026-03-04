@@ -3,14 +3,13 @@ use std::sync::Arc;
 
 use rust_asm::constants::{ACC_FINAL, ACC_PRIVATE, ACC_STATIC};
 
-use super::super::{
-    candidate::{CandidateKind, CompletionCandidate},
-    context::{CompletionContext, CursorLocation},
-};
-use super::CompletionProvider;
 use crate::{
-    completion::type_resolver::ContextualResolver,
+    completion::{CandidateKind, CompletionCandidate, provider::CompletionProvider},
     index::{GlobalIndex, MethodSummary},
+    semantic::{
+        context::{CursorLocation, SemanticContext},
+        types::ContextualResolver,
+    },
 };
 
 pub struct OverrideProvider;
@@ -20,11 +19,7 @@ impl CompletionProvider for OverrideProvider {
         "override"
     }
 
-    fn provide(
-        &self,
-        ctx: &CompletionContext,
-        index: &mut GlobalIndex,
-    ) -> Vec<CompletionCandidate> {
+    fn provide(&self, ctx: &SemanticContext, index: &mut GlobalIndex) -> Vec<CompletionCandidate> {
         let prefix = match &ctx.location {
             CursorLocation::Expression { prefix } => prefix.as_str(),
             _ => return vec![],
@@ -81,8 +76,7 @@ impl CompletionProvider for OverrideProvider {
                     if m.descriptor().is_empty() {
                         return true;
                     }
-                    crate::completion::type_resolver::count_params(&m.descriptor())
-                        == candidate_param_count
+                    crate::semantic::types::count_params(&m.descriptor()) == candidate_param_count
                 });
 
                 if blocked_by_source {
@@ -96,7 +90,7 @@ impl CompletionProvider for OverrideProvider {
                 let resolver = ContextualResolver::new(index, ctx);
 
                 let Some((params_source, return_type_source)) =
-                    crate::completion::type_resolver::parse_strict_method_signature(
+                    crate::semantic::types::parse_strict_method_signature(
                         &method.desc(),
                         &resolver,
                     )
@@ -178,7 +172,7 @@ fn build_candidate(
     return_type_source: &str,
     params_source: &[String],
     defining_class_internal: &Arc<str>,
-    ctx: &CompletionContext,
+    ctx: &SemanticContext,
     index: &GlobalIndex,
     source: &'static str,
 ) -> CompletionCandidate {
@@ -251,9 +245,9 @@ fn build_candidate(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::completion::context::{CompletionContext, CurrentClassMember, CursorLocation};
-    use crate::completion::type_resolver::parse_return_type_from_descriptor;
     use crate::index::{ClassMetadata, ClassOrigin, GlobalIndex, MethodParams, MethodSummary};
+    use crate::semantic::context::{CurrentClassMember, CursorLocation, SemanticContext};
+    use crate::semantic::types::parse_return_type_from_descriptor;
     use rust_asm::constants::{ACC_PROTECTED, ACC_PUBLIC, ACC_STATIC};
     use std::sync::Arc;
 
@@ -303,8 +297,8 @@ mod tests {
         }
     }
 
-    fn ctx_with_prefix(prefix: &str, enclosing_internal: &str) -> CompletionContext {
-        CompletionContext::new(
+    fn ctx_with_prefix(prefix: &str, enclosing_internal: &str) -> SemanticContext {
+        SemanticContext::new(
             CursorLocation::Expression {
                 prefix: prefix.to_string(),
             },
@@ -674,7 +668,7 @@ mod tests {
     #[test]
     fn test_no_enclosing_class_returns_empty() {
         let mut idx = GlobalIndex::new();
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::Expression {
                 prefix: "pub".to_string(),
             },
@@ -786,7 +780,7 @@ mod tests {
             make_class("com/example", "Child", Some("com/example/Parent"), vec![]),
         ]);
 
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "pub".to_string(),

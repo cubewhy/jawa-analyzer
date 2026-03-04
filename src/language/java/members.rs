@@ -3,7 +3,6 @@ use std::sync::Arc;
 use tree_sitter::{Node, Query};
 
 use crate::{
-    completion::{context::CurrentClassMember, type_resolver::parse_return_type_from_descriptor},
     index::{AnnotationSummary, FieldSummary, MethodParams, MethodSummary, intern_str},
     language::{
         java::{
@@ -12,6 +11,10 @@ use crate::{
             utils::{extract_generic_signature, parse_java_modifiers},
         },
         ts_utils::{capture_text, run_query},
+    },
+    semantic::{
+        context::CurrentClassMember,
+        types::parse_return_type_from_descriptor,
     },
 };
 

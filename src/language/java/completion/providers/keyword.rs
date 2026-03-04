@@ -1,9 +1,8 @@
-use super::super::{
-    candidate::{CandidateKind, CompletionCandidate},
-    context::{CompletionContext, CursorLocation},
+use crate::{
+    completion::{CandidateKind, CompletionCandidate, provider::CompletionProvider},
+    index::GlobalIndex,
+    semantic::context::{CursorLocation, SemanticContext},
 };
-use super::CompletionProvider;
-use crate::index::GlobalIndex;
 use std::sync::Arc;
 
 #[rustfmt::skip]
@@ -28,11 +27,7 @@ impl CompletionProvider for KeywordProvider {
         "keyword"
     }
 
-    fn provide(
-        &self,
-        ctx: &CompletionContext,
-        _index: &mut GlobalIndex,
-    ) -> Vec<CompletionCandidate> {
+    fn provide(&self, ctx: &SemanticContext, _index: &mut GlobalIndex) -> Vec<CompletionCandidate> {
         let prefix = match &ctx.location {
             CursorLocation::Expression { prefix } => prefix.as_str(),
             _ => return vec![],

@@ -1,582 +1,45 @@
-use super::context::CursorLocation;
-use super::type_resolver::TypeResolver;
-use super::{
-    candidate::CompletionCandidate,
-    context::CompletionContext,
-    providers::{
-        CompletionProvider, constructor::ConstructorProvider, import::ImportProvider,
-        keyword::KeywordProvider, local_var::LocalVarProvider, member::MemberProvider,
-        static_member::StaticMemberProvider,
-    },
-};
-use crate::completion::import_utils::resolve_simple_to_internal;
-use crate::completion::parser::parse_chain_from_expr;
-use crate::completion::providers::annotation::AnnotationProvider;
-use crate::completion::providers::expression::ExpressionProvider;
-use crate::completion::providers::import_static::ImportStaticProvider;
-use crate::completion::providers::name_suggestion::NameSuggestionProvider;
-use crate::completion::providers::override_member::OverrideProvider;
-use crate::completion::providers::package::PackageProvider;
-use crate::completion::providers::snippet::SnippetProvider;
-use crate::completion::providers::static_import_member::StaticImportMemberProvider;
-use crate::completion::providers::this_member::ThisMemberProvider;
-use crate::completion::type_resolver::symbol_resolver::SymbolResolver;
-use crate::completion::type_resolver::type_name::TypeName;
-use crate::completion::type_resolver::{
-    ChainSegment, parse_single_type_to_internal, singleton_descriptor_to_type,
-};
-use crate::completion::{LocalVar, post_processor};
+use crate::completion::CompletionCandidate;
+use crate::completion::post_processor;
+use crate::completion::provider::CompletionProvider;
 use crate::index::GlobalIndex;
-use std::sync::Arc;
-
-pub struct ContextEnricher<'a> {
-    index: &'a GlobalIndex,
-}
-
-impl<'a> ContextEnricher<'a> {
-    pub fn new(index: &'a GlobalIndex) -> Self {
-        Self { index }
-    }
-
-    pub fn enrich(&self, ctx: &mut CompletionContext) {
-        {
-            let resolver = TypeResolver::new(self.index);
-            let to_resolve: Vec<(usize, String)> = ctx
-                .local_variables
-                .iter()
-                .enumerate()
-                .filter_map(|(i, lv)| {
-                    if lv.type_internal.as_ref() == "var" {
-                        lv.init_expr.as_deref().map(|e| (i, e.to_string()))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            for (idx_in_vec, init_expr) in to_resolve {
-                if let Some(resolved) = resolve_var_init_expr(
-                    &init_expr,
-                    &ctx.local_variables,
-                    ctx.enclosing_internal_name.as_ref(),
-                    &resolver,
-                    &ctx.existing_imports,
-                    ctx.enclosing_package.as_deref(),
-                    self.index,
-                ) {
-                    ctx.local_variables[idx_in_vec].type_internal = resolved;
-                }
-            }
-        }
-
-        if let CursorLocation::MemberAccess {
-            receiver_type,
-            receiver_expr,
-            ..
-        } = &mut ctx.location
-            && receiver_type.is_none()
-            && !receiver_expr.is_empty()
-        {
-            let resolver = TypeResolver::new(self.index);
-            let resolved = if looks_like_array_access(receiver_expr) {
-                resolve_array_access_type(
-                    receiver_expr,
-                    &ctx.local_variables,
-                    ctx.enclosing_internal_name.as_ref(),
-                    &resolver,
-                    &ctx.existing_imports,
-                    ctx.enclosing_package.as_deref(),
-                    self.index,
-                )
-            } else {
-                let chain = parse_chain_from_expr(receiver_expr);
-                tracing::debug!(?chain, receiver_expr, "enrich_context: parsed chain");
-
-                if chain.is_empty() {
-                    let r = resolver.resolve(
-                        receiver_expr,
-                        &ctx.local_variables,
-                        ctx.enclosing_internal_name.as_ref(),
-                    );
-                    tracing::debug!(
-                        ?r,
-                        receiver_expr,
-                        "enrich_context: chain is empty, resolver.resolve returned"
-                    );
-                    r
-                } else {
-                    let r = evaluate_chain(
-                        &chain,
-                        &ctx.local_variables,
-                        ctx.enclosing_internal_name.as_ref(),
-                        &resolver,
-                        &ctx.existing_imports,
-                        ctx.enclosing_package.as_deref(),
-                        self.index,
-                    );
-                    tracing::debug!(?r, "enrich_context: evaluate_chain returned");
-                    r
-                }
-            };
-
-            tracing::debug!(?resolved, "enrich_context: resolved before final match");
-
-            // If the result is a simple name (without '/'), it needs to be further parsed into an internal name.
-            *receiver_type = match resolved {
-                None => {
-                    tracing::debug!("enrich_context: final match -> None");
-                    None
-                }
-                Some(ref ty) if ty.contains_slash() => Some(ty.to_arc()),
-                Some(ty) => {
-                    let r = resolve_simple_to_internal(
-                        ty.as_str(),
-                        &ctx.existing_imports,
-                        ctx.enclosing_package.as_deref(),
-                        self.index,
-                    );
-                    tracing::debug!(
-                        ?r,
-                        ?ty,
-                        "enrich_context: final match -> resolve_simple_to_internal returned"
-                    );
-                    r
-                }
-            };
-
-            // receiver_expr 是已知包名 -> 转成 Import
-            let import_location: Option<(CursorLocation, String)> =
-                if let CursorLocation::MemberAccess {
-                    receiver_type,
-                    receiver_expr,
-                    member_prefix,
-                    ..
-                } = &ctx.location
-                    && receiver_type.is_none()
-                {
-                    let pkg_normalized = receiver_expr.replace('.', "/");
-                    if self.index.has_package(&pkg_normalized) {
-                        let prefix = format!("{}.{}", receiver_expr, member_prefix);
-                        let query = member_prefix.clone();
-                        Some((CursorLocation::Import { prefix }, query))
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
-
-            if let Some((loc, query)) = import_location {
-                ctx.location = loc;
-                ctx.query = query;
-            }
-        }
-
-        // Resolve `var` local variables
-        {
-            let resolver = TypeResolver::new(self.index);
-            let to_resolve: Vec<(usize, String)> = ctx
-                .local_variables
-                .iter()
-                .enumerate()
-                .filter_map(|(i, lv)| {
-                    if lv.type_internal.as_ref() == "var" {
-                        lv.init_expr.as_deref().map(|e| (i, e.to_string()))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            // infer `var`
-            for (idx_in_vec, init_expr) in to_resolve {
-                if let Some(resolved) = resolve_var_init_expr(
-                    &init_expr,
-                    &ctx.local_variables,
-                    ctx.enclosing_internal_name.as_ref(),
-                    &resolver,
-                    &ctx.existing_imports,
-                    ctx.enclosing_package.as_deref(),
-                    self.index,
-                ) {
-                    ctx.local_variables[idx_in_vec].type_internal = resolved;
-                }
-            }
-
-            let sym = SymbolResolver::new(self.index);
-            let new_types: Vec<TypeName> = ctx
-                .local_variables
-                .iter()
-                .map(|lv| expand_local_type_strict(&sym, ctx, &lv.type_internal))
-                .collect();
-
-            for (lv, new_ty) in ctx.local_variables.iter_mut().zip(new_types) {
-                lv.type_internal = new_ty;
-            }
-        }
-    }
-}
+use crate::language::Language;
+use crate::semantic::SemanticContext;
 
 pub struct CompletionEngine {
-    providers: Vec<Box<dyn CompletionProvider>>,
+    extra_providers: Vec<Box<dyn CompletionProvider>>,
 }
 
 impl CompletionEngine {
     pub fn new() -> Self {
         Self {
-            providers: vec![
-                Box::new(LocalVarProvider), // Highest priority: local variables
-                Box::new(ThisMemberProvider),
-                Box::new(MemberProvider),       // obj.xxx
-                Box::new(StaticMemberProvider), // Cls.xxx
-                Box::new(ConstructorProvider),  // new Xxx
-                Box::new(PackageProvider),
-                Box::new(ExpressionProvider), // expression/type position: class name
-                Box::new(ImportProvider),     // import statement
-                Box::new(ImportStaticProvider),
-                Box::new(StaticImportMemberProvider),
-                Box::new(OverrideProvider),
-                Box::new(KeywordProvider), // Keyword (triggered only upon input)
-                Box::new(AnnotationProvider),
-                Box::new(SnippetProvider), // Snippets
-                Box::new(NameSuggestionProvider),
-            ],
+            extra_providers: Vec::new(),
         }
     }
 
     pub fn register_provider(&mut self, provider: Box<dyn CompletionProvider>) {
-        self.providers.push(provider);
+        self.extra_providers.push(provider);
     }
 
     pub fn complete(
         &self,
-        mut ctx: CompletionContext,
+        mut ctx: SemanticContext,
+        lang: &dyn Language,
         index: &mut GlobalIndex,
     ) -> Vec<CompletionCandidate> {
-        // infer type
-        ContextEnricher::new(index).enrich(&mut ctx);
+        lang.enrich_completion_context(&mut ctx, index);
 
-        let candidates: Vec<CompletionCandidate> = self
-            .providers
+        let mut candidates: Vec<CompletionCandidate> = lang
+            .completion_providers()
             .iter()
             .flat_map(|p| p.provide(&ctx, index))
             .collect();
 
+        for provider in &self.extra_providers {
+            candidates.extend(provider.provide(&ctx, index));
+        }
+
         post_processor::process(candidates, &ctx.query)
     }
-}
-
-fn looks_like_array_access(expr: &str) -> bool {
-    expr.contains('[') && expr.trim_end().ends_with(']')
-}
-
-fn expand_local_type_strict(
-    sym: &SymbolResolver,
-    ctx: &CompletionContext,
-    ty: &TypeName,
-) -> TypeName {
-    let s = ty.as_str();
-
-    // primitives/unknown/var 不动
-    if matches!(
-        s,
-        "var"
-            | "unknown"
-            | "byte"
-            | "short"
-            | "int"
-            | "long"
-            | "float"
-            | "double"
-            | "boolean"
-            | "char"
-            | "void"
-    ) {
-        return ty.clone();
-    }
-
-    // array dims: Foo[][]
-    let mut base = s;
-    let mut dims = 0usize;
-    while let Some(stripped) = base.strip_suffix("[]") {
-        dims += 1;
-        base = stripped.trim();
-    }
-
-    // strip generics: List<String> -> List
-    let base = base.split('<').next().unwrap_or(base).trim();
-
-    // 已经 internal 或 index 可命中：不展开
-    if base.contains('/') || sym.index.get_class(base).is_some() {
-        return ty.clone();
-    }
-
-    // strict 展开 simple name -> internal
-    let mut out = if let Some(internal) = sym.resolve_type_name(ctx, base) {
-        TypeName::from(internal)
-    } else {
-        ty.clone()
-    };
-
-    for _ in 0..dims {
-        out = out.wrap_array();
-    }
-    out
-}
-
-fn resolve_array_access_type(
-    expr: &str,
-    locals: &[LocalVar],
-    enclosing_internal: Option<&Arc<str>>,
-    resolver: &TypeResolver,
-    existing_imports: &[Arc<str>],
-    enclosing_package: Option<&str>,
-    index: &GlobalIndex,
-) -> Option<TypeName> {
-    let bracket = expr.rfind('[')?;
-    if !expr.trim_end().ends_with(']') {
-        return None;
-    }
-    let array_expr = expr[..bracket].trim();
-    if array_expr.is_empty() {
-        return None;
-    }
-
-    // 统一走解析链，让 evaluate_chain 去应对多级调用
-    let chain = parse_chain_from_expr(array_expr);
-    let array_type = if chain.is_empty() {
-        resolver.resolve(array_expr, locals, enclosing_internal)
-    } else {
-        evaluate_chain(
-            &chain,
-            locals,
-            enclosing_internal,
-            resolver,
-            existing_imports,
-            enclosing_package,
-            index,
-        )
-    }?;
-
-    array_type.element_type()
-}
-
-fn resolve_var_init_expr(
-    expr: &str,
-    locals: &[LocalVar],
-    enclosing_internal: Option<&Arc<str>>,
-    resolver: &TypeResolver,
-    existing_imports: &[Arc<str>],
-    enclosing_package: Option<&str>,
-    index: &GlobalIndex,
-) -> Option<TypeName> {
-    let expr = expr.trim();
-    if let Some(rest) = expr.strip_prefix("new ") {
-        // 寻找类型声明的边界：可能是普通构造函数 '('、泛型 '<'，或者是数组的 '['、'{'
-        let boundary_idx = rest.find(['(', '<', '[', '{']).unwrap_or(rest.len());
-        let type_name = rest[..boundary_idx].trim();
-
-        // 解析基础类型，同时为 primitive 类型做白名单兜底
-        let resolved_base: TypeName = match type_name {
-            "byte" | "short" | "int" | "long" | "float" | "double" | "boolean" | "char" => {
-                TypeName::new(type_name)
-            }
-            _ => TypeName::from(crate::completion::import_utils::resolve_simple_to_internal(
-                type_name,
-                existing_imports,
-                enclosing_package,
-                index,
-            )?),
-        };
-
-        let after_type = rest[boundary_idx..].trim_start();
-
-        if after_type.starts_with('[') || after_type.starts_with('{') {
-            let brace_idx = after_type.find('{').unwrap_or(after_type.len());
-            let dimensions = after_type[..brace_idx].matches('[').count();
-            let mut array_ty = resolved_base;
-            for _ in 0..dimensions {
-                array_ty = array_ty.wrap_array();
-            }
-            return Some(array_ty);
-        }
-
-        return Some(resolved_base);
-    }
-
-    let chain = parse_chain_from_expr(expr);
-    if !chain.is_empty() {
-        return evaluate_chain(
-            &chain,
-            locals,
-            enclosing_internal,
-            resolver,
-            existing_imports,
-            enclosing_package,
-            index,
-        );
-    }
-
-    resolve_array_access_type(
-        expr,
-        locals,
-        enclosing_internal,
-        resolver,
-        existing_imports,
-        enclosing_package,
-        index,
-    )
-}
-
-/// 统一且健壮的调用链类型推导逻辑 (支持连缀方法调用和字段读取)
-fn evaluate_chain(
-    chain: &[ChainSegment],
-    locals: &[LocalVar],
-    enclosing_internal: Option<&Arc<str>>,
-    resolver: &TypeResolver,
-    existing_imports: &[Arc<str>],
-    enclosing_package: Option<&str>,
-    index: &GlobalIndex,
-) -> Option<TypeName> {
-    let mut current: Option<TypeName> = None;
-    for (i, seg) in chain.iter().enumerate() {
-        // 提取 base_name 和 数组维度 (彻底解决 parser 不拆分 [0] 的问题)
-        let bracket_idx = seg.name.find('[');
-        let base_name = if let Some(idx) = bracket_idx {
-            &seg.name[..idx]
-        } else {
-            &seg.name
-        };
-        let dimensions = seg.name.matches('[').count();
-
-        if i == 0 {
-            if seg.arg_count.is_some() {
-                let recv_internal = enclosing_internal?;
-                let arg_types: Vec<TypeName> = seg
-                    .arg_texts
-                    .iter()
-                    .filter_map(|t| resolver.resolve(t.trim(), locals, enclosing_internal))
-                    .collect();
-                let arg_types_ref: &[TypeName] = if arg_types.len() == seg.arg_texts.len() {
-                    &arg_types
-                } else {
-                    &[]
-                };
-                current = resolver.resolve_method_return(
-                    recv_internal.as_ref(),
-                    base_name,
-                    seg.arg_count.unwrap_or(-1),
-                    arg_types_ref,
-                );
-            } else {
-                current = resolver.resolve(base_name, locals, enclosing_internal);
-                if current.is_none() {
-                    if let Some(enclosing) = enclosing_internal {
-                        let enclosing_simple = enclosing
-                            .rsplit('/')
-                            .next()
-                            .unwrap_or(enclosing)
-                            .rsplit('$')
-                            .next()
-                            .unwrap_or(enclosing);
-
-                        if base_name == enclosing_simple {
-                            current = Some(TypeName::new(enclosing.as_ref()));
-                        }
-                    }
-
-                    if current.is_none() {
-                        current = resolve_simple_to_internal(
-                            base_name,
-                            existing_imports,
-                            enclosing_package,
-                            index,
-                        )
-                        .map(TypeName::from);
-                    }
-                }
-            }
-        } else {
-            let recv = current.as_ref()?;
-
-            // 处理形如 `getArr()[0]` 被解析为独立的无名 segment 的情况
-            if base_name.is_empty() {
-                current = Some(recv.clone());
-            } else {
-                let recv_str = recv.as_str();
-                let recv_full: TypeName =
-                    if recv_str.contains('/') || index.get_class(recv_str).is_some() {
-                        recv.clone()
-                    } else {
-                        resolve_simple_to_internal(
-                            recv_str,
-                            existing_imports,
-                            enclosing_package,
-                            index,
-                        )?
-                        .into()
-                    };
-
-                if seg.arg_count.is_some() {
-                    let arg_types: Vec<TypeName> = seg
-                        .arg_texts
-                        .iter()
-                        .filter_map(|t| resolver.resolve(t.trim(), locals, enclosing_internal))
-                        .collect();
-                    let arg_types_ref = if arg_types.len() == seg.arg_texts.len() {
-                        &arg_types
-                    } else {
-                        &vec![]
-                    };
-                    current = resolver.resolve_method_return(
-                        recv_full.as_str(),
-                        base_name,
-                        seg.arg_count.unwrap_or(-1),
-                        arg_types_ref,
-                    );
-                } else {
-                    let mut found = None;
-                    for m in index.mro(recv_full.base()) {
-                        if let Some(f) = m.fields.iter().find(|f| f.name.as_ref() == base_name) {
-                            tracing::debug!(field_name = ?f.name, descriptor = ?f.descriptor, "Evaluate_chain found field in index");
-
-                            if let Some(ty) = singleton_descriptor_to_type(&f.descriptor) {
-                                found = Some(TypeName::new(ty));
-                            } else {
-                                found = parse_single_type_to_internal(&f.descriptor);
-                            }
-
-                            tracing::debug!(parsed_type = ?found, "Evaluate_chain parsed descriptor to TypeName");
-                            break;
-                        }
-                    }
-                    current = found;
-                }
-            }
-        }
-
-        // 根据 [ ] 的数量进行循环剥壳降维
-        if dimensions > 0 {
-            // 使用 take() 拿走所有权，此时 current 自动变为 None
-            if let Some(mut ty) = current.take() {
-                let mut success = true;
-                for _ in 0..dimensions {
-                    if let Some(el) = ty.element_type() {
-                        ty = el;
-                    } else {
-                        success = false; // 超出数组维度访问
-                        break;
-                    }
-                }
-                // 只有成功降维完毕，才把新的类型装回去
-                // 如果失败了，current 保持为 take() 留下的 None
-                if success {
-                    current = Some(ty);
-                }
-            }
-        }
-    }
-    current
 }
 
 impl Default for CompletionEngine {
@@ -589,8 +52,11 @@ impl Default for CompletionEngine {
 mod tests {
     use super::*;
     use crate::{
-        completion::{LocalVar, parser::parse_chain_from_expr},
+        completion::parser::parse_chain_from_expr,
         index::{ClassMetadata, ClassOrigin, MethodParams, MethodSummary},
+        language::{JavaLanguage, java::completion_context::ContextEnricher},
+        semantic::types::{TypeResolver, type_name::TypeName},
+        semantic::{CursorLocation, LocalVar, SemanticContext},
     };
     use rust_asm::constants::ACC_PUBLIC;
     use std::sync::Arc;
@@ -604,7 +70,6 @@ mod tests {
 
     #[test]
     fn test_chain_simple_variable() {
-        // [修复点] "list.ge" -> 应当解析为前后两个完整的 variable
         assert_eq!(
             seg_names("list.ge"),
             vec![("list".into(), None), ("ge".into(), None)]
@@ -683,7 +148,7 @@ mod tests {
     #[test]
     fn test_enrich_context_resolves_simple_name_via_import() {
         let idx = make_index_with_random_class();
-        let mut ctx = CompletionContext::new(
+        let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "f".to_string(),
@@ -715,7 +180,7 @@ mod tests {
     #[test]
     fn test_enrich_context_resolves_simple_name_via_wildcard_import() {
         let idx = make_index_with_random_class();
-        let mut ctx = CompletionContext::new(
+        let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -742,7 +207,7 @@ mod tests {
     #[test]
     fn test_complete_returns_f_method() {
         let mut idx = make_index_with_random_class();
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "f".to_string(),
@@ -761,7 +226,7 @@ mod tests {
             vec!["org.cubewhy.RandomClass".into()],
         );
         let engine = CompletionEngine::new();
-        let results = engine.complete(ctx, &mut idx);
+        let results = engine.complete(ctx, &JavaLanguage, &mut idx);
         assert!(
             results.iter().any(|c| c.label.as_ref() == "f"),
             "should find method f(): {:?}",
@@ -813,7 +278,7 @@ mod tests {
         ]);
 
         // 模拟用户输入了 System.out.|
-        let mut ctx = CompletionContext::new(
+        let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -843,7 +308,6 @@ mod tests {
 
     #[test]
     fn test_expected_type_ranks_first_in_constructor_completion() {
-        use crate::completion::context::CursorLocation;
         use crate::index::{ClassMetadata, ClassOrigin, MethodSummary};
         use rust_asm::constants::ACC_PUBLIC;
         let mut idx = GlobalIndex::new();
@@ -876,7 +340,7 @@ mod tests {
             }]);
         }
         let engine = CompletionEngine::new();
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::ConstructorCall {
                 class_prefix: String::new(),
                 expected_type: Some("RandomClass".to_string()),
@@ -888,7 +352,7 @@ mod tests {
             Some(Arc::from("org/cubewhy/a")),
             vec!["org.cubewhy.RandomClass".into()],
         );
-        let results = engine.complete(ctx, &mut idx);
+        let results = engine.complete(ctx, &JavaLanguage, &mut idx);
         assert!(!results.is_empty(), "should have candidates");
         assert_eq!(
             results[0].label.as_ref(),
@@ -900,7 +364,6 @@ mod tests {
 
     #[test]
     fn test_var_method_return_type_resolved() {
-        use crate::completion::context::{CursorLocation, LocalVar};
         use crate::index::{ClassMetadata, ClassOrigin, MethodSummary};
         use rust_asm::constants::ACC_PUBLIC;
         let mut idx = GlobalIndex::new();
@@ -926,7 +389,7 @@ mod tests {
             inner_class_of: None,
             origin: ClassOrigin::Unknown,
         }]);
-        let mut ctx = CompletionContext::new(
+        let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -962,7 +425,6 @@ mod tests {
 
     #[test]
     fn test_var_overload_resolved_by_long_arg() {
-        use crate::completion::context::{CursorLocation, LocalVar};
         use crate::index::{ClassMetadata, ClassOrigin, MethodSummary};
         use rust_asm::constants::ACC_PUBLIC;
         let mut idx = GlobalIndex::new();
@@ -1001,7 +463,7 @@ mod tests {
             inner_class_of: None,
             origin: ClassOrigin::Unknown,
         }]);
-        let mut ctx = CompletionContext::new(
+        let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -1062,7 +524,7 @@ mod tests {
             inner_class_of: None,
             origin: ClassOrigin::Unknown,
         }]);
-        let mut ctx = CompletionContext::new(
+        let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -1187,7 +649,7 @@ mod tests {
             },
         ]);
         let engine = CompletionEngine::new();
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -1201,7 +663,7 @@ mod tests {
             None,
             vec![],
         );
-        let results = engine.complete(ctx, &mut idx);
+        let results = engine.complete(ctx, &JavaLanguage, &mut idx);
         assert!(results.iter().any(|c| c.label.as_ref() == "func"));
     }
 
@@ -1222,7 +684,7 @@ mod tests {
             inner_class_of: None,
             origin: ClassOrigin::Unknown,
         }]);
-        let mut ctx = CompletionContext::new(
+        let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -1259,7 +721,7 @@ mod tests {
     #[test]
     fn test_var_primitive_array_element_not_resolved() {
         let idx = GlobalIndex::new();
-        let mut ctx = CompletionContext::new(
+        let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -1318,7 +780,7 @@ mod tests {
             inner_class_of: None,
             origin: ClassOrigin::Unknown,
         }]);
-        let mut ctx = CompletionContext::new(
+        let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -1361,7 +823,7 @@ mod tests {
             inner_class_of: None,
             origin: ClassOrigin::Unknown,
         }]);
-        let mut ctx = CompletionContext::new(
+        let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "ArrayL".to_string(),
@@ -1385,7 +847,7 @@ mod tests {
     #[test]
     fn test_unknown_receiver_stays_member_access() {
         let idx = GlobalIndex::new();
-        let mut ctx = CompletionContext::new(
+        let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "foo".to_string(),
@@ -1405,7 +867,6 @@ mod tests {
 
     #[test]
     fn test_var_array_initializer_and_access() {
-        use crate::completion::context::LocalVar;
         use crate::index::{ClassMetadata, ClassOrigin};
         use rust_asm::constants::ACC_PUBLIC;
 
@@ -1425,7 +886,7 @@ mod tests {
             origin: ClassOrigin::Unknown,
         }]);
 
-        let mut ctx = CompletionContext::new(
+        let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -1524,7 +985,7 @@ mod tests {
             origin: ClassOrigin::Unknown,
         }]);
 
-        let mut ctx = CompletionContext::new(
+        let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -1572,7 +1033,7 @@ mod tests {
             origin: ClassOrigin::Unknown,
         }]);
 
-        let mut ctx = CompletionContext::new(
+        let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -1622,7 +1083,7 @@ mod tests {
             origin: ClassOrigin::Unknown,
         }]);
 
-        let mut ctx = CompletionContext::new(
+        let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -1699,7 +1160,7 @@ mod tests {
             },
         ]);
 
-        let mut ctx = CompletionContext::new(
+        let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),

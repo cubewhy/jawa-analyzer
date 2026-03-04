@@ -1,14 +1,12 @@
-use super::super::{
-    candidate::{CandidateKind, CompletionCandidate},
-    context::{CompletionContext, CursorLocation},
-};
-use super::CompletionProvider;
 use crate::{
     completion::{
+        CandidateKind, CompletionCandidate,
         import_utils::{fqn_of_meta, is_import_needed},
+        provider::CompletionProvider,
         scorer::AccessFilter,
     },
     index::GlobalIndex,
+    semantic::context::{CursorLocation, SemanticContext},
 };
 use std::sync::Arc;
 
@@ -19,11 +17,7 @@ impl CompletionProvider for ConstructorProvider {
         "constructor"
     }
 
-    fn provide(
-        &self,
-        ctx: &CompletionContext,
-        index: &mut GlobalIndex,
-    ) -> Vec<CompletionCandidate> {
+    fn provide(&self, ctx: &SemanticContext, index: &mut GlobalIndex) -> Vec<CompletionCandidate> {
         let (class_prefix, expected_type) = match &ctx.location {
             CursorLocation::ConstructorCall {
                 class_prefix,
@@ -208,9 +202,8 @@ pub fn jvm_type_to_readable(ty: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::completion::context::{CompletionContext, CursorLocation};
-    use crate::completion::providers::CompletionProvider;
     use crate::index::{ClassMetadata, ClassOrigin, GlobalIndex, MethodParams, MethodSummary};
+    use crate::semantic::context::{CursorLocation, SemanticContext};
     use rust_asm::constants::ACC_PUBLIC;
     use std::sync::Arc;
 
@@ -250,8 +243,8 @@ mod tests {
         idx
     }
 
-    fn make_ctx(prefix: &str, expected: Option<&str>, imports: Vec<Arc<str>>) -> CompletionContext {
-        CompletionContext::new(
+    fn make_ctx(prefix: &str, expected: Option<&str>, imports: Vec<Arc<str>>) -> SemanticContext {
+        SemanticContext::new(
             CursorLocation::ConstructorCall {
                 class_prefix: prefix.to_string(),
                 expected_type: expected.map(|s| s.to_string()),

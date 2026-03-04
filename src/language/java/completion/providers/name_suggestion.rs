@@ -1,11 +1,10 @@
-use super::super::{
-    candidate::{CandidateKind, CompletionCandidate},
-    context::{CompletionContext, CursorLocation},
-};
-use super::CompletionProvider;
 use crate::{
-    completion::providers::name_suggestion::rules::{BASE_RULES, ParsedType, pluralize},
+    completion::{CandidateKind, CompletionCandidate, provider::CompletionProvider},
     index::GlobalIndex,
+    language::java::completion::providers::name_suggestion::rules::{
+        BASE_RULES, ParsedType, pluralize,
+    },
+    semantic::context::{CursorLocation, SemanticContext},
 };
 use std::sync::Arc;
 
@@ -18,11 +17,7 @@ impl CompletionProvider for NameSuggestionProvider {
         "name_suggestion"
     }
 
-    fn provide(
-        &self,
-        ctx: &CompletionContext,
-        _index: &mut GlobalIndex,
-    ) -> Vec<CompletionCandidate> {
+    fn provide(&self, ctx: &SemanticContext, _index: &mut GlobalIndex) -> Vec<CompletionCandidate> {
         let type_name = match &ctx.location {
             CursorLocation::VariableName { type_name } => type_name.as_str(),
             _ => return vec![],
@@ -111,12 +106,11 @@ fn is_valid_identifier(s: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::completion::context::{CompletionContext, CursorLocation};
-    use crate::completion::providers::CompletionProvider;
     use crate::index::GlobalIndex;
+    use crate::semantic::context::{CursorLocation, SemanticContext};
 
-    fn ctx(type_name: &str) -> CompletionContext {
-        CompletionContext::new(
+    fn ctx(type_name: &str) -> SemanticContext {
+        SemanticContext::new(
             CursorLocation::VariableName {
                 type_name: type_name.to_string(),
             },

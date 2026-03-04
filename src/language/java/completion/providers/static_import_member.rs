@@ -1,14 +1,13 @@
 use rust_asm::constants::ACC_STATIC;
 use std::sync::Arc;
 
-use super::super::{
-    candidate::{CandidateKind, CompletionCandidate},
-    context::{CompletionContext, CursorLocation},
-};
-use super::CompletionProvider;
 use crate::{
-    completion::{scorer, type_resolver::ContextualResolver},
+    completion::{CandidateKind, CompletionCandidate, provider::CompletionProvider, scorer},
     index::{ClassMetadata, GlobalIndex},
+    semantic::{
+        context::{CursorLocation, SemanticContext},
+        types::ContextualResolver,
+    },
 };
 
 pub struct StaticImportMemberProvider;
@@ -18,11 +17,7 @@ impl CompletionProvider for StaticImportMemberProvider {
         "static_import_member"
     }
 
-    fn provide(
-        &self,
-        ctx: &CompletionContext,
-        index: &mut GlobalIndex,
-    ) -> Vec<CompletionCandidate> {
+    fn provide(&self, ctx: &SemanticContext, index: &mut GlobalIndex) -> Vec<CompletionCandidate> {
         if ctx.static_imports.is_empty() {
             return vec![];
         }
@@ -83,7 +78,7 @@ fn all_static_members(
     meta: &ClassMetadata,
     class_path: &str,
     query_lower: &str,
-    ctx: &CompletionContext,
+    ctx: &SemanticContext,
     source: &'static str,
     index: &GlobalIndex,
 ) -> Vec<CompletionCandidate> {
@@ -146,7 +141,7 @@ fn specific_static_member(
     meta: &ClassMetadata,
     class_path: &str,
     member_name: &str,
-    ctx: &CompletionContext,
+    ctx: &SemanticContext,
     source: &'static str,
     index: &GlobalIndex,
 ) -> Vec<CompletionCandidate> {
@@ -206,10 +201,10 @@ fn specific_static_member(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::completion::context::{CompletionContext, CursorLocation};
     use crate::index::{
         ClassMetadata, ClassOrigin, FieldSummary, GlobalIndex, MethodParams, MethodSummary,
     };
+    use crate::semantic::context::{CursorLocation, SemanticContext};
     use rust_asm::constants::{ACC_PUBLIC, ACC_STATIC};
     use std::sync::Arc;
 
@@ -259,8 +254,8 @@ mod tests {
         idx
     }
 
-    fn expr_ctx(prefix: &str, static_imports: Vec<Arc<str>>) -> CompletionContext {
-        CompletionContext::new(
+    fn expr_ctx(prefix: &str, static_imports: Vec<Arc<str>>) -> SemanticContext {
+        SemanticContext::new(
             CursorLocation::Expression {
                 prefix: prefix.to_string(),
             },
@@ -325,7 +320,7 @@ mod tests {
     #[test]
     fn test_wrong_location_returns_empty() {
         let mut idx = math_index();
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::Import {
                 prefix: "java.lang.Math".to_string(),
             },

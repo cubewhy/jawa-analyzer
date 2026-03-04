@@ -3,14 +3,14 @@ use std::sync::Arc;
 use rust_asm::constants::ACC_PRIVATE;
 
 use crate::{
-    completion::{
+    index::{ClassMetadata, FieldSummary, MethodSummary},
+    semantic::{
         context::CurrentClassMember,
-        type_resolver::{
+        types::{
             SymbolProvider, descriptor_to_source_type,
             generics::{JvmType, substitute_type},
         },
     },
-    index::{ClassMetadata, FieldSummary, MethodSummary},
 };
 
 #[derive(Debug, Clone, Copy)]

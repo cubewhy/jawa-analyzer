@@ -1,16 +1,29 @@
 use super::Language;
-use crate::completion::{CompletionContext, context::CursorLocation};
+use crate::completion::provider::CompletionProvider;
+use crate::index::GlobalIndex;
 use crate::language::ClassifiedToken;
+use crate::language::java::completion::providers::{
+    annotation::AnnotationProvider, constructor::ConstructorProvider,
+    expression::ExpressionProvider, import::ImportProvider, import_static::ImportStaticProvider,
+    keyword::KeywordProvider, local_var::LocalVarProvider, member::MemberProvider,
+    name_suggestion::NameSuggestionProvider, override_member::OverrideProvider,
+    package::PackageProvider, snippet::SnippetProvider,
+    static_import_member::StaticImportMemberProvider, static_member::StaticMemberProvider,
+    this_member::ThisMemberProvider,
+};
 use crate::language::java::symbols::collect_java_symbols;
 use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::language::rope_utils::rope_line_col_to_offset;
 use crate::language::ts_utils::find_method_by_offset;
+use crate::semantic::{CursorLocation, SemanticContext};
 use ropey::Rope;
 use smallvec::smallvec;
 use tower_lsp::lsp_types::{SemanticTokenModifier, SemanticTokenType};
 use tree_sitter::{Node, Parser};
 
 pub mod class_parser;
+pub mod completion;
+pub mod completion_context;
 pub mod injection;
 pub mod locals;
 pub mod location;
@@ -21,6 +34,24 @@ pub mod type_ctx;
 pub mod utils;
 
 const SENTINEL: &str = "__KIRO__";
+
+static JAVA_COMPLETION_PROVIDERS: [&dyn CompletionProvider; 15] = [
+    &LocalVarProvider,
+    &ThisMemberProvider,
+    &MemberProvider,
+    &StaticMemberProvider,
+    &ConstructorProvider,
+    &PackageProvider,
+    &ExpressionProvider,
+    &ImportProvider,
+    &ImportStaticProvider,
+    &StaticImportMemberProvider,
+    &OverrideProvider,
+    &KeywordProvider,
+    &AnnotationProvider,
+    &SnippetProvider,
+    &NameSuggestionProvider,
+];
 
 pub fn make_java_parser() -> Parser {
     let mut parser = Parser::new();
@@ -76,12 +107,12 @@ impl Language for JavaLanguage {
         line: u32,
         character: u32,
         trigger_char: Option<char>,
-    ) -> Option<CompletionContext> {
+    ) -> Option<SemanticContext> {
         let offset = rope_line_col_to_offset(rope, line, character)?;
         tracing::debug!(line, character, trigger = ?trigger_char, "java: parsing context (cached tree)");
         let extractor = JavaContextExtractor::with_rope(source.to_string(), offset, rope.clone());
         if extractor.is_in_comment() {
-            return Some(CompletionContext::new(
+            return Some(SemanticContext::new(
                 CursorLocation::Unknown,
                 "",
                 vec![],
@@ -92,6 +123,14 @@ impl Language for JavaLanguage {
             ));
         }
         Some(extractor.extract(root, trigger_char))
+    }
+
+    fn completion_providers(&self) -> &[&'static dyn CompletionProvider] {
+        &JAVA_COMPLETION_PROVIDERS
+    }
+
+    fn enrich_completion_context(&self, ctx: &mut SemanticContext, index: &GlobalIndex) {
+        completion_context::ContextEnricher::new(index).enrich(ctx);
     }
 
     fn supports_semantic_tokens(&self) -> bool {
@@ -272,7 +311,7 @@ impl JavaContextExtractor {
         utils::is_cursor_in_comment_with_rope(&self.source, &self.rope, self.offset)
     }
 
-    fn extract(self, root: Node, trigger_char: Option<char>) -> CompletionContext {
+    fn extract(self, root: Node, trigger_char: Option<char>) -> SemanticContext {
         let cursor_node = self.find_cursor_node(root);
 
         if cursor_node
@@ -330,7 +369,7 @@ impl JavaContextExtractor {
             .chars()
             .find(|c| !(c.is_alphanumeric() || *c == '_'));
 
-        CompletionContext::new(
+        SemanticContext::new(
             location,
             query,
             local_variables,
@@ -362,8 +401,8 @@ impl JavaContextExtractor {
         None
     }
 
-    fn empty_context(&self) -> CompletionContext {
-        CompletionContext::new(
+    fn empty_context(&self) -> SemanticContext {
+        SemanticContext::new(
             CursorLocation::Unknown,
             "",
             vec![],
@@ -387,15 +426,15 @@ impl JavaContextExtractor {
 mod tests {
     use super::*;
     use crate::{
-        completion::context::{CurrentClassMember, CursorLocation},
         language::{java::injection::build_injected_source, rope_utils::line_col_to_offset},
+        semantic::context::{CurrentClassMember, CursorLocation},
     };
 
-    fn at(src: &str, line: u32, col: u32) -> CompletionContext {
+    fn at(src: &str, line: u32, col: u32) -> SemanticContext {
         at_with_trigger(src, line, col, None)
     }
 
-    fn at_with_trigger(src: &str, line: u32, col: u32, trigger: Option<char>) -> CompletionContext {
+    fn at_with_trigger(src: &str, line: u32, col: u32, trigger: Option<char>) -> SemanticContext {
         let rope = ropey::Rope::from_str(src);
 
         let mut parser = super::make_java_parser();
@@ -406,7 +445,7 @@ mod tests {
             .expect("parse_completion_context_with_tree returned None")
     }
 
-    fn end_of(src: &str) -> CompletionContext {
+    fn end_of(src: &str) -> SemanticContext {
         let lines: Vec<&str> = src.lines().collect();
         let line = (lines.len().saturating_sub(1)) as u32;
         let col = lines.last().map(|l| l.len()).unwrap_or(0) as u32;

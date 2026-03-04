@@ -110,20 +110,9 @@ pub fn resolve_simple_to_internal(
         }
     }
 
-    // locate in global index
-    let candidates = index.get_classes_by_simple_name(simple);
-    if !candidates.is_empty() {
-        if let Some(pkg) = enclosing_package
-            && let Some(m) = candidates
-                .iter()
-                .find(|c| c.package.as_deref() == Some(pkg))
-        {
-            return Some(Arc::clone(&m.internal_name));
-        }
-        return Some(Arc::clone(&candidates[0].internal_name));
-    }
-
-    None
+    // try java/lang
+    let candidates = index.get_class(&format!("java/lang/{simple}"));
+    candidates.map(|meta| meta.internal_name.clone())
 }
 
 /// Given a ClassMetadata, compute its point score FQN

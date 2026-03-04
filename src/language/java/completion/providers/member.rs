@@ -1,17 +1,13 @@
 use rust_asm::constants::ACC_STATIC;
 
-use super::super::{
-    candidate::{CandidateKind, CompletionCandidate},
-    context::{CompletionContext, CursorLocation},
-    scorer::{self, AccessFilter},
-};
-use super::CompletionProvider;
+use crate::completion::provider::CompletionProvider;
+use crate::completion::scorer::{self, AccessFilter};
+use crate::completion::{CandidateKind, CompletionCandidate};
+use crate::semantic::context::{CursorLocation, SemanticContext};
 use crate::{
-    completion::{
-        fuzzy,
-        type_resolver::{ContextualResolver, TypeResolver, type_name::TypeName},
-    },
+    completion::fuzzy,
     index::GlobalIndex,
+    semantic::types::{ContextualResolver, TypeResolver, type_name::TypeName},
 };
 use std::sync::Arc;
 
@@ -22,11 +18,7 @@ impl CompletionProvider for MemberProvider {
         "member"
     }
 
-    fn provide(
-        &self,
-        ctx: &CompletionContext,
-        index: &mut GlobalIndex,
-    ) -> Vec<CompletionCandidate> {
+    fn provide(&self, ctx: &SemanticContext, index: &mut GlobalIndex) -> Vec<CompletionCandidate> {
         let (receiver_type, member_prefix, receiver_expr) = match &ctx.location {
             CursorLocation::MemberAccess {
                 receiver_type,
@@ -342,7 +334,7 @@ impl CompletionProvider for MemberProvider {
 impl MemberProvider {
     fn provide_from_source_members(
         &self,
-        ctx: &CompletionContext,
+        ctx: &SemanticContext,
         member_prefix: &str,
     ) -> Vec<CompletionCandidate> {
         let enclosing = ctx.enclosing_internal_name.as_deref().unwrap_or("");
@@ -399,7 +391,7 @@ impl MemberProvider {
 /// Parses the receiver expression into an inner class name
 fn resolve_receiver_type(
     expr: &str,
-    ctx: &CompletionContext,
+    ctx: &SemanticContext,
     index: &mut GlobalIndex,
 ) -> Option<Arc<str>> {
     tracing::debug!(
@@ -458,7 +450,7 @@ fn resolve_receiver_type(
 
 fn resolve_strict_class_name(
     simple_name: &str,
-    ctx: &CompletionContext,
+    ctx: &SemanticContext,
     index: &mut GlobalIndex,
 ) -> Option<Arc<str>> {
     // Enclosing class
@@ -517,7 +509,7 @@ fn resolve_strict_class_name(
 /// Dynamically recursively resolves types, using the current context (ctx/index) to convert source code types into JVM signatures.
 fn resolve_complex_type_to_internal(
     ty: &str,
-    ctx: &CompletionContext,
+    ctx: &SemanticContext,
     index: &mut GlobalIndex,
 ) -> Option<String> {
     let ty = ty.trim();
@@ -631,7 +623,7 @@ fn extract_constructor_class(expr: &str) -> Option<&str> {
 /// Find the method in the MRO of the enclosing class and get its return type
 fn resolve_method_call_receiver(
     expr: &str,
-    ctx: &CompletionContext,
+    ctx: &SemanticContext,
     index: &mut GlobalIndex,
 ) -> Option<Arc<str>> {
     // Must contain '(' and end with ')'
@@ -662,7 +654,7 @@ fn resolve_method_call_receiver(
 /// Search order: imports → same package → global
 fn resolve_simple_name_to_internal(
     simple: &str,
-    ctx: &CompletionContext,
+    ctx: &SemanticContext,
     index: &mut GlobalIndex,
 ) -> Option<Arc<str>> {
     tracing::debug!(simple, "resolve_simple_name_to_internal called");
@@ -706,15 +698,13 @@ mod tests {
     use rust_asm::constants::{ACC_PRIVATE, ACC_PUBLIC, ACC_STATIC};
     use std::sync::Arc;
 
-    use crate::completion::context::CurrentClassMember;
-    use crate::completion::{
-        context::{CompletionContext, CursorLocation},
-        providers::{CompletionProvider, member::MemberProvider},
-        type_resolver::parse_return_type_from_descriptor,
-    };
+    use crate::completion::provider::CompletionProvider;
     use crate::index::{
         ClassMetadata, ClassOrigin, FieldSummary, GlobalIndex, MethodParams, MethodSummary,
     };
+    use crate::language::java::completion::providers::member::MemberProvider;
+    use crate::semantic::context::{CurrentClassMember, CursorLocation, SemanticContext};
+    use crate::semantic::types::parse_return_type_from_descriptor;
 
     fn make_method(name: &str, descriptor: &str, flags: u16, is_synthetic: bool) -> MethodSummary {
         MethodSummary {
@@ -776,8 +766,8 @@ mod tests {
         idx
     }
 
-    fn ctx_with_type(receiver_internal: &str, prefix: &str) -> CompletionContext {
-        CompletionContext::new(
+    fn ctx_with_type(receiver_internal: &str, prefix: &str) -> SemanticContext {
+        SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: Some(Arc::from(receiver_internal)),
                 member_prefix: prefix.to_string(),
@@ -798,8 +788,8 @@ mod tests {
         enclosing_internal: &str,
         enclosing_pkg: &str,
         prefix: &str,
-    ) -> CompletionContext {
-        CompletionContext::new(
+    ) -> SemanticContext {
+        SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: prefix.to_string(),
@@ -890,50 +880,6 @@ mod tests {
     }
 
     #[test]
-    fn test_static_member_prefix_starts_with() {
-        use crate::completion::providers::static_member::StaticMemberProvider;
-        let mut idx = GlobalIndex::new();
-        idx.add_classes(vec![ClassMetadata {
-            package: Some(Arc::from("org/cubewhy/a")),
-            name: Arc::from("Main"),
-            internal_name: Arc::from("org/cubewhy/a/Main"),
-            super_name: None,
-            interfaces: vec![],
-            annotations: vec![],
-            methods: vec![
-                make_method("main", "()V", ACC_PUBLIC | ACC_STATIC, false),
-                make_method("notStartsWithma", "()V", ACC_PUBLIC | ACC_STATIC, false),
-            ],
-            fields: vec![],
-            access_flags: ACC_PUBLIC,
-            generic_signature: None,
-            inner_class_of: None,
-            origin: ClassOrigin::Unknown,
-        }]);
-
-        let ctx = CompletionContext::new(
-            CursorLocation::StaticAccess {
-                class_internal_name: Arc::from("org/cubewhy/a/Main"),
-                member_prefix: "ma".to_string(),
-            },
-            "ma",
-            vec![],
-            None,
-            None,
-            None,
-            vec![],
-        );
-
-        let results = StaticMemberProvider.provide(&ctx, &mut idx);
-        assert!(results.iter().any(|c| c.label.as_ref() == "main"));
-        assert!(
-            results
-                .iter()
-                .all(|c| c.label.as_ref() != "notStartsWithma")
-        );
-    }
-
-    #[test]
     fn test_no_this_completion_in_static_method() {
         let mut idx = GlobalIndex::new();
         let members = vec![
@@ -990,7 +936,7 @@ mod tests {
             },
         ]);
 
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),

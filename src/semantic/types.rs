@@ -1,15 +1,10 @@
-use super::context::LocalVar;
+use super::context::{LocalVar, SemanticContext};
 use crate::{
-    completion::{
-        CompletionContext,
-        type_resolver::{
-            generics::{JvmType, split_internal_name, substitute_type},
-            type_name::TypeName,
-        },
-    },
     index::{GlobalIndex, MethodSummary},
     jvm::descriptor::{consume_one_descriptor_type, split_param_descriptors},
 };
+use self::generics::{split_internal_name, substitute_type, JvmType};
+use self::type_name::TypeName;
 use std::sync::Arc;
 
 pub mod generics;
@@ -754,11 +749,11 @@ pub fn java_source_type_to_jvm_generic(
 /// 严格遵守 Java 语言规范 (JLS) 的类型可见性规则，拒绝任何启发式猜测。
 pub struct ContextualResolver<'a> {
     pub index: &'a GlobalIndex,
-    pub ctx: &'a CompletionContext,
+    pub ctx: &'a SemanticContext,
 }
 
 impl<'a> ContextualResolver<'a> {
-    pub fn new(index: &'a GlobalIndex, ctx: &'a CompletionContext) -> Self {
+    pub fn new(index: &'a GlobalIndex, ctx: &'a SemanticContext) -> Self {
         Self { index, ctx }
     }
 }

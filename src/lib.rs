@@ -4,4 +4,5 @@ pub mod index;
 pub mod jvm;
 pub mod language;
 pub mod lsp;
+pub mod semantic;
 pub mod workspace;

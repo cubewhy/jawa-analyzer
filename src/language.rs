@@ -1,8 +1,11 @@
 use std::sync::Arc;
 
 use crate::{
-    completion::{CompletionCandidate, CompletionContext},
+    completion::CompletionCandidate,
+    completion::provider::CompletionProvider,
+    index::GlobalIndex,
     lsp::semantic_tokens::{get_modifier_mask, get_type_idx},
+    semantic::SemanticContext,
 };
 use ropey::Rope;
 use smallvec::SmallVec;
@@ -57,7 +60,7 @@ pub trait Language: Send + Sync + std::fmt::Debug {
         _line: u32,
         _character: u32,
         _trigger_char: Option<char>,
-    ) -> Option<CompletionContext> {
+    ) -> Option<SemanticContext> {
         None
     }
 
@@ -71,16 +74,22 @@ pub trait Language: Send + Sync + std::fmt::Debug {
         line: u32,
         character: u32,
         trigger_char: Option<char>,
-    ) -> Option<CompletionContext> {
+    ) -> Option<SemanticContext> {
         // Default fallback: reparse (keeps other languages working)
         let _ = (rope, root);
         self.parse_completion_context(source, line, character, trigger_char)
     }
 
+    fn completion_providers(&self) -> &[&'static dyn CompletionProvider] {
+        &[]
+    }
+
+    fn enrich_completion_context(&self, _ctx: &mut SemanticContext, _index: &GlobalIndex) {}
+
     fn post_process_candidates(
         &self,
         candidates: Vec<CompletionCandidate>,
-        _ctx: &CompletionContext,
+        _ctx: &SemanticContext,
     ) -> Vec<CompletionCandidate> {
         candidates
     }

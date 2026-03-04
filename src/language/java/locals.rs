@@ -3,7 +3,6 @@ use std::sync::Arc;
 use tree_sitter::{Node, Query};
 
 use crate::{
-    completion::{LocalVar, type_resolver::type_name::TypeName},
     language::{
         java::{
             JavaContextExtractor,
@@ -14,6 +13,7 @@ use crate::{
         },
         ts_utils::{capture_text, find_method_by_offset, run_query},
     },
+    semantic::{LocalVar, types::type_name::TypeName},
 };
 
 pub fn extract_locals(

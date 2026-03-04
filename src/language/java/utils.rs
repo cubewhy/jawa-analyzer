@@ -1,4 +1,4 @@
-use crate::completion::context::CursorLocation;
+use crate::semantic::context::CursorLocation;
 use crate::language::java::SENTINEL;
 use ropey::Rope;
 use rust_asm::constants::{

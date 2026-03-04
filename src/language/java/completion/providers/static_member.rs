@@ -1,12 +1,14 @@
-use super::super::{
-    candidate::{CandidateKind, CompletionCandidate},
-    context::{CompletionContext, CursorLocation},
-    scorer,
-};
-use super::CompletionProvider;
 use crate::{
-    completion::{scorer::AccessFilter, type_resolver::ContextualResolver},
+    completion::{
+        CandidateKind, CompletionCandidate,
+        provider::CompletionProvider,
+        scorer::{self, AccessFilter},
+    },
     index::GlobalIndex,
+    semantic::{
+        context::{CursorLocation, SemanticContext},
+        types::ContextualResolver,
+    },
 };
 use rust_asm::constants::ACC_STATIC;
 use std::sync::Arc;
@@ -18,11 +20,7 @@ impl CompletionProvider for StaticMemberProvider {
         "static_member"
     }
 
-    fn provide(
-        &self,
-        ctx: &CompletionContext,
-        index: &mut GlobalIndex,
-    ) -> Vec<CompletionCandidate> {
+    fn provide(&self, ctx: &SemanticContext, index: &mut GlobalIndex) -> Vec<CompletionCandidate> {
         let (class_name_raw, member_prefix) = match &ctx.location {
             CursorLocation::StaticAccess {
                 class_internal_name,
@@ -167,7 +165,7 @@ impl StaticMemberProvider {
     /// (from source-level parsing), use that — only emit static members.
     fn provide_from_source_members(
         &self,
-        ctx: &CompletionContext,
+        ctx: &SemanticContext,
         member_prefix: &str,
     ) -> Vec<CompletionCandidate> {
         use crate::completion::fuzzy;
@@ -222,14 +220,14 @@ impl StaticMemberProvider {
 
 /// Check if `class_name_raw` (simple name) refers to the enclosing class,
 /// using only the information available in `ctx` (no index lookup).
-fn is_self_class_by_simple_name(class_name_raw: &str, ctx: &CompletionContext) -> bool {
+fn is_self_class_by_simple_name(class_name_raw: &str, ctx: &SemanticContext) -> bool {
     // Match against simple enclosing class name
     ctx.enclosing_class
         .as_deref()
         .is_some_and(|enc| enc == class_name_raw)
 }
 
-fn is_likely_static_receiver(expr: &str, ctx: &CompletionContext) -> bool {
+fn is_likely_static_receiver(expr: &str, ctx: &SemanticContext) -> bool {
     if expr == "this" {
         return false;
     }
@@ -251,21 +249,20 @@ mod tests {
     use rust_asm::constants::{ACC_PRIVATE, ACC_PUBLIC, ACC_STATIC};
 
     use super::*;
-    use crate::completion::context::{CompletionContext, CurrentClassMember, CursorLocation};
-    use crate::completion::providers::CompletionProvider;
-    use crate::completion::type_resolver::parse_return_type_from_descriptor;
     use crate::index::{
         ClassMetadata, ClassOrigin, FieldSummary, GlobalIndex, MethodParams, MethodSummary,
     };
     use crate::language::java::make_java_parser;
     use crate::language::{JavaLanguage, Language};
+    use crate::semantic::context::{CurrentClassMember, CursorLocation, SemanticContext};
+    use crate::semantic::types::parse_return_type_from_descriptor;
     use std::sync::Arc;
 
-    fn at(src: &str, line: u32, col: u32) -> CompletionContext {
+    fn at(src: &str, line: u32, col: u32) -> SemanticContext {
         at_with_trigger(src, line, col, None)
     }
 
-    fn at_with_trigger(src: &str, line: u32, col: u32, trigger: Option<char>) -> CompletionContext {
+    fn at_with_trigger(src: &str, line: u32, col: u32, trigger: Option<char>) -> SemanticContext {
         let rope = ropey::Rope::from_str(src);
 
         let mut parser = make_java_parser();
@@ -326,8 +323,8 @@ mod tests {
         idx
     }
 
-    fn static_ctx(class_raw: &str, prefix: &str, pkg: &str) -> CompletionContext {
-        CompletionContext::new(
+    fn static_ctx(class_raw: &str, prefix: &str, pkg: &str) -> SemanticContext {
+        SemanticContext::new(
             CursorLocation::StaticAccess {
                 class_internal_name: Arc::from(class_raw),
                 member_prefix: prefix.to_string(),
@@ -420,9 +417,9 @@ mod tests {
         idx
     }
 
-    fn self_static_ctx(prefix: &str) -> CompletionContext {
+    fn self_static_ctx(prefix: &str) -> SemanticContext {
         // Simulates: inside org.cubewhy.a.Main, typing "Main.|"
-        CompletionContext::new(
+        SemanticContext::new(
             CursorLocation::StaticAccess {
                 class_internal_name: Arc::from("Main"), // simple name from parser
                 member_prefix: prefix.to_string(),
@@ -551,7 +548,7 @@ mod tests {
             ))),
         ];
 
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::StaticAccess {
                 class_internal_name: Arc::from("Main"),
                 member_prefix: "".to_string(),
@@ -610,7 +607,7 @@ mod tests {
         }]);
 
         // We are inside Main, accessing Other.secret
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::StaticAccess {
                 class_internal_name: Arc::from("Other"),
                 member_prefix: "".to_string(),
@@ -737,8 +734,6 @@ mod tests {
 
     #[test]
     fn test_lowercase_class_name_static_access_via_provider() {
-        use crate::completion::providers::CompletionProvider;
-        use crate::completion::providers::static_member::StaticMemberProvider;
         use crate::index::{ClassMetadata, ClassOrigin, FieldSummary, GlobalIndex};
         use rust_asm::constants::{ACC_PUBLIC, ACC_STATIC};
 
@@ -766,7 +761,7 @@ mod tests {
         }]);
 
         // Parser 产生 MemberAccess，enrich 后 receiver_type 仍为 None（不是局部变量）
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "FIELD".to_string(),
@@ -786,6 +781,49 @@ mod tests {
             results.iter().any(|c| c.label.as_ref() == "FIELD"),
             "lowercase class name static field should be found via provider, got: {:?}",
             results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_static_member_prefix_starts_with() {
+        let mut idx = GlobalIndex::new();
+        idx.add_classes(vec![ClassMetadata {
+            package: Some(Arc::from("org/cubewhy/a")),
+            name: Arc::from("Main"),
+            internal_name: Arc::from("org/cubewhy/a/Main"),
+            super_name: None,
+            interfaces: vec![],
+            annotations: vec![],
+            methods: vec![
+                make_method("main", "()V", ACC_PUBLIC | ACC_STATIC, false),
+                make_method("notStartsWithma", "()V", ACC_PUBLIC | ACC_STATIC, false),
+            ],
+            fields: vec![],
+            access_flags: ACC_PUBLIC,
+            generic_signature: None,
+            inner_class_of: None,
+            origin: ClassOrigin::Unknown,
+        }]);
+
+        let ctx = SemanticContext::new(
+            CursorLocation::StaticAccess {
+                class_internal_name: Arc::from("org/cubewhy/a/Main"),
+                member_prefix: "ma".to_string(),
+            },
+            "ma",
+            vec![],
+            None,
+            None,
+            None,
+            vec![],
+        );
+
+        let results = StaticMemberProvider.provide(&ctx, &mut idx);
+        assert!(results.iter().any(|c| c.label.as_ref() == "main"));
+        assert!(
+            results
+                .iter()
+                .all(|c| c.label.as_ref() != "notStartsWithma")
         );
     }
 }

@@ -1,13 +1,14 @@
 use rust_asm::constants::ACC_STATIC;
 
-use super::CompletionProvider;
 use crate::completion::{
     candidate::{CandidateKind, CompletionCandidate},
-    context::{CompletionContext, CursorLocation},
-    fuzzy, scorer,
-    type_resolver::ContextualResolver,
+    fuzzy,
+    provider::CompletionProvider,
+    scorer,
 };
 use crate::index::GlobalIndex;
+use crate::semantic::context::{CursorLocation, SemanticContext};
+use crate::semantic::types::ContextualResolver;
 use std::sync::Arc;
 
 pub struct ThisMemberProvider;
@@ -17,11 +18,7 @@ impl CompletionProvider for ThisMemberProvider {
         "this_member"
     }
 
-    fn provide(
-        &self,
-        ctx: &CompletionContext,
-        index: &mut GlobalIndex,
-    ) -> Vec<CompletionCandidate> {
+    fn provide(&self, ctx: &SemanticContext, index: &mut GlobalIndex) -> Vec<CompletionCandidate> {
         tracing::debug!(
             "ThisMemberProvider: enclosing={:?}",
             ctx.enclosing_internal_name
@@ -233,8 +230,8 @@ mod tests {
     use rust_asm::constants::{ACC_PRIVATE, ACC_PUBLIC};
 
     use super::*;
-    use crate::completion::context::{CompletionContext, CurrentClassMember, CursorLocation};
     use crate::index::{FieldSummary, GlobalIndex, MethodParams, MethodSummary};
+    use crate::semantic::context::{CurrentClassMember, CursorLocation, SemanticContext};
     use std::sync::Arc;
 
     fn make_member(
@@ -270,8 +267,8 @@ mod tests {
         }
     }
 
-    fn ctx_with_members(prefix: &str, members: Vec<CurrentClassMember>) -> CompletionContext {
-        CompletionContext::new(
+    fn ctx_with_members(prefix: &str, members: Vec<CurrentClassMember>) -> SemanticContext {
+        SemanticContext::new(
             CursorLocation::Expression {
                 prefix: prefix.to_string(),
             },
@@ -289,8 +286,8 @@ mod tests {
         prefix: &str,
         members: Vec<CurrentClassMember>,
         enclosing: CurrentClassMember,
-    ) -> CompletionContext {
-        CompletionContext::new(
+    ) -> SemanticContext {
+        SemanticContext::new(
             CursorLocation::Expression {
                 prefix: prefix.to_string(),
             },
@@ -514,7 +511,7 @@ mod tests {
             generic_signature: None,
             return_type: None,
         }));
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::Expression {
                 prefix: "".to_string(),
             },
@@ -566,7 +563,7 @@ mod tests {
             generic_signature: None,
             return_type: None,
         }));
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::Expression {
                 prefix: "pr".to_string(),
             },
@@ -603,7 +600,7 @@ mod tests {
             generic_signature: None,
             return_type: None,
         }));
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MethodArgument {
                 prefix: "".to_string(),
             },
@@ -714,7 +711,7 @@ mod tests {
             generic_signature: None,
             return_type: None,
         }));
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::Expression {
                 prefix: "".to_string(),
             },
@@ -790,7 +787,7 @@ mod tests {
             generic_signature: None,
             return_type: None,
         }));
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::Expression {
                 prefix: "".to_string(),
             },

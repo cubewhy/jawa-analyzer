@@ -1,6 +1,6 @@
-use crate::completion::context::{CompletionContext, CursorLocation};
-use crate::completion::type_resolver::TypeResolver;
-use crate::completion::type_resolver::type_name::TypeName;
+use crate::semantic::context::{SemanticContext, CursorLocation};
+use crate::semantic::types::TypeResolver;
+use crate::semantic::types::type_name::TypeName;
 use crate::index::{FieldSummary, GlobalIndex, MethodSummary};
 use std::sync::Arc;
 
@@ -26,7 +26,7 @@ impl<'a> SymbolResolver<'a> {
         Self { index }
     }
 
-    pub fn resolve(&self, ctx: &CompletionContext) -> Option<ResolvedSymbol> {
+    pub fn resolve(&self, ctx: &SemanticContext) -> Option<ResolvedSymbol> {
         match &ctx.location {
             CursorLocation::MemberAccess {
                 receiver_type,
@@ -84,7 +84,7 @@ impl<'a> SymbolResolver<'a> {
 
     fn resolve_member(
         &self,
-        ctx: &CompletionContext,
+        ctx: &SemanticContext,
         owner: &str,
         name: &str,
         arguments: Option<&str>,
@@ -160,7 +160,7 @@ impl<'a> SymbolResolver<'a> {
         None
     }
 
-    fn resolve_bare_id(&self, ctx: &CompletionContext, id: &str) -> Option<ResolvedSymbol> {
+    fn resolve_bare_id(&self, ctx: &SemanticContext, id: &str) -> Option<ResolvedSymbol> {
         // local variable -> return its type
         if let Some(local) = ctx.local_variables.iter().find(|v| v.name.as_ref() == id) {
             let base = local.type_internal.base();
@@ -190,7 +190,7 @@ impl<'a> SymbolResolver<'a> {
         self.resolve_type_name(ctx, id).map(ResolvedSymbol::Class)
     }
 
-    fn infer_receiver_type(&self, ctx: &CompletionContext, expr: &str) -> Option<Arc<str>> {
+    fn infer_receiver_type(&self, ctx: &SemanticContext, expr: &str) -> Option<Arc<str>> {
         // handle constructor calls
         if let Some(rest) = expr.strip_prefix("new ") {
             let boundary = rest.find(['(', '<', '[', '{']).unwrap_or(rest.len());
@@ -226,7 +226,7 @@ impl<'a> SymbolResolver<'a> {
     }
 
     /// Iterate through each field in the dotted expression and return the internal name of the final type.
-    fn resolve_chained(&self, ctx: &CompletionContext, expr: &str) -> Option<Arc<str>> {
+    fn resolve_chained(&self, ctx: &SemanticContext, expr: &str) -> Option<Arc<str>> {
         let mut parts = expr.split('.');
         let first = parts.next()?;
 
@@ -253,7 +253,7 @@ impl<'a> SymbolResolver<'a> {
         Some(current)
     }
 
-    pub fn resolve_type_name(&self, ctx: &CompletionContext, name: &str) -> Option<Arc<str>> {
+    pub fn resolve_type_name(&self, ctx: &SemanticContext, name: &str) -> Option<Arc<str>> {
         // already internal name
         if name.contains('/') {
             return Some(Arc::from(name));
@@ -341,7 +341,7 @@ fn split_args(s: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::completion::context::{CompletionContext, CursorLocation};
+    use crate::semantic::context::{SemanticContext, CursorLocation};
     use crate::index::{ClassMetadata, ClassOrigin, GlobalIndex, MethodParams, MethodSummary};
     use rust_asm::constants::ACC_PUBLIC;
 
@@ -392,7 +392,7 @@ mod tests {
         }]);
 
         // 测试 1: 解析 System.out.println(1) 应该落在 (I)V
-        let ctx_int = CompletionContext::new(
+        let ctx_int = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: Some(Arc::from("java/io/PrintStream")),
                 receiver_expr: "out".to_string(),
@@ -420,7 +420,7 @@ mod tests {
         }
 
         // 测试 2: 解析 System.out.println("hello") 应该落在 (Ljava/lang/String;)V
-        let ctx_str = CompletionContext::new(
+        let ctx_str = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: Some(Arc::from("java/io/PrintStream")),
                 receiver_expr: "out".to_string(),

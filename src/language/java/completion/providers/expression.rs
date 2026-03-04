@@ -1,11 +1,10 @@
-use super::super::{
-    candidate::{CandidateKind, CompletionCandidate},
-    context::{CompletionContext, CursorLocation},
-};
-use super::CompletionProvider;
 use crate::{
-    completion::{fuzzy, import_utils::is_import_needed},
+    completion::{
+        CandidateKind, CompletionCandidate, fuzzy, import_utils::is_import_needed,
+        provider::CompletionProvider,
+    },
     index::GlobalIndex,
+    semantic::context::{CursorLocation, SemanticContext},
 };
 use std::sync::Arc;
 
@@ -16,11 +15,7 @@ impl CompletionProvider for ExpressionProvider {
         "expression"
     }
 
-    fn provide(
-        &self,
-        ctx: &CompletionContext,
-        index: &mut GlobalIndex,
-    ) -> Vec<CompletionCandidate> {
+    fn provide(&self, ctx: &SemanticContext, index: &mut GlobalIndex) -> Vec<CompletionCandidate> {
         let prefix = match &ctx.location {
             CursorLocation::Expression { prefix } => prefix.as_str(),
             CursorLocation::TypeAnnotation { prefix } => prefix.as_str(),
@@ -185,9 +180,8 @@ mod tests {
     use rust_asm::constants::ACC_PUBLIC;
 
     use super::*;
-    use crate::completion::context::{CompletionContext, CursorLocation};
-    use crate::completion::providers::CompletionProvider;
     use crate::index::{ClassMetadata, ClassOrigin, GlobalIndex};
+    use crate::semantic::context::{CursorLocation, SemanticContext};
     use std::sync::Arc;
 
     fn make_cls(pkg: &str, name: &str) -> ClassMetadata {
@@ -223,8 +217,8 @@ mod tests {
         enclosing_class: &str,
         enclosing_pkg: &str,
         imports: Vec<Arc<str>>,
-    ) -> CompletionContext {
-        CompletionContext::new(
+    ) -> SemanticContext {
+        SemanticContext::new(
             CursorLocation::Expression {
                 prefix: prefix.to_string(),
             },

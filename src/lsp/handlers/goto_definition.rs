@@ -1,8 +1,7 @@
 use std::sync::Arc;
 
-use crate::completion::context::CursorLocation;
-use crate::completion::engine::ContextEnricher;
-use crate::completion::type_resolver::symbol_resolver::{ResolvedSymbol, SymbolResolver};
+use crate::semantic::context::CursorLocation;
+use crate::semantic::types::symbol_resolver::{ResolvedSymbol, SymbolResolver};
 use crate::index::{ClassOrigin, GlobalIndex};
 use crate::language::java::class_parser::find_symbol_range;
 use crate::lsp::server::Backend;
@@ -49,7 +48,7 @@ pub async fn handle_goto_definition(
     let mut ctx = ctx;
 
     // enrich context
-    ContextEnricher::new(&index_guard).enrich(&mut ctx);
+    lang.enrich_completion_context(&mut ctx, &index_guard);
 
     tracing::debug!(
         location = ?ctx.location,

@@ -1,9 +1,8 @@
-use super::super::{
-    candidate::{CandidateKind, CompletionCandidate},
-    context::{CompletionContext, CursorLocation},
+use crate::{
+    completion::{CandidateKind, CompletionCandidate, provider::CompletionProvider},
+    index::GlobalIndex,
+    semantic::context::{CursorLocation, SemanticContext},
 };
-use super::CompletionProvider;
-use crate::index::GlobalIndex;
 use std::sync::Arc;
 
 pub struct SnippetProvider;
@@ -18,34 +17,34 @@ struct SnippetRule {
     /// Sort by score
     score: f32,
     /// Function that generates insert_text
-    build: fn(ctx: &CompletionContext) -> String,
+    build: fn(ctx: &SemanticContext) -> String,
     /// Should it be displayed (additional filtering conditions)?
-    should_show: fn(ctx: &CompletionContext) -> bool,
+    should_show: fn(ctx: &SemanticContext) -> bool,
 }
 
-fn always(_ctx: &CompletionContext) -> bool {
+fn always(_ctx: &SemanticContext) -> bool {
     true
 }
 
 /// Only displayed inside the class (with enclosing_class)
-fn inside_class(ctx: &CompletionContext) -> bool {
+fn inside_class(ctx: &SemanticContext) -> bool {
     ctx.enclosing_class.is_some()
 }
 
 /// Only displayed inside the class (with enclosing_class)
-fn inside_method(ctx: &CompletionContext) -> bool {
+fn inside_method(ctx: &SemanticContext) -> bool {
     ctx.enclosing_class_member
         .as_ref()
         .map(|it| it.is_method())
         .unwrap_or(false)
 }
 
-fn inside_class_but_not_method(ctx: &CompletionContext) -> bool {
+fn inside_class_but_not_method(ctx: &SemanticContext) -> bool {
     inside_class(ctx) && !inside_method(ctx)
 }
 
 /// Only displayed if the file does not yet have a package declaration.
-fn no_package_declared(ctx: &CompletionContext) -> bool {
+fn no_package_declared(ctx: &SemanticContext) -> bool {
     ctx.enclosing_package.is_none()
 }
 
@@ -178,11 +177,7 @@ impl CompletionProvider for SnippetProvider {
         "snippet"
     }
 
-    fn provide(
-        &self,
-        ctx: &CompletionContext,
-        _index: &mut GlobalIndex,
-    ) -> Vec<CompletionCandidate> {
+    fn provide(&self, ctx: &SemanticContext, _index: &mut GlobalIndex) -> Vec<CompletionCandidate> {
         let prefix = match &ctx.location {
             CursorLocation::Expression { prefix } => prefix.as_str(),
             CursorLocation::TypeAnnotation { prefix } => prefix.as_str(),
@@ -222,9 +217,9 @@ mod tests {
     use rust_asm::constants::ACC_PUBLIC;
 
     use super::*;
-    use crate::completion::context::{CompletionContext, CurrentClassMember, CursorLocation};
-    use crate::completion::type_resolver::parse_return_type_from_descriptor;
     use crate::index::{GlobalIndex, MethodParams, MethodSummary};
+    use crate::semantic::context::{CurrentClassMember, CursorLocation, SemanticContext};
+    use crate::semantic::types::parse_return_type_from_descriptor;
     use std::sync::Arc;
 
     fn ctx_full(
@@ -233,8 +228,8 @@ mod tests {
         ast_pkg: Option<&str>,
         inferred_pkg: Option<&str>,
         enclosing_class: Option<&str>,
-    ) -> CompletionContext {
-        let mut c = CompletionContext::new(
+    ) -> SemanticContext {
+        let mut c = SemanticContext::new(
             CursorLocation::Expression {
                 prefix: prefix.to_string(),
             },
@@ -259,7 +254,7 @@ mod tests {
         file_uri: Option<&str>,
         ast_pkg: Option<&str>,
         inferred_pkg: Option<&str>,
-    ) -> CompletionContext {
+    ) -> SemanticContext {
         ctx_full(prefix, file_uri, ast_pkg, inferred_pkg, None)
     }
 

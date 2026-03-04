@@ -1,4 +1,4 @@
-use crate::completion::type_resolver::ChainSegment;
+use crate::semantic::types::ChainSegment;
 
 pub(crate) fn parse_chain_from_expr(expr: &str) -> Vec<ChainSegment> {
     let mut segments = Vec::new();

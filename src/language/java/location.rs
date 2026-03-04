@@ -6,7 +6,7 @@ use crate::language::java::utils::{
 use tree_sitter::Node;
 
 use crate::{
-    completion::CursorLocation,
+    semantic::CursorLocation,
     language::java::{JavaContextExtractor, utils::strip_sentinel},
 };
 
@@ -613,7 +613,7 @@ mod tests {
     use tree_sitter::Parser;
 
     use crate::{
-        completion::CursorLocation,
+        semantic::CursorLocation,
         language::java::{JavaContextExtractor, location::determine_location},
     };
 

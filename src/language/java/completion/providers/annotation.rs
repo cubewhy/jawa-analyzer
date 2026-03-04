@@ -1,13 +1,13 @@
 use rust_asm::constants::ACC_ANNOTATION;
 
-use super::super::{
-    candidate::{CandidateKind, CompletionCandidate},
-    context::{CompletionContext, CursorLocation},
-    fuzzy,
-    import_utils::is_import_needed,
+use crate::{
+    completion::{
+        CandidateKind, CompletionCandidate, fuzzy, import_utils::is_import_needed,
+        provider::CompletionProvider,
+    },
+    index::{ClassMetadata, GlobalIndex},
+    semantic::context::{CursorLocation, SemanticContext},
 };
-use super::CompletionProvider;
-use crate::index::{ClassMetadata, GlobalIndex};
 use std::sync::Arc;
 
 pub struct AnnotationProvider;
@@ -17,11 +17,7 @@ impl CompletionProvider for AnnotationProvider {
         "annotation"
     }
 
-    fn provide(
-        &self,
-        ctx: &CompletionContext,
-        index: &mut GlobalIndex,
-    ) -> Vec<CompletionCandidate> {
+    fn provide(&self, ctx: &SemanticContext, index: &mut GlobalIndex) -> Vec<CompletionCandidate> {
         let (prefix, et) = match &ctx.location {
             CursorLocation::Annotation {
                 prefix,
@@ -159,11 +155,11 @@ fn fqn_of(meta: &crate::index::ClassMetadata) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::completion::context::{CompletionContext, CursorLocation};
-    use crate::completion::providers::CompletionProvider;
+    use crate::completion::CandidateKind;
     use crate::index::{
         AnnotationSummary, AnnotationValue, ClassMetadata, ClassOrigin, GlobalIndex,
     };
+    use crate::semantic::context::{CursorLocation, SemanticContext};
     use rust_asm::constants::{ACC_ANNOTATION, ACC_PUBLIC};
     use rustc_hash::FxHashMap;
     use std::sync::Arc;
@@ -202,8 +198,8 @@ mod tests {
         }
     }
 
-    fn annotation_ctx(prefix: &str, imports: Vec<Arc<str>>, pkg: &str) -> CompletionContext {
-        CompletionContext::new(
+    fn annotation_ctx(prefix: &str, imports: Vec<Arc<str>>, pkg: &str) -> SemanticContext {
+        SemanticContext::new(
             CursorLocation::Annotation {
                 prefix: prefix.to_string(),
                 target_element_type: None,
@@ -372,7 +368,7 @@ mod tests {
         }];
         idx.add_classes(vec![type_only]);
 
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::Annotation {
                 prefix: "Class".to_string(),
                 target_element_type: Some(Arc::from("METHOD")),

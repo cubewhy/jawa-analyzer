@@ -13,7 +13,7 @@ use std::sync::{Arc, OnceLock};
 use serde::{Deserialize, Serialize};
 use zip::ZipArchive;
 
-use crate::completion::type_resolver::{SymbolProvider, parse_return_type_from_descriptor};
+use crate::semantic::types::{SymbolProvider, parse_return_type_from_descriptor};
 use crate::jvm::descriptor::consume_one_descriptor_type;
 
 pub mod cache;
@@ -1260,7 +1260,7 @@ mod tests {
     use rust_asm::constants::ACC_PUBLIC;
 
     use super::*;
-    use crate::completion::type_resolver::count_params;
+    use crate::semantic::types::count_params;
 
     fn make_class(pkg: &str, name: &str, origin: ClassOrigin) -> ClassMetadata {
         let internal = format!("{}/{}", pkg, name);

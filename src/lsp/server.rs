@@ -563,9 +563,9 @@ fn point_after_insert_bytes(
     // 注意：这里用 bytes 计数，和 tree-sitter 的定义一致
     if let Some(last_nl) = inserted.rfind('\n') {
         row += inserted.as_bytes().iter().filter(|&&b| b == b'\n').count();
-        col = inserted.as_bytes().len() - (last_nl + 1);
+        col = inserted.len() - (last_nl + 1);
     } else {
-        col += inserted.as_bytes().len();
+        col += inserted.len();
     }
 
     (row, col)

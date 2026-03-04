@@ -1,4 +1,4 @@
-use crate::completion::type_resolver::type_name::TypeName;
+use crate::semantic::types::type_name::TypeName;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum JvmType {
@@ -276,7 +276,7 @@ fn java_primitive_char_to_name(c: char) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use crate::completion::type_resolver::generics::JvmType;
+    use crate::semantic::types::generics::JvmType;
 
     #[test]
     fn test_wildcard_bound_display() {

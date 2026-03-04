@@ -6,7 +6,6 @@ use crate::index::{ClassMetadata, ClassOrigin};
 use crate::language::java::type_ctx::{SourceTypeCtx, build_java_descriptor};
 use crate::language::java::utils::extract_generic_signature;
 use crate::{
-    completion::context::CurrentClassMember,
     index::{GlobalIndex, intern_str},
     language::{
         java::{
@@ -19,6 +18,7 @@ use crate::{
         },
         ts_utils::{capture_text, run_query},
     },
+    semantic::context::CurrentClassMember,
 };
 
 pub fn parse_java_source(

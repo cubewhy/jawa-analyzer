@@ -1,7 +1,7 @@
 use tree_sitter::Node;
 
 use crate::{
-    completion::CursorLocation,
+    semantic::CursorLocation,
     language::java::{
         JavaContextExtractor, SENTINEL,
         location::determine_location,

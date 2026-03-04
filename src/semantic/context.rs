@@ -1,10 +1,11 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{any::Any, collections::HashMap, sync::Arc};
 
 use rust_asm::constants::{ACC_PRIVATE, ACC_STATIC};
 
 use crate::{
-    completion::type_resolver::type_name::TypeName,
     index::{FieldSummary, MethodSummary},
+    language::LanguageId,
+    semantic::types::type_name::TypeName,
 };
 
 #[derive(Clone, Debug)]
@@ -116,7 +117,7 @@ pub enum CursorLocation {
 }
 
 #[derive(Debug, Clone)]
-pub struct CompletionContext {
+pub struct SemanticContext {
     pub location: CursorLocation,
     pub local_variables: Vec<LocalVar>,
     pub enclosing_class: Option<Arc<str>>,
@@ -133,6 +134,8 @@ pub struct CompletionContext {
     pub char_after_cursor: Option<char>,
     pub file_uri: Option<Arc<str>>,
     pub inferred_package: Option<Arc<str>>,
+    pub language_id: LanguageId,
+    pub ext: Option<Arc<dyn Any + Send + Sync>>,
 }
 
 #[derive(Debug, Clone)]
@@ -145,7 +148,7 @@ pub struct LocalVar {
     pub init_expr: Option<String>,
 }
 
-impl CompletionContext {
+impl SemanticContext {
     pub fn new(
         location: CursorLocation,
         query: impl Into<String>,
@@ -169,6 +172,8 @@ impl CompletionContext {
             char_after_cursor: None,
             file_uri: None,
             inferred_package: None,
+            language_id: LanguageId::new("unknown"),
+            ext: None,
         }
     }
 
@@ -179,6 +184,16 @@ impl CompletionContext {
 
     pub fn with_file_uri(mut self, uri: Arc<str>) -> Self {
         self.file_uri = Some(uri);
+        self
+    }
+
+    pub fn with_language_id(mut self, language_id: LanguageId) -> Self {
+        self.language_id = language_id;
+        self
+    }
+
+    pub fn with_extension(mut self, ext: Arc<dyn Any + Send + Sync>) -> Self {
+        self.ext = Some(ext);
         self
     }
 

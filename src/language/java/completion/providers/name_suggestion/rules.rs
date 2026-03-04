@@ -161,7 +161,9 @@ pub const BASE_RULES: &[SuggestionRule] = &[keyword_rule, wrapper_rule, default_
 
 #[cfg(test)]
 mod tests {
-    use crate::completion::providers::name_suggestion::rules::{acronym_of, camel_words};
+    use crate::language::java::completion::providers::name_suggestion::rules::{
+        acronym_of, camel_words,
+    };
 
     #[test]
     fn test_camel_words_split() {

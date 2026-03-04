@@ -1,9 +1,8 @@
-use super::super::{
-    candidate::{CandidateKind, CompletionCandidate},
-    context::{CompletionContext, CursorLocation},
+use crate::{
+    completion::{CandidateKind, CompletionCandidate, fuzzy, provider::CompletionProvider},
+    index::GlobalIndex,
+    semantic::context::{CursorLocation, SemanticContext},
 };
-use super::CompletionProvider;
-use crate::{completion::fuzzy, index::GlobalIndex};
 use std::sync::Arc;
 
 pub struct LocalVarProvider;
@@ -13,11 +12,7 @@ impl CompletionProvider for LocalVarProvider {
         "local_var"
     }
 
-    fn provide(
-        &self,
-        ctx: &CompletionContext,
-        _index: &mut GlobalIndex,
-    ) -> Vec<CompletionCandidate> {
+    fn provide(&self, ctx: &SemanticContext, _index: &mut GlobalIndex) -> Vec<CompletionCandidate> {
         let prefix = match &ctx.location {
             CursorLocation::Expression { prefix } => prefix.as_str(),
             CursorLocation::MethodArgument { prefix } => prefix.as_str(),
@@ -54,13 +49,13 @@ impl CompletionProvider for LocalVarProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::completion::context::{CompletionContext, CursorLocation, LocalVar};
-    use crate::completion::type_resolver::type_name::TypeName;
     use crate::index::GlobalIndex;
+    use crate::semantic::context::{CursorLocation, LocalVar, SemanticContext};
+    use crate::semantic::types::type_name::TypeName;
     use std::sync::Arc;
 
-    fn make_ctx(prefix: &str, vars: Vec<(&str, &str)>) -> CompletionContext {
-        CompletionContext::new(
+    fn make_ctx(prefix: &str, vars: Vec<(&str, &str)>) -> SemanticContext {
+        SemanticContext::new(
             CursorLocation::Expression {
                 prefix: prefix.to_string(),
             },
@@ -130,7 +125,7 @@ mod tests {
     #[test]
     fn test_method_argument_location() {
         let mut idx = GlobalIndex::new();
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MethodArgument {
                 prefix: "aV".to_string(),
             },
@@ -178,7 +173,7 @@ mod tests {
     #[test]
     fn test_member_access_does_not_return_locals() {
         let mut idx = GlobalIndex::new();
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -207,7 +202,7 @@ mod tests {
     #[test]
     fn test_type_annotation_location() {
         let mut idx = GlobalIndex::new();
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::TypeAnnotation {
                 prefix: "aV".to_string(),
             },

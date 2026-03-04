@@ -1,9 +1,8 @@
-use super::super::{
-    candidate::CompletionCandidate,
-    context::{CompletionContext, CursorLocation},
+use crate::{
+    completion::{CompletionCandidate, provider::CompletionProvider},
+    index::GlobalIndex,
+    semantic::context::{CursorLocation, SemanticContext},
 };
-use super::CompletionProvider;
-use crate::index::GlobalIndex;
 
 pub struct PackageProvider;
 
@@ -12,11 +11,7 @@ impl CompletionProvider for PackageProvider {
         "package"
     }
 
-    fn provide(
-        &self,
-        ctx: &CompletionContext,
-        index: &mut GlobalIndex,
-    ) -> Vec<CompletionCandidate> {
+    fn provide(&self, ctx: &SemanticContext, index: &mut GlobalIndex) -> Vec<CompletionCandidate> {
         match &ctx.location {
             CursorLocation::Import { prefix } => {
                 crate::completion::import_completion::candidates_for_import(prefix, index)
@@ -56,8 +51,8 @@ impl CompletionProvider for PackageProvider {
 mod tests {
     use super::*;
     use crate::completion::CandidateKind;
-    use crate::completion::context::{CompletionContext, CursorLocation};
     use crate::index::{ClassMetadata, ClassOrigin, GlobalIndex};
+    use crate::semantic::context::{CursorLocation, SemanticContext};
     use rust_asm::constants::ACC_PUBLIC;
     use std::sync::Arc;
 
@@ -90,8 +85,8 @@ mod tests {
         }
     }
 
-    fn import_ctx(prefix: &str) -> CompletionContext {
-        CompletionContext::new(
+    fn import_ctx(prefix: &str) -> SemanticContext {
+        SemanticContext::new(
             CursorLocation::Import {
                 prefix: prefix.to_string(),
             },
@@ -104,8 +99,8 @@ mod tests {
         )
     }
 
-    fn expr_ctx(prefix: &str) -> CompletionContext {
-        CompletionContext::new(
+    fn expr_ctx(prefix: &str) -> SemanticContext {
+        SemanticContext::new(
             CursorLocation::Expression {
                 prefix: prefix.to_string(),
             },
@@ -149,7 +144,7 @@ mod tests {
     fn test_member_access_uppercase_receiver_not_package() {
         // String.| → 不是包路径
         let mut idx = make_index();
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -280,7 +275,7 @@ mod tests {
     #[test]
     fn test_member_access_single_uppercase_no_package() {
         let mut idx = make_index();
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -305,7 +300,7 @@ mod tests {
     fn test_member_access_insert_text_trimmed() {
         // org.cubewhy.| → insert_text 应该是 "Main" 而不是 "org.cubewhy.Main"
         let mut idx = make_index();
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -333,7 +328,7 @@ mod tests {
     #[test]
     fn test_member_access_package_like_triggers() {
         let mut idx = make_index();
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "".to_string(),
@@ -366,7 +361,7 @@ mod tests {
     #[test]
     fn test_member_access_package_with_name_prefix() {
         let mut idx = make_index();
-        let ctx = CompletionContext::new(
+        let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_type: None,
                 member_prefix: "Ma".to_string(),
