@@ -67,7 +67,8 @@ pub enum CursorLocation {
     MemberAccess {
         /// The inferred semantic type of the accessed object, preserving generics/arrays when known.
         receiver_semantic_type: Option<TypeName>,
-        /// The inferred type of the accessed object (internal name, such as "java/lang/String")
+        /// Legacy compatibility field for the erased receiver owner internal name
+        /// (e.g. "java/util/List"). This does not preserve generic arguments.
         receiver_type: Option<Arc<str>>,
         /// Prefix of members entered before the cursor
         member_prefix: String,
@@ -116,6 +117,53 @@ pub enum CursorLocation {
     },
     /// Unrecognized location
     Unknown,
+}
+
+impl CursorLocation {
+    pub fn member_access_receiver_semantic_type(&self) -> Option<&TypeName> {
+        match self {
+            CursorLocation::MemberAccess {
+                receiver_semantic_type,
+                ..
+            } => receiver_semantic_type.as_ref(),
+            _ => None,
+        }
+    }
+
+    pub fn member_access_receiver_owner_internal(&self) -> Option<&str> {
+        match self {
+            CursorLocation::MemberAccess {
+                receiver_semantic_type,
+                receiver_type,
+                ..
+            } => receiver_semantic_type
+                .as_ref()
+                .map(TypeName::erased_internal)
+                .or_else(|| receiver_type.as_deref()),
+            _ => None,
+        }
+    }
+
+    pub fn member_access_prefix(&self) -> Option<&str> {
+        match self {
+            CursorLocation::MemberAccess { member_prefix, .. } => Some(member_prefix),
+            _ => None,
+        }
+    }
+
+    pub fn member_access_expr(&self) -> Option<&str> {
+        match self {
+            CursorLocation::MemberAccess { receiver_expr, .. } => Some(receiver_expr),
+            _ => None,
+        }
+    }
+
+    pub fn member_access_arguments(&self) -> Option<&str> {
+        match self {
+            CursorLocation::MemberAccess { arguments, .. } => arguments.as_deref(),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -254,5 +302,45 @@ impl SemanticContext {
         let uri = self.file_uri.as_deref()?;
         let last = uri.rsplit('/').next()?;
         Some(last.split('.').next().unwrap_or(last))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_member_access_owner_derivation_prefers_semantic() {
+        let loc = CursorLocation::MemberAccess {
+            receiver_semantic_type: Some(TypeName::with_args(
+                "java/util/List",
+                vec![TypeName::new("java/lang/String")],
+            )),
+            receiver_type: Some(Arc::from("legacy/Wrong")),
+            member_prefix: String::new(),
+            receiver_expr: "x".to_string(),
+            arguments: None,
+        };
+
+        assert_eq!(
+            loc.member_access_receiver_owner_internal(),
+            Some("java/util/List")
+        );
+    }
+
+    #[test]
+    fn test_member_access_owner_derivation_falls_back_to_legacy() {
+        let loc = CursorLocation::MemberAccess {
+            receiver_semantic_type: None,
+            receiver_type: Some(Arc::from("java/util/List")),
+            member_prefix: String::new(),
+            receiver_expr: "x".to_string(),
+            arguments: None,
+        };
+
+        assert_eq!(
+            loc.member_access_receiver_owner_internal(),
+            Some("java/util/List")
+        );
     }
 }

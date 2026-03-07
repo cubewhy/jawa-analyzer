@@ -25,21 +25,14 @@ impl CompletionProvider for MemberProvider {
         ctx: &SemanticContext,
         index: &IndexView,
     ) -> Vec<CompletionCandidate> {
-        let (receiver_semantic_type, receiver_type, member_prefix, receiver_expr) = match &ctx.location {
-            CursorLocation::MemberAccess {
-                receiver_semantic_type,
-                receiver_type,
-                member_prefix,
-                receiver_expr,
-                ..
-            } => (
-                receiver_semantic_type.as_ref(),
-                receiver_type.as_ref(),
-                member_prefix.as_str(),
-                receiver_expr.as_str(),
-            ),
-            _ => return vec![],
-        };
+        if !matches!(&ctx.location, CursorLocation::MemberAccess { .. }) {
+            return vec![];
+        }
+
+        let receiver_semantic_type = ctx.location.member_access_receiver_semantic_type();
+        let receiver_owner_internal = ctx.location.member_access_receiver_owner_internal();
+        let member_prefix = ctx.location.member_access_prefix().unwrap_or("");
+        let receiver_expr = ctx.location.member_access_expr().unwrap_or("");
 
         tracing::debug!(
             receiver_expr,
@@ -201,11 +194,10 @@ impl CompletionProvider for MemberProvider {
             return results;
         }
 
-        let resolved_semantic = receiver_semantic_type.cloned().or_else(|| {
-            receiver_type
-                .map(|s| TypeName::new(Arc::clone(s)))
-                .or_else(|| resolve_receiver_type(receiver_expr, ctx, index, scope).map(TypeName::from))
-        });
+        let resolved_semantic = receiver_semantic_type
+            .cloned()
+            .or_else(|| receiver_owner_internal.map(TypeName::new))
+            .or_else(|| resolve_receiver_type(receiver_expr, ctx, index, scope).map(TypeName::from));
 
         let resolved = match resolved_semantic {
             Some(t) => t,
@@ -254,9 +246,6 @@ impl CompletionProvider for MemberProvider {
                 // shadowing: subclass method hides superclass method with same name+descriptor
                 let key = (Arc::clone(&method.name), Arc::clone(&method.desc()));
                 if !seen_methods.insert(key) {
-                    continue;
-                }
-                if !filter.is_method_accessible(method.access_flags, method.is_synthetic) {
                     continue;
                 }
                 if !filter.is_method_accessible(method.access_flags, method.is_synthetic) {

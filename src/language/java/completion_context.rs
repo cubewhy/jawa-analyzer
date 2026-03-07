@@ -109,20 +109,7 @@ impl<'a> ContextEnricher<'a> {
                 tracing::debug!(?resolved, "enrich_context: resolved before final match");
 
                 // Normalize to a canonical semantic receiver type before writing either field.
-                // If the result is a simple name (without '/'), try strict expansion.
-                let resolved_semantic = match resolved {
-                    None => {
-                        tracing::debug!("enrich_context: final match -> None");
-                        None
-                    }
-                    Some(ty) if ty.contains_slash() => Some(ty),
-                    Some(ty) => {
-                        let ty_str = ty.erased_internal_with_arrays();
-                        let r = type_ctx.resolve_type_name_strict(&ty_str);
-                        tracing::debug!(?r, ?ty, "enrich_context: final match -> resolve strict");
-                        r
-                    }
-                };
+                let resolved_semantic = canonicalize_receiver_semantic(resolved, &type_ctx);
 
                 if receiver_semantic_type.is_none() {
                     *receiver_semantic_type = resolved_semantic.clone();
@@ -223,6 +210,25 @@ fn find_matching_angle(s: &str, start: usize) -> Option<usize> {
         }
     }
     None
+}
+
+fn canonicalize_receiver_semantic(
+    resolved: Option<TypeName>,
+    type_ctx: &SourceTypeCtx,
+) -> Option<TypeName> {
+    match resolved {
+        None => {
+            tracing::debug!("enrich_context: final match -> None");
+            None
+        }
+        Some(ty) if ty.contains_slash() => Some(ty),
+        Some(ty) => {
+            let ty_str = ty.erased_internal_with_arrays();
+            let r = type_ctx.resolve_type_name_strict(&ty_str);
+            tracing::debug!(?r, ?ty, "enrich_context: final match -> resolve strict");
+            r
+        }
+    }
 }
 
 fn expand_local_type_strict(
