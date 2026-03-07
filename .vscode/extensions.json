@@ -1,0 +1,6 @@
+{
+  "recommendations": [
+    "rust-lang.rust-analyzer",
+    "connor4312.esbuild-problem-matchers"
+  ]
+}
