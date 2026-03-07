@@ -7,11 +7,54 @@ use crate::{
     semantic::{
         context::CurrentClassMember,
         types::{
-            SymbolProvider, descriptor_to_source_type,
+            SymbolProvider, descriptor_to_source_type, signature_to_source_type,
             generics::{JvmType, substitute_type},
+            type_name::TypeName,
         },
     },
 };
+
+fn type_name_to_source_style(ty: &TypeName, provider: &impl SymbolProvider) -> String {
+    let base = match ty.base_internal.as_ref() {
+        "byte" | "char" | "double" | "float" | "int" | "long" | "short" | "boolean" | "void" => {
+            ty.base_internal.to_string()
+        }
+        "*" => "?".to_string(),
+        "+" => {
+            if let Some(inner) = ty.args.first() {
+                format!("? extends {}", type_name_to_source_style(inner, provider))
+            } else {
+                "?".to_string()
+            }
+        }
+        "-" => {
+            if let Some(inner) = ty.args.first() {
+                format!("? super {}", type_name_to_source_style(inner, provider))
+            } else {
+                "?".to_string()
+            }
+        }
+        internal => provider
+            .resolve_source_name(internal)
+            .unwrap_or_else(|| internal.replace('/', ".")),
+    };
+
+    let mut rendered = if ty.args.is_empty() || matches!(ty.base_internal.as_ref(), "+" | "-") {
+        base
+    } else {
+        let rendered_args: Vec<String> = ty
+            .args
+            .iter()
+            .map(|a| type_name_to_source_style(a, provider))
+            .collect();
+        format!("{base}<{}>", rendered_args.join(", "))
+    };
+
+    if ty.array_dims > 0 {
+        rendered.push_str(&"[]".repeat(ty.array_dims));
+    }
+    rendered
+}
 
 fn should_trace_method(
     receiver_internal: &str,
@@ -60,21 +103,17 @@ pub fn method_detail(
         tracing::debug!(base_return, ret_jvm, "method_detail: return type selection");
     }
 
-    let mut display_return: Arc<str> = substitute_type(
+    let substituted_return = substitute_type(
         receiver_internal,
         class_meta.generic_signature.as_deref(),
         ret_jvm,
-    )
-    .map(|t| Arc::from(t.to_jvm_signature()))
-    .unwrap_or_else(|| Arc::from(ret_jvm));
-
-    if display_return.starts_with('T') && display_return.ends_with(';') && display_return.len() >= 3
-    {
-        display_return = Arc::from(&display_return[1..display_return.len() - 1]);
-    }
-
-    let source_style_return = descriptor_to_source_type(&display_return, provider)
-        .unwrap_or_else(|| display_return.to_string());
+    );
+    let source_style_return = substituted_return
+        .as_ref()
+        .map(|t| type_name_to_source_style(t, provider))
+        .or_else(|| signature_to_source_type(ret_jvm, provider))
+        .or_else(|| descriptor_to_source_type(ret_jvm, provider))
+        .unwrap_or_else(|| ret_jvm.to_string());
 
     let sig_to_use = method
         .generic_signature
@@ -84,7 +123,7 @@ pub fn method_detail(
     if trace_add {
         tracing::debug!(
             sig_to_use = %sig_to_use,
-            display_return = %display_return,
+            display_return = ?substituted_return,
             source_style_return,
             "method_detail: signature chosen"
         );
@@ -99,24 +138,21 @@ pub fn method_detail(
         while !params_str.is_empty() {
             if let Some((_, rest)) = JvmType::parse(params_str) {
                 let param_jvm_str = &params_str[..params_str.len() - rest.len()];
-                let subbed = substitute_type(
+                let substituted = substitute_type(
                     receiver_internal,
                     class_meta.generic_signature.as_deref(),
                     param_jvm_str,
-                )
-                .map(|t| Arc::from(t.to_jvm_signature()))
-                .unwrap_or_else(|| {
-                    JvmType::parse(param_jvm_str)
-                        .map(|(t, _)| Arc::from(t.to_signature_string()))
-                        .unwrap_or_else(|| Arc::from(param_jvm_str))
-                });
-
-                let rendered = descriptor_to_source_type(&subbed, provider)
-                    .unwrap_or_else(|| subbed.to_string());
+                );
+                let rendered = substituted
+                    .as_ref()
+                    .map(|t| type_name_to_source_style(t, provider))
+                    .or_else(|| signature_to_source_type(param_jvm_str, provider))
+                    .or_else(|| descriptor_to_source_type(param_jvm_str, provider))
+                    .unwrap_or_else(|| param_jvm_str.to_string());
                 if trace_add {
                     tracing::debug!(
                         param_raw = param_jvm_str,
-                        param_substituted = %subbed,
+                        param_substituted = ?substituted,
                         param_rendered = rendered,
                         "method_detail: parameter substitution"
                     );

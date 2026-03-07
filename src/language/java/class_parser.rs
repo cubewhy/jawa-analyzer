@@ -593,7 +593,7 @@ mod tests {
         },
         semantic::context::CurrentClassMember,
         semantic::types::{
-            SymbolProvider, descriptor_to_source_type,
+            SymbolProvider, descriptor_to_source_type, signature_to_source_type,
             generics::{JvmType, substitute_type},
         },
     };
@@ -1055,10 +1055,12 @@ public class Main {
             receiver_internal,
             cls.generic_signature.as_deref(),
             ret_jvm,
-        )
-        .map(|t| t.to_jvm_signature())
-        .unwrap_or_else(|| ret_jvm.to_string());
-        let rendered_return = descriptor_to_source_type(&substituted_return, &TestProvider);
+        );
+        let rendered_return = substituted_return
+            .as_ref()
+            .map(|t| t.to_internal_with_generics())
+            .or_else(|| signature_to_source_type(ret_jvm, &TestProvider))
+            .or_else(|| descriptor_to_source_type(ret_jvm, &TestProvider));
 
         let mut param_rows = Vec::new();
         if let Some(start) = sig_to_use.find('(')
@@ -1068,15 +1070,17 @@ public class Main {
             while !params.is_empty() {
                 if let Some((_, rest)) = JvmType::parse(params) {
                     let raw = &params[..params.len() - rest.len()];
-                    let subbed = substitute_type(
+                    let substituted = substitute_type(
                         receiver_internal,
                         cls.generic_signature.as_deref(),
                         raw,
-                    )
-                    .map(|t| t.to_jvm_signature())
-                    .unwrap_or_else(|| raw.to_string());
-                    let rendered = descriptor_to_source_type(&subbed, &TestProvider);
-                    param_rows.push((raw.to_string(), subbed, rendered));
+                    );
+                    let rendered = substituted
+                        .as_ref()
+                        .map(|t| t.to_internal_with_generics())
+                        .or_else(|| signature_to_source_type(raw, &TestProvider))
+                        .or_else(|| descriptor_to_source_type(raw, &TestProvider));
+                    param_rows.push((raw.to_string(), substituted, rendered));
                     params = rest;
                 } else {
                     break;
@@ -1108,18 +1112,29 @@ public class Main {
             sig_to_use,
             base_return,
             ret_jvm,
-            substituted_return,
+            substituted_return
+                .as_ref()
+                .map(|t| t.to_internal_with_generics())
+                .unwrap_or_else(|| "<none>".to_string()),
             rendered_return,
         ));
         out.push_str("render_param_tokens:\n");
-        for (idx, (raw, subbed, rendered)) in param_rows.iter().enumerate() {
+        for (idx, (raw, substituted, rendered)) in param_rows.iter().enumerate() {
             out.push_str(&format!(
-                "#{idx}: raw={raw} | substituted={subbed} | rendered={rendered:?}\n"
+                "#{idx}: raw={raw} | substituted={:?} | rendered={rendered:?}\n",
+                substituted
+                    .as_ref()
+                    .map(|t| t.to_internal_with_generics())
             ));
         }
         out.push_str("\nfinal_detail:\n");
         out.push_str(&detail);
         out.push('\n');
+
+        assert!(
+            !detail.contains("Ljava/") && !detail.contains("TK;") && !detail.contains("TV;"),
+            "detail should be source-style, got: {detail}"
+        );
 
         insta::assert_snapshot!("groupby_method_detail_rendering_provenance", out);
     }

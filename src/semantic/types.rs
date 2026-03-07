@@ -837,6 +837,58 @@ pub fn descriptor_to_source_type(desc: &str, provider: &impl SymbolProvider) -> 
     Some(result)
 }
 
+fn jvm_type_to_source_type(ty: &JvmType, provider: &impl SymbolProvider) -> String {
+    match ty {
+        JvmType::Primitive(c) => match c {
+            'B' => "byte".to_string(),
+            'C' => "char".to_string(),
+            'D' => "double".to_string(),
+            'F' => "float".to_string(),
+            'I' => "int".to_string(),
+            'J' => "long".to_string(),
+            'S' => "short".to_string(),
+            'Z' => "boolean".to_string(),
+            'V' => "void".to_string(),
+            _ => "unknown".to_string(),
+        },
+        JvmType::TypeVar(name) => name.clone(),
+        JvmType::Array(inner) => format!("{}[]", jvm_type_to_source_type(inner, provider)),
+        JvmType::Wildcard => "?".to_string(),
+        JvmType::WildcardBound('+', inner) => {
+            format!("? extends {}", jvm_type_to_source_type(inner, provider))
+        }
+        JvmType::WildcardBound('-', inner) => {
+            format!("? super {}", jvm_type_to_source_type(inner, provider))
+        }
+        JvmType::WildcardBound(_, inner) => jvm_type_to_source_type(inner, provider),
+        JvmType::Object(internal, args) => {
+            let base = provider
+                .resolve_source_name(internal)
+                .unwrap_or_else(|| internal.replace('/', "."));
+            if args.is_empty() {
+                base
+            } else {
+                let rendered_args: Vec<String> = args
+                    .iter()
+                    .map(|a| jvm_type_to_source_type(a, provider))
+                    .collect();
+                format!("{base}<{}>", rendered_args.join(", "))
+            }
+        }
+    }
+}
+
+/// Render a JVM descriptor/signature token into source-style text.
+/// Accepts plain descriptors (e.g. `Ljava/lang/String;`) and generic signatures
+/// (e.g. `Ljava/util/Map<TK;Ljava/util/List<TV;>;>;`).
+pub fn signature_to_source_type(sig: &str, provider: &impl SymbolProvider) -> Option<String> {
+    let (ty, rest) = JvmType::parse(sig)?;
+    if !rest.is_empty() {
+        return None;
+    }
+    Some(jvm_type_to_source_type(&ty, provider))
+}
+
 /// Return: Option<(parameters, return_type)>
 pub fn parse_strict_method_signature(
     descriptor: &str,

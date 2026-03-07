@@ -14,12 +14,12 @@ class_generic_signature=Some("<R:Ljava/lang/Object;>Ljava/lang/Object;")
 sig_to_use=<K:Ljava/lang/Object;V:Ljava/lang/Object;>(LFunction<-TR;+TK;>;LFunction<-TR;+TV;>;)LMap<TK;LList<TV;>;>;
 base_return=LMap;
 ret_jvm=LMap<TK;LList<TV;>;>;
-substituted_return=TMap;
-rendered_return=None
+substituted_return=Map<TK;TList;>
+rendered_return=Some("Map<TK;TList;>")
 
 render_param_tokens:
-#0: raw=LFunction<-TR;+TK;>; | substituted=TFunction; | rendered=None
-#1: raw=LFunction<-TR;+TV;>; | substituted=TFunction; | rendered=None
+#0: raw=LFunction<-TR;+TK;>; | substituted=Some("Function<-Ljava/util/List<Ljava/lang/String;>;+TK;>") | rendered=Some("Function<-Ljava/util/List<Ljava/lang/String;>;+TK;>")
+#1: raw=LFunction<-TR;+TV;>; | substituted=Some("Function<-Ljava/util/List<Ljava/lang/String;>;+TV;>") | rendered=Some("Function<-Ljava/util/List<Ljava/lang/String;>;+TV;>")
 
 final_detail:
-Box — Map groupBy(TFunction; keyFn, TFunction; valueFn)
+Box — Map<K, List<V>> groupBy(Function<? super java.util.List<java.lang.String>, ? extends K> keyFn, Function<? super java.util.List<java.lang.String>, ? extends V> valueFn)
