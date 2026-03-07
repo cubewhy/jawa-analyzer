@@ -1,0 +1,6 @@
+[submodule "third_party/vineflower"]
+	path = third_party/vineflower
+	url = https://github.com/Vineflower/vineflower.git
+[submodule "third_party/cfr"]
+	path = third_party/cfr
+	url = https://github.com/leibnitz27/cfr.git
