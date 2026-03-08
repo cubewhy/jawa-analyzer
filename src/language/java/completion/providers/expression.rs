@@ -5,8 +5,10 @@ use crate::{
     },
     index::{IndexScope, IndexView},
     semantic::context::{CursorLocation, SemanticContext},
+    semantic::types::symbol_resolver::SymbolResolver,
 };
 use std::sync::Arc;
+use std::time::Instant;
 
 pub struct ExpressionProvider;
 
@@ -15,22 +17,148 @@ impl CompletionProvider for ExpressionProvider {
         "expression"
     }
 
+    fn is_applicable(&self, ctx: &SemanticContext) -> bool {
+        matches!(
+            &ctx.location,
+            CursorLocation::Expression { .. }
+                | CursorLocation::TypeAnnotation { .. }
+                | CursorLocation::MethodArgument { .. }
+                | CursorLocation::MemberAccess { .. }
+                | CursorLocation::StaticAccess { .. }
+        )
+    }
+
     fn provide(
         &self,
         _scope: IndexScope,
         ctx: &SemanticContext,
         index: &IndexView,
     ) -> Vec<CompletionCandidate> {
+        if let CursorLocation::MemberAccess {
+            receiver_semantic_type,
+            receiver_type,
+            receiver_expr,
+            member_prefix,
+            ..
+        } = &ctx.location
+        {
+            let t0 = Instant::now();
+            let resolver = SymbolResolver::new(index);
+            let owner = receiver_semantic_type
+                .as_ref()
+                .map(|t| Arc::from(t.erased_internal()))
+                .or_else(|| receiver_type.clone())
+                .or_else(|| resolver.resolve_type_name(ctx, receiver_expr));
+            let Some(owner_internal) = owner else {
+                return vec![];
+            };
+            let mut out = Vec::new();
+            for inner in index.direct_inner_classes_of(&owner_internal) {
+                if !member_prefix.is_empty()
+                    && fuzzy::fuzzy_match(&member_prefix.to_lowercase(), &inner.name.to_lowercase())
+                        .is_none()
+                {
+                    continue;
+                }
+                let score = if member_prefix.is_empty() {
+                    88.0
+                } else {
+                    88.0 + fuzzy::fuzzy_match(
+                        &member_prefix.to_lowercase(),
+                        &inner.name.to_lowercase(),
+                    )
+                    .unwrap_or(0) as f32
+                        * 0.1
+                };
+                out.push(
+                    CompletionCandidate::new(
+                        Arc::clone(&inner.name),
+                        inner.name.to_string(),
+                        CandidateKind::ClassName,
+                        self.name(),
+                    )
+                    .with_detail(inner.source_name())
+                    .with_score(score),
+                );
+            }
+            tracing::debug!(
+                provider = self.name(),
+                member_access = true,
+                receiver_expr,
+                owner_internal = %owner_internal,
+                candidates = out.len(),
+                elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0,
+                "completion provider timing"
+            );
+            return out;
+        }
+
+        if let CursorLocation::StaticAccess {
+            class_internal_name,
+            member_prefix,
+        } = &ctx.location
+        {
+            let t0 = Instant::now();
+            let mut out = Vec::new();
+            for inner in index.direct_inner_classes_of(class_internal_name.as_ref()) {
+                if !member_prefix.is_empty()
+                    && fuzzy::fuzzy_match(&member_prefix.to_lowercase(), &inner.name.to_lowercase())
+                        .is_none()
+                {
+                    continue;
+                }
+                let score = if member_prefix.is_empty() {
+                    88.0
+                } else {
+                    88.0 + fuzzy::fuzzy_match(
+                        &member_prefix.to_lowercase(),
+                        &inner.name.to_lowercase(),
+                    )
+                    .unwrap_or(0) as f32
+                        * 0.1
+                };
+                out.push(
+                    CompletionCandidate::new(
+                        Arc::clone(&inner.name),
+                        inner.name.to_string(),
+                        CandidateKind::ClassName,
+                        self.name(),
+                    )
+                    .with_detail(inner.source_name())
+                    .with_score(score),
+                );
+            }
+            tracing::debug!(
+                provider = self.name(),
+                static_access = true,
+                owner_internal = %class_internal_name,
+                candidates = out.len(),
+                elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0,
+                "completion provider timing"
+            );
+            return out;
+        }
+
         let prefix = match &ctx.location {
             CursorLocation::Expression { prefix } => prefix.as_str(),
             CursorLocation::TypeAnnotation { prefix } => prefix.as_str(),
             CursorLocation::MethodArgument { prefix } => prefix.as_str(),
             _ => return vec![],
         };
+        let t0 = Instant::now();
         let is_type_annotation = matches!(&ctx.location, CursorLocation::TypeAnnotation { .. });
 
         if prefix.contains('.') {
-            return vec![];
+            let results = provide_qualified_type_prefix(prefix, ctx, index, self.name());
+            tracing::debug!(
+                provider = self.name(),
+                prefix,
+                qualified = true,
+                candidates = results.len(),
+                elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0,
+                "completion provider timing"
+            );
+            return results;
         }
 
         let prefix_lower = prefix.to_lowercase();
@@ -39,11 +167,15 @@ impl CompletionProvider for ExpressionProvider {
         let current_pkg = ctx.enclosing_package.as_deref();
 
         let mut results = Vec::new();
+        let mut seen_internals: std::collections::HashSet<Arc<str>> = Default::default();
 
         // Classes that have already been imported in current context
         let imported = index.resolve_imports(&ctx.existing_imports);
         for meta in &imported {
             if !is_type_visible_in_context(meta, ctx, index, is_type_annotation) {
+                continue;
+            }
+            if !seen_internals.insert(Arc::clone(&meta.internal_name)) {
                 continue;
             }
             let score = if prefix.is_empty() {
@@ -72,13 +204,31 @@ impl CompletionProvider for ExpressionProvider {
             .map(|m| Arc::clone(&m.internal_name))
             .collect();
 
+        let fuzzy_pool = if prefix.is_empty() {
+            Vec::new()
+        } else {
+            index.fuzzy_search_classes(prefix, 1024)
+        };
+
         // Same package
         if let Some(pkg) = current_pkg {
-            for meta in index.classes_in_package(pkg) {
+            let iter: Vec<_> = if prefix.is_empty() {
+                index.classes_in_package(pkg)
+            } else {
+                fuzzy_pool
+                    .iter()
+                    .filter(|m| m.package.as_deref() == Some(pkg))
+                    .cloned()
+                    .collect()
+            };
+            for meta in iter {
                 if !is_type_visible_in_context(&meta, ctx, index, is_type_annotation) {
                     continue;
                 }
                 if imported_internals.contains(&meta.internal_name) {
+                    continue;
+                }
+                if !seen_internals.insert(Arc::clone(&meta.internal_name)) {
                     continue;
                 }
                 let score = if prefix.is_empty() {
@@ -105,11 +255,17 @@ impl CompletionProvider for ExpressionProvider {
 
         // Other classes (global, require auto-import)
         if !prefix.is_empty() {
-            for meta in index.iter_all_classes() {
+            for meta in fuzzy_pool {
+                if current_pkg.is_some_and(|pkg| meta.package.as_deref() == Some(pkg)) {
+                    continue;
+                }
                 if !is_type_visible_in_context(&meta, ctx, index, is_type_annotation) {
                     continue;
                 }
                 if imported_internals.contains(&meta.internal_name) {
+                    continue;
+                }
+                if !seen_internals.insert(Arc::clone(&meta.internal_name)) {
                     continue;
                 }
                 let score = match fuzzy::fuzzy_match(&prefix_lower, &meta.name.to_lowercase()) {
@@ -147,8 +303,65 @@ impl CompletionProvider for ExpressionProvider {
             }
         }
 
+        tracing::debug!(
+            provider = self.name(),
+            prefix,
+            qualified = false,
+            candidates = results.len(),
+            elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0,
+            "completion provider timing"
+        );
         results
     }
+}
+
+fn provide_qualified_type_prefix(
+    prefix: &str,
+    ctx: &SemanticContext,
+    index: &IndexView,
+    source: &'static str,
+) -> Vec<CompletionCandidate> {
+    let Some(dot) = prefix.rfind('.') else {
+        return vec![];
+    };
+    let qualifier = prefix[..dot].trim();
+    let member_prefix = prefix[dot + 1..].trim();
+    if qualifier.is_empty() {
+        return vec![];
+    }
+
+    let resolver = SymbolResolver::new(index);
+    let Some(owner_internal) = resolver.resolve_type_name(ctx, qualifier) else {
+        return vec![];
+    };
+
+    let mut out = Vec::new();
+    for inner in index.direct_inner_classes_of(&owner_internal) {
+        if !member_prefix.is_empty()
+            && fuzzy::fuzzy_match(&member_prefix.to_lowercase(), &inner.name.to_lowercase())
+                .is_none()
+        {
+            continue;
+        }
+        let score = if member_prefix.is_empty() {
+            85.0
+        } else {
+            85.0 + fuzzy::fuzzy_match(&member_prefix.to_lowercase(), &inner.name.to_lowercase())
+                .unwrap_or(0) as f32
+                * 0.1
+        };
+        out.push(
+            CompletionCandidate::new(
+                Arc::clone(&inner.name),
+                inner.name.to_string(),
+                CandidateKind::ClassName,
+                source,
+            )
+            .with_detail(inner.source_name())
+            .with_score(score),
+        );
+    }
+    out
 }
 
 fn calculate_boost(pkg: Option<&str>) -> f32 {
@@ -405,6 +618,199 @@ mod tests {
         assert!(
             !results.iter().any(|c| c.label.as_ref() == "Box"),
             "unrelated inner Box should remain hidden"
+        );
+    }
+
+    #[test]
+    fn test_qualified_expression_prefix_exposes_nested_types() {
+        let index = WorkspaceIndex::new();
+        index.add_classes(vec![make_cls("org/cubewhy", "ChainCheck"), {
+            let mut c = make_cls("org/cubewhy", "Box");
+            c.internal_name = Arc::from("org/cubewhy/ChainCheck$Box");
+            c.inner_class_of = Some(Arc::from("ChainCheck"));
+            c
+        }]);
+
+        let ctx = SemanticContext::new(
+            CursorLocation::Expression {
+                prefix: "ChainCheck.".to_string(),
+            },
+            "ChainCheck.",
+            vec![],
+            Some(Arc::from("ChainCheck")),
+            Some(Arc::from("org/cubewhy/ChainCheck")),
+            Some(Arc::from("org/cubewhy")),
+            vec![],
+        )
+        .with_extension(Arc::new(
+            crate::language::java::type_ctx::SourceTypeCtx::new(
+                Some(Arc::from("org/cubewhy")),
+                vec![],
+                Some(index.view(root_scope()).build_name_table()),
+            ),
+        ));
+        let results = ExpressionProvider.provide(root_scope(), &ctx, &index.view(root_scope()));
+        assert!(
+            results.iter().any(|c| c.label.as_ref() == "Box"),
+            "{results:?}"
+        );
+    }
+
+    #[test]
+    fn test_qualified_nested_prefix_exposes_nested_nested_types() {
+        let index = WorkspaceIndex::new();
+        index.add_classes(vec![
+            make_cls("org/cubewhy", "ChainCheck"),
+            {
+                let mut c = make_cls("org/cubewhy", "Box");
+                c.internal_name = Arc::from("org/cubewhy/ChainCheck$Box");
+                c.inner_class_of = Some(Arc::from("ChainCheck"));
+                c
+            },
+            {
+                let mut c = make_cls("org/cubewhy", "BoxV");
+                c.internal_name = Arc::from("org/cubewhy/ChainCheck$Box$BoxV");
+                c.inner_class_of = Some(Arc::from("Box"));
+                c
+            },
+        ]);
+
+        let ctx = SemanticContext::new(
+            CursorLocation::Expression {
+                prefix: "ChainCheck.Box.".to_string(),
+            },
+            "ChainCheck.Box.",
+            vec![],
+            Some(Arc::from("ChainCheck")),
+            Some(Arc::from("org/cubewhy/ChainCheck")),
+            Some(Arc::from("org/cubewhy")),
+            vec![],
+        )
+        .with_extension(Arc::new(
+            crate::language::java::type_ctx::SourceTypeCtx::new(
+                Some(Arc::from("org/cubewhy")),
+                vec![],
+                Some(index.view(root_scope()).build_name_table()),
+            ),
+        ));
+        let results = ExpressionProvider.provide(root_scope(), &ctx, &index.view(root_scope()));
+        assert!(
+            results.iter().any(|c| c.label.as_ref() == "BoxV"),
+            "{results:?}"
+        );
+    }
+
+    #[test]
+    fn test_member_access_with_semantic_owner_exposes_nested_types() {
+        let index = WorkspaceIndex::new();
+        index.add_classes(vec![make_cls("org/cubewhy", "ChainCheck"), {
+            let mut c = make_cls("org/cubewhy", "Box");
+            c.internal_name = Arc::from("org/cubewhy/ChainCheck$Box");
+            c.inner_class_of = Some(Arc::from("ChainCheck"));
+            c
+        }]);
+        let ctx = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: Some(crate::semantic::types::type_name::TypeName::new(
+                    "org/cubewhy/ChainCheck",
+                )),
+                receiver_type: None,
+                member_prefix: "".to_string(),
+                receiver_expr: "ChainCheck".to_string(),
+                arguments: None,
+            },
+            "",
+            vec![],
+            Some(Arc::from("ChainCheck")),
+            Some(Arc::from("org/cubewhy/ChainCheck")),
+            Some(Arc::from("org/cubewhy")),
+            vec![],
+        );
+        let results = ExpressionProvider.provide(root_scope(), &ctx, &index.view(root_scope()));
+        assert!(
+            results.iter().any(|c| c.label.as_ref() == "Box"),
+            "{results:?}"
+        );
+    }
+
+    #[test]
+    fn test_static_access_exposes_nested_types_and_is_applicable() {
+        let index = WorkspaceIndex::new();
+        index.add_classes(vec![make_cls("org/cubewhy", "ChainCheck"), {
+            let mut c = make_cls("org/cubewhy", "Box");
+            c.internal_name = Arc::from("org/cubewhy/ChainCheck$Box");
+            c.inner_class_of = Some(Arc::from("ChainCheck"));
+            c
+        }]);
+        let ctx = SemanticContext::new(
+            CursorLocation::StaticAccess {
+                class_internal_name: Arc::from("org/cubewhy/ChainCheck"),
+                member_prefix: "".to_string(),
+            },
+            "",
+            vec![],
+            Some(Arc::from("ChainCheck")),
+            Some(Arc::from("org/cubewhy/ChainCheck")),
+            Some(Arc::from("org/cubewhy")),
+            vec![],
+        );
+        assert!(ExpressionProvider.is_applicable(&ctx));
+        let results = ExpressionProvider.provide(root_scope(), &ctx, &index.view(root_scope()));
+        assert!(
+            results.iter().any(|c| c.label.as_ref() == "Box"),
+            "{results:?}"
+        );
+    }
+
+    #[test]
+    fn test_global_scan_fast_path_beats_full_scan_baseline() {
+        let index = WorkspaceIndex::new();
+        let mut classes = Vec::new();
+        for i in 0..20_000 {
+            classes.push(make_cls("bench/p", &format!("Class{i:05}")));
+        }
+        classes.push(make_cls("java/util", "ArrayList"));
+        classes.push(make_cls("java/util", "AbstractList"));
+        index.add_classes(classes);
+        let view = index.view(root_scope());
+        let ctx = SemanticContext::new(
+            CursorLocation::Expression {
+                prefix: "Array".to_string(),
+            },
+            "Array",
+            vec![],
+            Some(Arc::from("Bench")),
+            None,
+            Some(Arc::from("bench/p")),
+            vec![],
+        );
+
+        let t_slow = Instant::now();
+        let mut slow = 0usize;
+        for meta in view.classes_in_package("bench/p") {
+            if fuzzy::fuzzy_match("array", &meta.name.to_lowercase()).is_some() {
+                slow += 1;
+            }
+        }
+        for meta in view.iter_all_classes() {
+            if fuzzy::fuzzy_match("array", &meta.name.to_lowercase()).is_some() {
+                slow += 1;
+            }
+        }
+        let slow_ms = t_slow.elapsed().as_secs_f64() * 1000.0;
+
+        let t_fast = Instant::now();
+        let fast_candidates = ExpressionProvider.provide(root_scope(), &ctx, &view);
+        let fast_ms = t_fast.elapsed().as_secs_f64() * 1000.0;
+        eprintln!(
+            "expression_provider_perf_baseline: slow_scan_ms={slow_ms:.3} fast_provider_ms={fast_ms:.3} slow_hits={slow} fast_hits={}",
+            fast_candidates.len()
+        );
+        assert!(fast_ms < slow_ms);
+        assert!(
+            fast_candidates
+                .iter()
+                .any(|c| c.label.as_ref().contains("ArrayList"))
         );
     }
 }

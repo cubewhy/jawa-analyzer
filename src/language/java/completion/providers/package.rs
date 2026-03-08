@@ -11,6 +11,29 @@ impl CompletionProvider for PackageProvider {
         "package"
     }
 
+    fn is_applicable(&self, ctx: &SemanticContext) -> bool {
+        match &ctx.location {
+            CursorLocation::Import { .. } => true,
+            CursorLocation::Expression { prefix } | CursorLocation::TypeAnnotation { prefix } => {
+                prefix.contains('.')
+            }
+            CursorLocation::MemberAccess {
+                receiver_semantic_type,
+                receiver_type,
+                ..
+            } => {
+                if receiver_semantic_type.is_some()
+                    || receiver_type.is_some()
+                    || ctx.typed_chain_receiver.is_some()
+                {
+                    return false;
+                }
+                true
+            }
+            _ => false,
+        }
+    }
+
     fn provide(
         &self,
         scope: IndexScope,
@@ -190,6 +213,28 @@ mod tests {
             results.is_empty(),
             "String.| should not trigger package completion"
         );
+    }
+
+    #[test]
+    fn test_member_access_with_semantic_receiver_not_applicable() {
+        let ctx = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: Some(crate::semantic::types::type_name::TypeName::new(
+                    "org/cubewhy/ChainCheck",
+                )),
+                receiver_type: None,
+                member_prefix: "".to_string(),
+                receiver_expr: "ChainCheck".to_string(),
+                arguments: None,
+            },
+            "",
+            vec![],
+            None,
+            None,
+            None,
+            vec![],
+        );
+        assert!(!PackageProvider.is_applicable(&ctx));
     }
 
     #[test]

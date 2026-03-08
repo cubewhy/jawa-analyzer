@@ -457,6 +457,7 @@ impl JavaContextExtractor {
 mod tests {
     use super::*;
     use crate::{
+        completion::CompletionCandidate,
         completion::engine::CompletionEngine,
         index::{
             ClassMetadata, ClassOrigin, IndexScope, MethodParams, MethodSummary, ModuleId,
@@ -528,6 +529,19 @@ mod tests {
         src_with_cursor: &str,
         view: &IndexView,
     ) -> (SemanticContext, Vec<String>) {
+        let (ctx, candidates) = ctx_and_candidates_from_marked_source(src_with_cursor, view);
+        let mut labels: Vec<String> = candidates
+            .into_iter()
+            .map(|c| c.label.to_string())
+            .collect();
+        labels.sort();
+        (ctx, labels)
+    }
+
+    fn ctx_and_candidates_from_marked_source(
+        src_with_cursor: &str,
+        view: &IndexView,
+    ) -> (SemanticContext, Vec<CompletionCandidate>) {
         let cursor_byte = src_with_cursor
             .find('|')
             .expect("expected | cursor marker in source");
@@ -553,13 +567,8 @@ mod tests {
             )
             .expect("parse_completion_context_with_tree returned None");
         let engine = CompletionEngine::new();
-        let mut labels: Vec<String> = engine
-            .complete(root_scope(), ctx.clone(), &JavaLanguage, view)
-            .into_iter()
-            .map(|c| c.label.to_string())
-            .collect();
-        labels.sort();
-        (ctx, labels)
+        let candidates = engine.complete(root_scope(), ctx.clone(), &JavaLanguage, view);
+        (ctx, candidates)
     }
 
     fn make_functional_chain_index() -> WorkspaceIndex {
@@ -4267,7 +4276,7 @@ mod tests {
     fn test_class_qualifier_member_access_exposes_nested_class() {
         let idx = make_nested_chaincheck_index();
         let view = idx.view(root_scope());
-        let (_, labels) = ctx_and_labels_from_marked_source(
+        let (_, candidates) = ctx_and_candidates_from_marked_source(
             indoc::indoc! {r#"
                 package org.cubewhy;
                 class Probe {
@@ -4278,7 +4287,26 @@ mod tests {
             "#},
             &view,
         );
+        let labels: Vec<String> = candidates.iter().map(|c| c.label.to_string()).collect();
         assert!(labels.iter().any(|l| l == "Box"), "{labels:?}");
+        assert!(
+            candidates
+                .iter()
+                .any(|c| c.label.as_ref() == "Box" && c.source == "expression"),
+            "expected Box from expression provider, got {:?}",
+            candidates
+                .iter()
+                .map(|c| format!("{}@{}", c.label, c.source))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            candidates.iter().all(|c| c.source != "package"),
+            "package provider should be gated off here: {:?}",
+            candidates
+                .iter()
+                .map(|c| format!("{}@{}", c.label, c.source))
+                .collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -4378,5 +4406,37 @@ mod tests {
             &view,
         );
         assert!(labels.iter().any(|l| l == "getV"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_completion_timing_nested_qualifiers() {
+        use std::time::Instant;
+
+        let idx = make_nested_chaincheck_index();
+        let view = idx.view(root_scope());
+
+        let t1 = Instant::now();
+        let (_, labels1) = ctx_and_labels_from_marked_source(
+            indoc::indoc! {r#"
+                package org.cubewhy;
+                class Probe { void t() { ChainCheck.| } }
+            "#},
+            &view,
+        );
+        let d1 = t1.elapsed().as_secs_f64() * 1000.0;
+
+        let t2 = Instant::now();
+        let (_, labels2) = ctx_and_labels_from_marked_source(
+            indoc::indoc! {r#"
+                package org.cubewhy;
+                class Probe { void t() { ChainCheck.Box.| } }
+            "#},
+            &view,
+        );
+        let d2 = t2.elapsed().as_secs_f64() * 1000.0;
+
+        eprintln!("nested_completion_timing_ms: ChainCheck.={d1:.3} ChainCheck.Box.={d2:.3}");
+        assert!(labels1.iter().any(|l| l == "Box"), "{labels1:?}");
+        assert!(labels2.iter().any(|l| l == "BoxV"), "{labels2:?}");
     }
 }

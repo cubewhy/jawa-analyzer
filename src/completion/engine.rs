@@ -4,6 +4,7 @@ use crate::completion::provider::CompletionProvider;
 use crate::index::{IndexScope, IndexView};
 use crate::language::Language;
 use crate::semantic::SemanticContext;
+use std::time::Instant;
 
 pub struct CompletionEngine {
     extra_providers: Vec<Box<dyn CompletionProvider>>,
@@ -29,16 +30,51 @@ impl CompletionEngine {
     ) -> Vec<CompletionCandidate> {
         lang.enrich_completion_context(&mut ctx, scope, index);
 
-        let mut candidates: Vec<CompletionCandidate> = lang
-            .completion_providers()
-            .iter()
-            .flat_map(|p| p.provide(scope, &ctx, index))
-            .collect();
-
-        for provider in &self.extra_providers {
-            candidates.extend(provider.provide(scope, &ctx, index));
+        let t_total = Instant::now();
+        let mut candidates: Vec<CompletionCandidate> = Vec::new();
+        for provider in lang.completion_providers() {
+            if !provider.is_applicable(&ctx) {
+                tracing::debug!(
+                    provider = provider.name(),
+                    "completion provider skipped by applicability gate"
+                );
+                continue;
+            }
+            let tp = Instant::now();
+            let mut out = provider.provide(scope, &ctx, index);
+            tracing::debug!(
+                provider = provider.name(),
+                candidates = out.len(),
+                elapsed_ms = tp.elapsed().as_secs_f64() * 1000.0,
+                "completion provider dispatch"
+            );
+            candidates.append(&mut out);
         }
 
+        for provider in &self.extra_providers {
+            if !provider.is_applicable(&ctx) {
+                tracing::debug!(
+                    provider = provider.name(),
+                    "completion extra provider skipped by applicability gate"
+                );
+                continue;
+            }
+            let tp = Instant::now();
+            let mut out = provider.provide(scope, &ctx, index);
+            tracing::debug!(
+                provider = provider.name(),
+                candidates = out.len(),
+                elapsed_ms = tp.elapsed().as_secs_f64() * 1000.0,
+                "completion extra provider dispatch"
+            );
+            candidates.append(&mut out);
+        }
+
+        tracing::debug!(
+            elapsed_ms = t_total.elapsed().as_secs_f64() * 1000.0,
+            candidates = candidates.len(),
+            "completion provider stage total"
+        );
         post_processor::process(candidates, &ctx.query)
     }
 }
@@ -66,6 +102,7 @@ mod tests {
     };
     use rust_asm::constants::ACC_PUBLIC;
     use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     fn root_scope() -> IndexScope {
         IndexScope {
@@ -137,6 +174,60 @@ mod tests {
                 ("toStr".into(), None)
             ]
         );
+    }
+
+    struct ProbeProvider {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl CompletionProvider for ProbeProvider {
+        fn name(&self) -> &'static str {
+            "probe"
+        }
+
+        fn is_applicable(&self, _ctx: &SemanticContext) -> bool {
+            false
+        }
+
+        fn provide(
+            &self,
+            _scope: IndexScope,
+            _ctx: &SemanticContext,
+            _index: &IndexView,
+        ) -> Vec<CompletionCandidate> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            vec![]
+        }
+    }
+
+    #[test]
+    fn test_engine_skips_provider_when_not_applicable() {
+        let idx = make_index_with_random_class();
+        let view = idx.view(root_scope());
+        let ctx = SemanticContext::new(
+            CursorLocation::Expression {
+                prefix: "Ran".to_string(),
+            },
+            "Ran",
+            vec![],
+            Some(Arc::from("Main")),
+            Some(Arc::from("org/cubewhy/Main")),
+            Some(Arc::from("org/cubewhy")),
+            vec![],
+        )
+        .with_extension(Arc::new(SourceTypeCtx::new(
+            Some(Arc::from("org/cubewhy")),
+            vec![],
+            Some(view.build_name_table()),
+        )));
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut engine = CompletionEngine::new();
+        engine.register_provider(Box::new(ProbeProvider {
+            calls: Arc::clone(&calls),
+        }));
+        let _ = engine.complete(root_scope(), ctx, &JavaLanguage, &view);
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
 
     fn make_index_with_random_class() -> WorkspaceIndex {
@@ -261,6 +352,76 @@ mod tests {
             results.iter().any(|c| c.label.as_ref() == "f"),
             "should find method f(): {:?}",
             results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_static_qualified_member_access_dispatch_runs_expression_and_skips_package() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("ChainCheck"),
+                internal_name: Arc::from("org/cubewhy/ChainCheck"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: None,
+                generic_signature: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("Box"),
+                internal_name: Arc::from("org/cubewhy/ChainCheck$Box"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: Some(Arc::from("ChainCheck")),
+                generic_signature: None,
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+
+        let ctx = SemanticContext::new(
+            CursorLocation::StaticAccess {
+                class_internal_name: Arc::from("org/cubewhy/ChainCheck"),
+                member_prefix: "".to_string(),
+            },
+            "",
+            vec![],
+            Some(Arc::from("Probe")),
+            Some(Arc::from("org/cubewhy/Probe")),
+            Some(Arc::from("org/cubewhy")),
+            vec![],
+        );
+        let view = idx.view(root_scope());
+        let engine = CompletionEngine::new();
+        let results = engine.complete(root_scope(), ctx, &JavaLanguage, &view);
+
+        assert!(
+            results
+                .iter()
+                .any(|c| c.label.as_ref() == "Box" && c.source == "expression"),
+            "expected nested type from expression provider, got: {:?}",
+            results
+                .iter()
+                .map(|c| format!("{}@{}", c.label, c.source))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            results.iter().all(|c| c.source != "package"),
+            "package provider should be gated off, got: {:?}",
+            results
+                .iter()
+                .map(|c| format!("{}@{}", c.label, c.source))
+                .collect::<Vec<_>>()
         );
     }
 
