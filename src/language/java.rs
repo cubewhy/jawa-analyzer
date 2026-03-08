@@ -523,6 +523,189 @@ mod tests {
         }
     }
 
+    fn ctx_and_labels_from_marked_source(
+        src_with_cursor: &str,
+        view: &IndexView,
+    ) -> (SemanticContext, Vec<String>) {
+        let cursor_byte = src_with_cursor
+            .find('|')
+            .expect("expected | cursor marker in source");
+        let src = src_with_cursor.replacen('|', "", 1);
+        let rope = ropey::Rope::from_str(&src);
+        let cursor_char = rope.byte_to_char(cursor_byte);
+        let line = rope.char_to_line(cursor_char) as u32;
+        let col = (cursor_char - rope.line_to_char(line as usize)) as u32;
+
+        let mut parser = super::make_java_parser();
+        let tree = parser.parse(&src, None).expect("failed to parse java");
+        let ctx = super::JavaLanguage
+            .parse_completion_context_with_tree(
+                &src,
+                &rope,
+                tree.root_node(),
+                line,
+                col,
+                None,
+                &ParseEnv {
+                    name_table: Some(view.build_name_table()),
+                },
+            )
+            .expect("parse_completion_context_with_tree returned None");
+        let engine = CompletionEngine::new();
+        let mut labels: Vec<String> = engine
+            .complete(root_scope(), ctx.clone(), &JavaLanguage, view)
+            .into_iter()
+            .map(|c| c.label.to_string())
+            .collect();
+        labels.sort();
+        (ctx, labels)
+    }
+
+    fn make_functional_chain_index() -> WorkspaceIndex {
+        let src = indoc::indoc! {r#"
+            package org.cubewhy;
+
+            import java.util.function.Function;
+
+            class Box<T> {
+                Box(T v) {}
+                T get() { return null; }
+                <R> Box<R> map(Function<? super T, ? extends R> fn) { return null; }
+            }
+        "#};
+        let parsed = parse_java_source(src, ClassOrigin::Unknown, None);
+
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(parsed);
+        idx.add_classes(vec![
+            make_class("java/lang", "Object"),
+            ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("String"),
+                internal_name: Arc::from("java/lang/String"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![
+                    MethodSummary {
+                        name: Arc::from("trim"),
+                        params: MethodParams::empty(),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: None,
+                        return_type: Some(Arc::from("Ljava/lang/String;")),
+                    },
+                    MethodSummary {
+                        name: Arc::from("substring"),
+                        params: MethodParams::from([("I", "begin")]),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: None,
+                        return_type: Some(Arc::from("Ljava/lang/String;")),
+                    },
+                ],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: None,
+                generic_signature: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("Number"),
+                internal_name: Arc::from("java/lang/Number"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![MethodSummary {
+                    name: Arc::from("byteValue"),
+                    params: MethodParams::empty(),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    generic_signature: None,
+                    return_type: Some(Arc::from("B")),
+                }],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: None,
+                generic_signature: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/util")),
+                name: Arc::from("ArrayList"),
+                internal_name: Arc::from("java/util/ArrayList"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![MethodSummary {
+                    name: Arc::from("add"),
+                    params: MethodParams::from([("Ljava/lang/Object;", "e")]),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    generic_signature: Some(Arc::from("(TE;)Z")),
+                    return_type: Some(Arc::from("Z")),
+                }],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: None,
+                generic_signature: Some(Arc::from("<E:Ljava/lang/Object;>Ljava/lang/Object;")),
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/util")),
+                name: Arc::from("List"),
+                internal_name: Arc::from("java/util/List"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![MethodSummary {
+                    name: Arc::from("get"),
+                    params: MethodParams::from([("I", "index")]),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    generic_signature: Some(Arc::from("(I)TE;")),
+                    return_type: Some(Arc::from("Ljava/lang/Object;")),
+                }],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: None,
+                generic_signature: Some(Arc::from("<E:Ljava/lang/Object;>Ljava/lang/Object;")),
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/util/function")),
+                name: Arc::from("Function"),
+                internal_name: Arc::from("java/util/function/Function"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![MethodSummary {
+                    name: Arc::from("apply"),
+                    params: MethodParams::from([("Ljava/lang/Object;", "t")]),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    generic_signature: Some(Arc::from("(TT;)TR;")),
+                    return_type: Some(Arc::from("Ljava/lang/Object;")),
+                }],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: None,
+                generic_signature: Some(Arc::from(
+                    "<T:Ljava/lang/Object;R:Ljava/lang/Object;>Ljava/lang/Object;",
+                )),
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+        idx
+    }
+
     #[test]
     fn test_import() {
         let src = "import com.example.Foo;";
@@ -733,6 +916,200 @@ mod tests {
             labels.contains(&"put"),
             "member completion should include put for a.put, got {:?}",
             labels
+        );
+    }
+
+    #[test]
+    fn test_functional_chain_completion_trim_constructor_and_wildcard_labels() {
+        let idx = make_functional_chain_index();
+        let view = idx.view(root_scope());
+
+        let src_trim = indoc::indoc! {r#"
+        package org.cubewhy;
+        import java.util.*;
+        class Demo {
+            void f() {
+                Box<String> strBox = new Box<>(" hello ");
+                strBox.map(String::trim).get().subs|
+            }
+        }
+        "#};
+        let (trim_ctx, trim_labels) = ctx_and_labels_from_marked_source(src_trim, &view);
+        assert!(
+            trim_labels.iter().any(|l| l == "substring"),
+            "strBox.map(String::trim).get().subs should include substring, got location={:?} labels={:?}",
+            trim_ctx.location,
+            trim_labels
+        );
+
+        let src_ctor = indoc::indoc! {r#"
+        package org.cubewhy;
+        import java.util.*;
+        class Demo {
+            void f() {
+                Box<String> s = new Box<>("x");
+                s.map(ArrayList::new).get().ad|
+            }
+        }
+        "#};
+        let (ctor_ctx, ctor_labels) = ctx_and_labels_from_marked_source(src_ctor, &view);
+        assert!(
+            ctor_labels.iter().any(|l| l == "add"),
+            "s.map(ArrayList::new).get().ad should include add, got location={:?} labels={:?}",
+            ctor_ctx.location,
+            ctor_labels
+        );
+
+        let src_wild = indoc::indoc! {r#"
+        package org.cubewhy;
+        import java.util.*;
+        class Demo {
+            void f() {
+                List<Box<? extends Number>> nums = List.of();
+                nums.get(0).get().byteV|
+            }
+        }
+        "#};
+        let (wild_ctx, wild_labels) = ctx_and_labels_from_marked_source(src_wild, &view);
+        assert!(
+            wild_labels.iter().any(|l| l == "byteValue"),
+            "nums.get(0).get().byteV should include byteValue, got location={:?} labels={:?}",
+            wild_ctx.location,
+            wild_labels
+        );
+    }
+
+    #[test]
+    fn test_functional_chain_var_local_materializes_box_type() {
+        let idx = make_functional_chain_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+        package org.cubewhy;
+        import java.util.*;
+        class Demo {
+            void f() {
+                Box<String> strBox = new Box<>(" hello ");
+                var a = strBox.map(String::trim);
+                a|
+            }
+        }
+        "#};
+        let cursor_byte = src.find('|').expect("expected |");
+        let src_no_cursor = src.replacen('|', "", 1);
+        let rope = ropey::Rope::from_str(&src_no_cursor);
+        let cursor_char = rope.byte_to_char(cursor_byte);
+        let line = rope.char_to_line(cursor_char) as u32;
+        let col = (cursor_char - rope.line_to_char(line as usize)) as u32;
+        let mut parser = super::make_java_parser();
+        let tree = parser.parse(&src_no_cursor, None).expect("failed to parse");
+        let ctx = super::JavaLanguage
+            .parse_completion_context_with_tree(
+                &src_no_cursor,
+                &rope,
+                tree.root_node(),
+                line,
+                col,
+                None,
+                &ParseEnv {
+                    name_table: Some(view.build_name_table()),
+                },
+            )
+            .expect("parse_completion_context_with_tree returned None");
+        let results = CompletionEngine::new().complete(root_scope(), ctx, &JavaLanguage, &view);
+        let a = results
+            .iter()
+            .find(|c| c.label.as_ref() == "a")
+            .expect("expected local candidate a");
+        match &a.kind {
+            crate::completion::CandidateKind::LocalVariable { type_descriptor } => {
+                assert_eq!(
+                    type_descriptor.as_ref(),
+                    "org/cubewhy/Box<Ljava/lang/String;>",
+                    "var local candidate should materialize map(String::trim) as Box<String>"
+                );
+            }
+            other => panic!("expected local variable candidate for a, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_functional_chain_conservative_when_method_ref_unresolved() {
+        let idx = make_functional_chain_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+        package org.cubewhy;
+        import java.util.*;
+        class Demo {
+            void f() {
+                Box<String> strBox = new Box<>(" hello ");
+                strBox.map(Unknown::trim).get().subs|
+            }
+        }
+        "#};
+        let (ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
+        assert!(
+            !labels.iter().any(|l| l == "substring"),
+            "unresolved method reference should stay conservative and avoid String-only members, got location={:?} labels={:?}",
+            ctx.location,
+            labels
+        );
+    }
+
+    #[test]
+    fn test_snapshot_functional_chain_completion_labels() {
+        let idx = make_functional_chain_index();
+        let view = idx.view(root_scope());
+
+        let src_trim = indoc::indoc! {r#"
+        package org.cubewhy;
+        import java.util.*;
+        class Demo {
+            void f() {
+                Box<String> strBox = new Box<>(" hello ");
+                strBox.map(String::trim).get().subs|
+            }
+        }
+        "#};
+        let (trim_ctx, trim_labels) = ctx_and_labels_from_marked_source(src_trim, &view);
+
+        let src_ctor = indoc::indoc! {r#"
+        package org.cubewhy;
+        import java.util.*;
+        class Demo {
+            void f() {
+                Box<String> s = new Box<>("x");
+                s.map(ArrayList::new).get().ad|
+            }
+        }
+        "#};
+        let (ctor_ctx, ctor_labels) = ctx_and_labels_from_marked_source(src_ctor, &view);
+
+        let src_neg = indoc::indoc! {r#"
+        package org.cubewhy;
+        import java.util.*;
+        class Demo {
+            void f() {
+                Box<String> strBox = new Box<>(" hello ");
+                strBox.map(Unknown::trim).get().subs|
+            }
+        }
+        "#};
+        let (neg_ctx, neg_labels) = ctx_and_labels_from_marked_source(src_neg, &view);
+
+        insta::assert_snapshot!(
+            "functional_chain_completion_labels",
+            format!(
+                "trim_location={:?}\ntrim_has_substring={}\ntrim_first10={:?}\n\nctor_location={:?}\nctor_has_add={}\nctor_first10={:?}\n\nneg_location={:?}\nneg_has_substring={}\nneg_first10={:?}\n",
+                trim_ctx.location,
+                trim_labels.iter().any(|l| l == "substring"),
+                trim_labels.iter().take(10).collect::<Vec<_>>(),
+                ctor_ctx.location,
+                ctor_labels.iter().any(|l| l == "add"),
+                ctor_labels.iter().take(10).collect::<Vec<_>>(),
+                neg_ctx.location,
+                neg_labels.iter().any(|l| l == "substring"),
+                neg_labels.iter().take(10).collect::<Vec<_>>(),
+            )
         );
     }
 

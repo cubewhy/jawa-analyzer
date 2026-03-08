@@ -69,6 +69,18 @@ impl<'a> ContextEnricher<'a> {
             }
         }
         {
+            // Canonicalize declared locals first so downstream var-RHS inference
+            // resolves member chains against real internal owners.
+            let sym = SymbolResolver::new(self.view);
+            let new_types: Vec<TypeName> = ctx
+                .local_variables
+                .iter()
+                .map(|lv| expand_local_type_strict(&sym, ctx, &type_ctx, &lv.type_internal))
+                .collect();
+            for (lv, new_ty) in ctx.local_variables.iter_mut().zip(new_types) {
+                lv.type_internal = new_ty;
+            }
+
             let resolver = TypeResolver::new(self.view);
             let to_resolve: Vec<(usize, String)> = ctx
                 .local_variables
@@ -96,9 +108,8 @@ impl<'a> ContextEnricher<'a> {
                 }
             }
 
-            // Expand declared/local source types into structured semantic types
-            // before any receiver-chain resolution uses locals.
-            let sym = SymbolResolver::new(self.view);
+            // Re-expand after var inference so newly inferred source-like forms
+            // are normalized before receiver-chain and completion stages.
             let new_types: Vec<TypeName> = ctx
                 .local_variables
                 .iter()
@@ -176,6 +187,58 @@ impl<'a> ContextEnricher<'a> {
             *receiver_type = resolved_semantic
                 .as_ref()
                 .map(|t| Arc::from(t.erased_internal()));
+        }
+
+        // C3a: if receiver fields were pre-filled and skipped the main branch above,
+        // still compute and commit functional-chain concretization into typed chain state.
+        if let CursorLocation::MemberAccess {
+            receiver_semantic_type,
+            receiver_type,
+            receiver_expr,
+            ..
+        } = &mut ctx.location
+            && ctx.typed_chain_receiver.is_none()
+            && !receiver_expr.is_empty()
+            && (receiver_expr.contains('(') || receiver_expr.contains("::"))
+        {
+            let resolver = TypeResolver::new(self.view);
+            let resolved = if looks_like_array_access(receiver_expr) {
+                resolve_array_access_type(
+                    receiver_expr,
+                    &ctx.local_variables,
+                    ctx.enclosing_internal_name.as_ref(),
+                    &resolver,
+                    &type_ctx,
+                    self.view,
+                )
+            } else {
+                let chain = parse_chain_from_expr(receiver_expr);
+                if chain.is_empty() {
+                    resolver.resolve(
+                        receiver_expr,
+                        &ctx.local_variables,
+                        ctx.enclosing_internal_name.as_ref(),
+                    )
+                } else {
+                    evaluate_chain(
+                        &chain,
+                        &ctx.local_variables,
+                        ctx.enclosing_internal_name.as_ref(),
+                        &resolver,
+                        &type_ctx,
+                        self.view,
+                    )
+                }
+            };
+            if let Some(ty) = canonicalize_receiver_semantic(resolved, &type_ctx) {
+                ctx.typed_chain_receiver = Some(build_typed_chain_receiver(&ty));
+                if receiver_semantic_type.is_none() {
+                    *receiver_semantic_type = Some(ty.clone());
+                }
+                if receiver_type.is_none() {
+                    *receiver_type = Some(Arc::from(ty.erased_internal()));
+                }
+            }
         }
 
         // If the receiver text is a known package, reinterpret this as import completion.
@@ -2398,6 +2461,102 @@ mod tests {
         idx
     }
 
+    fn make_index_with_packaged_box_map_fixture() -> WorkspaceIndex {
+        let idx = WorkspaceIndex::new();
+        idx.add_jar_classes(
+            IndexScope {
+                module: ModuleId::ROOT,
+            },
+            vec![
+                ClassMetadata {
+                    package: Some(Arc::from("org/cubewhy")),
+                    name: Arc::from("Box"),
+                    internal_name: Arc::from("org/cubewhy/Box"),
+                    super_name: Some(Arc::from("java/lang/Object")),
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![MethodSummary {
+                        name: Arc::from("map"),
+                        params: MethodParams::from([("Ljava/util/function/Function;", "fn")]),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: Some(Arc::from(
+                            "<R:Ljava/lang/Object;>(Ljava/util/function/Function<-TT;+TR;>;)Lorg/cubewhy/Box<TR;>;",
+                        )),
+                        return_type: Some(Arc::from("Lorg/cubewhy/Box;")),
+                    }],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: Some(Arc::from("<T:Ljava/lang/Object;>Ljava/lang/Object;")),
+                    origin: ClassOrigin::Unknown,
+                },
+                ClassMetadata {
+                    package: Some(Arc::from("java/lang")),
+                    name: Arc::from("Object"),
+                    internal_name: Arc::from("java/lang/Object"),
+                    super_name: None,
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: None,
+                    origin: ClassOrigin::Unknown,
+                },
+                ClassMetadata {
+                    package: Some(Arc::from("java/lang")),
+                    name: Arc::from("String"),
+                    internal_name: Arc::from("java/lang/String"),
+                    super_name: Some(Arc::from("java/lang/Object")),
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![MethodSummary {
+                        name: Arc::from("trim"),
+                        params: MethodParams::empty(),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: None,
+                        return_type: Some(Arc::from("Ljava/lang/String;")),
+                    }],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: None,
+                    origin: ClassOrigin::Unknown,
+                },
+                ClassMetadata {
+                    package: Some(Arc::from("java/util/function")),
+                    name: Arc::from("Function"),
+                    internal_name: Arc::from("java/util/function/Function"),
+                    super_name: Some(Arc::from("java/lang/Object")),
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![MethodSummary {
+                        name: Arc::from("apply"),
+                        params: MethodParams::from([("Ljava/lang/Object;", "t")]),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: Some(Arc::from("(TT;)TR;")),
+                        return_type: Some(Arc::from("Ljava/lang/Object;")),
+                    }],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: Some(Arc::from(
+                        "<T:Ljava/lang/Object;R:Ljava/lang/Object;>Ljava/lang/Object;",
+                    )),
+                    origin: ClassOrigin::Unknown,
+                },
+            ],
+        );
+        idx
+    }
+
     #[test]
     fn test_enrich_context_resolves_simple_name_via_import() {
         let idx = make_index_with_random_class();
@@ -4495,6 +4654,22 @@ mod tests {
             trim_eval.clone(),
             ctx_trim.extension::<SourceTypeCtx>().expect("type ctx"),
         );
+        let trim_segments: Vec<String> = (0..trim_chain.len())
+            .map(|i| {
+                let part = &trim_chain[..=i];
+                evaluate_chain(
+                    part,
+                    &ctx_trim.local_variables,
+                    ctx_trim.enclosing_internal_name.as_ref(),
+                    &resolver,
+                    ctx_trim.extension::<SourceTypeCtx>().expect("type ctx"),
+                    &view,
+                )
+                .as_ref()
+                .map(TypeName::to_internal_with_generics)
+                .unwrap_or_else(|| "<none>".to_string())
+            })
+            .collect();
         let trim_direct_map = resolver.resolve_method_return_with_callsite_and_qualifier_resolver(
             "Box<Ljava/lang/String;>",
             "map",
@@ -4550,6 +4725,22 @@ mod tests {
             ctor_eval.clone(),
             ctx_ctor.extension::<SourceTypeCtx>().expect("type ctx"),
         );
+        let ctor_segments: Vec<String> = (0..ctor_chain.len())
+            .map(|i| {
+                let part = &ctor_chain[..=i];
+                evaluate_chain(
+                    part,
+                    &ctx_ctor.local_variables,
+                    ctx_ctor.enclosing_internal_name.as_ref(),
+                    &resolver,
+                    ctx_ctor.extension::<SourceTypeCtx>().expect("type ctx"),
+                    &view,
+                )
+                .as_ref()
+                .map(TypeName::to_internal_with_generics)
+                .unwrap_or_else(|| "<none>".to_string())
+            })
+            .collect();
         let ctor_direct_map = resolver.resolve_method_return_with_callsite_and_qualifier_resolver(
             "Box<Ljava/lang/String;>",
             "map",
@@ -4607,7 +4798,7 @@ mod tests {
                 trim_labels
             ));
             out.push_str(&format!(
-                "trim_internal_trace:\ndirect_map={:?}\ndirect_get={:?}\nevaluate_chain={:?}\ncanonicalized={:?}\n\n",
+                "trim_internal_trace:\ndirect_map={:?}\ndirect_get={:?}\nevaluate_chain={:?}\ncanonicalized={:?}\nsegments={:?}\ntyped_chain={:?}\neffective_owner={:?}\n\n",
                 trim_direct_map
                     .as_ref()
                     .map(TypeName::to_internal_with_generics),
@@ -4617,7 +4808,20 @@ mod tests {
                 trim_eval.as_ref().map(TypeName::to_internal_with_generics),
                 trim_canonical
                     .as_ref()
-                    .map(TypeName::to_internal_with_generics)
+                    .map(TypeName::to_internal_with_generics),
+                trim_segments,
+                ctx_trim
+                    .typed_chain_receiver
+                    .as_ref()
+                    .map(|r| (
+                        r.receiver_ty.to_internal_with_generics(),
+                        r.confidence,
+                        r.receiver_mode
+                    )),
+                ctx_trim
+                    .typed_chain_receiver
+                    .as_ref()
+                    .map(|r| r.receiver_ty.erased_internal().to_string())
             ));
         }
         if let CursorLocation::MemberAccess {
@@ -4635,7 +4839,7 @@ mod tests {
                 ctor_labels
             ));
             out.push_str(&format!(
-                "constructor_internal_trace:\ndirect_map={:?}\ndirect_get={:?}\nevaluate_chain={:?}\ncanonicalized={:?}\n",
+                "constructor_internal_trace:\ndirect_map={:?}\ndirect_get={:?}\nevaluate_chain={:?}\ncanonicalized={:?}\nsegments={:?}\ntyped_chain={:?}\neffective_owner={:?}\n",
                 ctor_direct_map
                     .as_ref()
                     .map(TypeName::to_internal_with_generics),
@@ -4645,13 +4849,73 @@ mod tests {
                 ctor_eval.as_ref().map(TypeName::to_internal_with_generics),
                 ctor_canonical
                     .as_ref()
-                    .map(TypeName::to_internal_with_generics)
+                    .map(TypeName::to_internal_with_generics),
+                ctor_segments,
+                ctx_ctor
+                    .typed_chain_receiver
+                    .as_ref()
+                    .map(|r| (
+                        r.receiver_ty.to_internal_with_generics(),
+                        r.confidence,
+                        r.receiver_mode
+                    )),
+                ctx_ctor
+                    .typed_chain_receiver
+                    .as_ref()
+                    .map(|r| r.receiver_ty.erased_internal().to_string())
             ));
         }
 
         insta::assert_snapshot!(
             "chain_receiver_concretization_trim_and_constructor_new",
             out
+        );
+    }
+
+    #[test]
+    fn test_functional_chain_commits_typed_receiver_even_with_prefilled_receiver_fields() {
+        let idx = make_index_with_box_map_get_trim_and_constructor_chain();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        let view = idx.view(scope);
+        let name_table = view.build_name_table();
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            None,
+            vec!["java.util.*".into(), "java.lang.*".into()],
+            Some(name_table),
+        ));
+
+        let mut ctx = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: Some(TypeName::new("Box")),
+                receiver_type: Some(Arc::from("Box")),
+                member_prefix: "sub".to_string(),
+                receiver_expr: "strBox.map(String::trim).get()".to_string(),
+                arguments: None,
+            },
+            "sub",
+            vec![LocalVar {
+                name: Arc::from("strBox"),
+                type_internal: TypeName::with_args("Box", vec![TypeName::new("java/lang/String")]),
+                init_expr: None,
+            }],
+            Some(Arc::from("Demo")),
+            Some(Arc::from("Demo")),
+            None,
+            vec!["java.util.*".into(), "java.lang.*".into()],
+        )
+        .with_extension(type_ctx);
+
+        ContextEnricher::new(&view).enrich(&mut ctx);
+        let committed = ctx
+            .typed_chain_receiver
+            .as_ref()
+            .map(|r| r.receiver_ty.to_internal_with_generics());
+        assert_eq!(
+            committed.as_deref(),
+            Some("java/lang/String"),
+            "functional chain should commit concretized receiver into typed chain state"
         );
     }
 
@@ -4801,5 +5065,55 @@ mod tests {
             .find(|lv| lv.name.as_ref() == "a")
             .expect("local a");
         assert_eq!(a.type_internal.erased_internal(), "var");
+    }
+
+    #[test]
+    fn test_var_rhs_inference_uses_canonicalized_locals_for_functional_chain() {
+        let idx = make_index_with_packaged_box_map_fixture();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        let view = idx.view(scope);
+        let name_table = view.build_name_table();
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            Some(Arc::from("org/cubewhy")),
+            vec!["java.lang.*".into(), "java.util.function.*".into()],
+            Some(name_table),
+        ));
+
+        let mut ctx = SemanticContext::new(
+            CursorLocation::Expression {
+                prefix: "a".to_string(),
+            },
+            "a",
+            vec![
+                LocalVar {
+                    name: Arc::from("strBox"),
+                    type_internal: TypeName::new("Box<String>"),
+                    init_expr: None,
+                },
+                LocalVar {
+                    name: Arc::from("a"),
+                    type_internal: TypeName::new("var"),
+                    init_expr: Some("strBox.map(String::trim)".to_string()),
+                },
+            ],
+            Some(Arc::from("Demo")),
+            Some(Arc::from("org/cubewhy/Demo")),
+            Some(Arc::from("org/cubewhy")),
+            vec!["java.lang.*".into(), "java.util.function.*".into()],
+        )
+        .with_extension(type_ctx);
+
+        ContextEnricher::new(&view).enrich(&mut ctx);
+        let a = ctx
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "a")
+            .expect("local a");
+        assert_eq!(
+            a.type_internal.to_internal_with_generics(),
+            "org/cubewhy/Box<Ljava/lang/String;>"
+        );
     }
 }
