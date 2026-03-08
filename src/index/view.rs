@@ -227,18 +227,23 @@ impl IndexView {
         let Some(owner) = self.get_class(owner_internal) else {
             return vec![];
         };
-        let owner_name = Arc::clone(&owner.name);
-        let owner_pkg = owner.package.clone();
-
-        self.iter_all_classes()
-            .into_iter()
-            .filter(|c| {
-                c.package == owner_pkg
-                    && c.inner_class_of
-                        .as_ref()
-                        .is_some_and(|p| p.as_ref() == owner_name.as_ref())
-            })
-            .collect()
+        let owner_pkg = owner.package.as_deref();
+        let owner_name = owner.name.as_ref();
+        let mut by_internal: rustc_hash::FxHashMap<Arc<str>, Arc<ClassMetadata>> =
+            Default::default();
+        for layer in &self.layers {
+            for class in layer.direct_inner_classes_by_owner(owner_pkg, owner_name) {
+                let key = Arc::clone(&class.internal_name);
+                if let Some(current) = by_internal.get(&key) {
+                    if Self::should_replace(current, &class) {
+                        by_internal.insert(key, class);
+                    }
+                } else {
+                    by_internal.insert(key, class);
+                }
+            }
+        }
+        by_internal.into_values().collect()
     }
 
     /// Resolves a direct nested class by simple name under `owner_internal`.
@@ -247,9 +252,27 @@ impl IndexView {
         owner_internal: &str,
         simple_name: &str,
     ) -> Option<Arc<ClassMetadata>> {
-        self.direct_inner_classes_of(owner_internal)
-            .into_iter()
-            .find(|c| c.name.as_ref() == simple_name)
+        let Some(owner) = self.get_class(owner_internal) else {
+            return None;
+        };
+        let owner_pkg = owner.package.as_deref();
+        let owner_name = owner.name.as_ref();
+        let mut best: Option<Arc<ClassMetadata>> = None;
+        for layer in &self.layers {
+            for candidate in layer.direct_inner_classes_by_owner(owner_pkg, owner_name) {
+                if candidate.name.as_ref() != simple_name {
+                    continue;
+                }
+                if let Some(current) = &best {
+                    if Self::should_replace(current, &candidate) {
+                        best = Some(candidate);
+                    }
+                } else {
+                    best = Some(candidate);
+                }
+            }
+        }
+        best
     }
 
     /// Resolve a potentially-qualified nested type path (e.g. `Outer.Inner`, `a.b.Outer.Inner`)

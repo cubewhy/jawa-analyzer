@@ -11,12 +11,14 @@ use crate::index::{
 };
 
 type MroCacheMap = HashMap<Arc<str>, (Vec<Arc<MethodSummary>>, Vec<Arc<FieldSummary>>)>;
+type OwnerKey = (Option<Arc<str>>, Arc<str>);
 
 struct BucketState {
     classes: HashMap<Arc<str>, Arc<ClassMetadata>>,
     by_origin: HashMap<ClassOrigin, Vec<Arc<str>>>,
     simple_name_index: HashMap<Arc<str>, Vec<Arc<ClassMetadata>>>,
     package_index: HashMap<Arc<str>, Vec<Arc<ClassMetadata>>>,
+    owner_index: HashMap<OwnerKey, Vec<Arc<ClassMetadata>>>,
     name_table: NameTable,
     mro_cache: MroCacheMap,
     fuzzy_matcher: Nucleo<Arc<str>>,
@@ -34,6 +36,7 @@ impl BucketIndex {
             by_origin: HashMap::new(),
             simple_name_index: HashMap::with_capacity(100_000),
             package_index: HashMap::with_capacity(10_000),
+            owner_index: HashMap::with_capacity(50_000),
             name_table: NameTable(FxHashSet::default()),
             mro_cache: HashMap::new(),
             fuzzy_matcher: Nucleo::new(nucleo::Config::DEFAULT, waker, None, 1),
@@ -54,6 +57,7 @@ impl BucketIndex {
             let internal = Arc::clone(&class.internal_name);
             let simple = Arc::clone(&class.name);
             let pkg = class.package.clone();
+            let owner_simple = class.inner_class_of.clone();
             let origin = class.origin.clone();
             let rc = Arc::new(class);
 
@@ -68,6 +72,13 @@ impl BucketIndex {
                 inner
                     .package_index
                     .entry(Arc::clone(&p))
+                    .or_default()
+                    .push(Arc::clone(&rc));
+            }
+            if let Some(owner_name) = owner_simple {
+                inner
+                    .owner_index
+                    .entry((rc.package.clone(), owner_name))
                     .or_default()
                     .push(Arc::clone(&rc));
             }
@@ -127,6 +138,34 @@ impl BucketIndex {
             .get(simple_name)
             .cloned()
             .unwrap_or_default()
+    }
+
+    pub fn direct_inner_classes_of(&self, owner_internal: &str) -> Vec<Arc<ClassMetadata>> {
+        let owner = match self.get_class(owner_internal) {
+            Some(cls) => cls,
+            None => return vec![],
+        };
+        self.direct_inner_classes_by_owner(owner.package.as_deref(), owner.name.as_ref())
+    }
+
+    pub fn direct_inner_classes_by_owner(
+        &self,
+        owner_package: Option<&str>,
+        owner_simple_name: &str,
+    ) -> Vec<Arc<ClassMetadata>> {
+        let key = (owner_package.map(Arc::from), Arc::from(owner_simple_name));
+        let inner = self.inner.read();
+        inner.owner_index.get(&key).cloned().unwrap_or_default()
+    }
+
+    pub fn resolve_direct_inner_class(
+        &self,
+        owner_internal: &str,
+        simple_name: &str,
+    ) -> Option<Arc<ClassMetadata>> {
+        self.direct_inner_classes_of(owner_internal)
+            .into_iter()
+            .find(|c| c.name.as_ref() == simple_name)
     }
 
     pub fn classes_in_package(&self, pkg: &str) -> Vec<Arc<ClassMetadata>> {
@@ -343,6 +382,15 @@ impl BucketIndex {
                     v.retain(|meta: &Arc<ClassMetadata>| meta.internal_name != *internal);
                     if v.is_empty() {
                         inner.package_index.remove(pkg);
+                    }
+                }
+                if let Some(owner_name) = &meta.inner_class_of {
+                    let key = (meta.package.clone(), Arc::clone(owner_name));
+                    if let Some(v) = inner.owner_index.get_mut(&key) {
+                        v.retain(|meta: &Arc<ClassMetadata>| meta.internal_name != *internal);
+                        if v.is_empty() {
+                            inner.owner_index.remove(&key);
+                        }
                     }
                 }
             }

@@ -35,6 +35,7 @@ impl CompletionProvider for ExpressionProvider {
         ctx: &SemanticContext,
         index: &IndexView,
     ) -> Vec<CompletionCandidate> {
+        let trace_enabled = tracing::enabled!(tracing::Level::DEBUG);
         if let CursorLocation::MemberAccess {
             receiver_semantic_type,
             receiver_type,
@@ -54,22 +55,13 @@ impl CompletionProvider for ExpressionProvider {
                 return vec![];
             };
             let mut out = Vec::new();
+            let member_prefix_lower =
+                (!member_prefix.is_empty()).then(|| member_prefix.to_lowercase());
             for inner in index.direct_inner_classes_of(&owner_internal) {
-                if !member_prefix.is_empty()
-                    && fuzzy::fuzzy_match(&member_prefix.to_lowercase(), &inner.name.to_lowercase())
-                        .is_none()
-                {
+                let Some(score) =
+                    fuzzy_score_if_matches(member_prefix_lower.as_deref(), inner.name.as_ref())
+                else {
                     continue;
-                }
-                let score = if member_prefix.is_empty() {
-                    88.0
-                } else {
-                    88.0 + fuzzy::fuzzy_match(
-                        &member_prefix.to_lowercase(),
-                        &inner.name.to_lowercase(),
-                    )
-                    .unwrap_or(0) as f32
-                        * 0.1
                 };
                 out.push(
                     CompletionCandidate::new(
@@ -79,18 +71,20 @@ impl CompletionProvider for ExpressionProvider {
                         self.name(),
                     )
                     .with_detail(inner.source_name())
-                    .with_score(score),
+                    .with_score(88.0 + score),
                 );
             }
-            tracing::debug!(
-                provider = self.name(),
-                member_access = true,
-                receiver_expr,
-                owner_internal = %owner_internal,
-                candidates = out.len(),
-                elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0,
-                "completion provider timing"
-            );
+            if trace_enabled {
+                tracing::debug!(
+                    provider = self.name(),
+                    member_access = true,
+                    receiver_expr,
+                    owner_internal = %owner_internal,
+                    candidates = out.len(),
+                    elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0,
+                    "completion provider timing"
+                );
+            }
             return out;
         }
 
@@ -101,22 +95,13 @@ impl CompletionProvider for ExpressionProvider {
         {
             let t0 = Instant::now();
             let mut out = Vec::new();
+            let member_prefix_lower =
+                (!member_prefix.is_empty()).then(|| member_prefix.to_lowercase());
             for inner in index.direct_inner_classes_of(class_internal_name.as_ref()) {
-                if !member_prefix.is_empty()
-                    && fuzzy::fuzzy_match(&member_prefix.to_lowercase(), &inner.name.to_lowercase())
-                        .is_none()
-                {
+                let Some(score) =
+                    fuzzy_score_if_matches(member_prefix_lower.as_deref(), inner.name.as_ref())
+                else {
                     continue;
-                }
-                let score = if member_prefix.is_empty() {
-                    88.0
-                } else {
-                    88.0 + fuzzy::fuzzy_match(
-                        &member_prefix.to_lowercase(),
-                        &inner.name.to_lowercase(),
-                    )
-                    .unwrap_or(0) as f32
-                        * 0.1
                 };
                 out.push(
                     CompletionCandidate::new(
@@ -126,17 +111,19 @@ impl CompletionProvider for ExpressionProvider {
                         self.name(),
                     )
                     .with_detail(inner.source_name())
-                    .with_score(score),
+                    .with_score(88.0 + score),
                 );
             }
-            tracing::debug!(
-                provider = self.name(),
-                static_access = true,
-                owner_internal = %class_internal_name,
-                candidates = out.len(),
-                elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0,
-                "completion provider timing"
-            );
+            if trace_enabled {
+                tracing::debug!(
+                    provider = self.name(),
+                    static_access = true,
+                    owner_internal = %class_internal_name,
+                    candidates = out.len(),
+                    elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0,
+                    "completion provider timing"
+                );
+            }
             return out;
         }
 
@@ -151,14 +138,16 @@ impl CompletionProvider for ExpressionProvider {
 
         if prefix.contains('.') {
             let results = provide_qualified_type_prefix(prefix, ctx, index, self.name());
-            tracing::debug!(
-                provider = self.name(),
-                prefix,
-                qualified = true,
-                candidates = results.len(),
-                elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0,
-                "completion provider timing"
-            );
+            if trace_enabled {
+                tracing::debug!(
+                    provider = self.name(),
+                    prefix,
+                    qualified = true,
+                    candidates = results.len(),
+                    elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0,
+                    "completion provider timing"
+                );
+            }
             return results;
         }
 
@@ -169,6 +158,7 @@ impl CompletionProvider for ExpressionProvider {
 
         let mut results = Vec::new();
         let mut seen_internals: std::collections::HashSet<Arc<str>> = Default::default();
+        let t_imports = Instant::now();
 
         // Classes that have already been imported in current context
         let imported = index.resolve_imports(&ctx.existing_imports);
@@ -199,19 +189,23 @@ impl CompletionProvider for ExpressionProvider {
                 .with_score(80.0 + score as f32 * 0.1),
             );
         }
+        let imports_ms = t_imports.elapsed().as_secs_f64() * 1000.0;
 
         let imported_internals: std::collections::HashSet<Arc<str>> = imported
             .iter()
             .map(|m| Arc::clone(&m.internal_name))
             .collect();
 
+        let t_fuzzy = Instant::now();
         let fuzzy_pool = if prefix.is_empty() {
             Vec::new()
         } else {
             index.fuzzy_search_classes(prefix, 1024)
         };
+        let fuzzy_ms = t_fuzzy.elapsed().as_secs_f64() * 1000.0;
 
         // Same package
+        let t_same_pkg = Instant::now();
         if let Some(pkg) = current_pkg {
             let iter: Vec<_> = if prefix.is_empty() {
                 index.classes_in_package(pkg)
@@ -253,8 +247,10 @@ impl CompletionProvider for ExpressionProvider {
                 );
             }
         }
+        let same_pkg_ms = t_same_pkg.elapsed().as_secs_f64() * 1000.0;
 
         // Other classes (global, require auto-import)
+        let t_global = Instant::now();
         if !prefix.is_empty() {
             for meta in fuzzy_pool {
                 if current_pkg.is_some_and(|pkg| meta.package.as_deref() == Some(pkg)) {
@@ -303,15 +299,22 @@ impl CompletionProvider for ExpressionProvider {
                 results.push(candidate);
             }
         }
+        let global_ms = t_global.elapsed().as_secs_f64() * 1000.0;
 
-        tracing::debug!(
-            provider = self.name(),
-            prefix,
-            qualified = false,
-            candidates = results.len(),
-            elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0,
-            "completion provider timing"
-        );
+        if trace_enabled {
+            tracing::debug!(
+                provider = self.name(),
+                prefix,
+                qualified = false,
+                candidates = results.len(),
+                imports_ms,
+                fuzzy_ms,
+                same_pkg_ms,
+                global_ms,
+                elapsed_ms = t0.elapsed().as_secs_f64() * 1000.0,
+                "completion provider timing"
+            );
+        }
         results
     }
 }
@@ -324,19 +327,12 @@ fn provide_qualified_type_prefix(
 ) -> Vec<CompletionCandidate> {
     let mut out = Vec::new();
     let member_prefix = prefix.rsplit('.').next().unwrap_or("").trim();
+    let member_prefix_lower = (!member_prefix.is_empty()).then(|| member_prefix.to_lowercase());
     for inner in qualified_nested_type_matches(prefix, ctx, index) {
-        if !member_prefix.is_empty()
-            && fuzzy::fuzzy_match(&member_prefix.to_lowercase(), &inner.name.to_lowercase())
-                .is_none()
-        {
+        let Some(score) =
+            fuzzy_score_if_matches(member_prefix_lower.as_deref(), inner.name.as_ref())
+        else {
             continue;
-        }
-        let score = if member_prefix.is_empty() {
-            85.0
-        } else {
-            85.0 + fuzzy::fuzzy_match(&member_prefix.to_lowercase(), &inner.name.to_lowercase())
-                .unwrap_or(0) as f32
-                * 0.1
         };
         out.push(
             CompletionCandidate::new(
@@ -346,10 +342,18 @@ fn provide_qualified_type_prefix(
                 source,
             )
             .with_detail(inner.source_name())
-            .with_score(score),
+            .with_score(85.0 + score),
         );
     }
     out
+}
+
+fn fuzzy_score_if_matches(prefix_lower: Option<&str>, candidate_name: &str) -> Option<f32> {
+    let Some(prefix) = prefix_lower else {
+        return Some(0.0);
+    };
+    let score = fuzzy::fuzzy_match(prefix, &candidate_name.to_lowercase())?;
+    Some(score as f32 * 0.1)
 }
 
 fn calculate_boost(pkg: Option<&str>) -> f32 {
@@ -800,5 +804,63 @@ mod tests {
                 .iter()
                 .any(|c| c.label.as_ref().contains("ArrayList"))
         );
+    }
+
+    #[test]
+    fn test_member_access_zero_result_fast_path_beats_full_scan_baseline() {
+        let index = WorkspaceIndex::new();
+        let mut classes = Vec::new();
+        classes.push(make_cls("bench/p", "Owner"));
+        for i in 0..30_000 {
+            classes.push(make_cls("bench/p", &format!("Class{i:05}")));
+        }
+        for i in 0..5_000 {
+            let mut inner = make_cls("bench/p", &format!("Inner{i:05}"));
+            inner.internal_name = Arc::from(format!("bench/p/Other$Inner{i:05}"));
+            inner.inner_class_of = Some(Arc::from("Other"));
+            classes.push(inner);
+        }
+        index.add_classes(classes);
+        let view = index.view(root_scope());
+        let ctx = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: Some(crate::semantic::types::type_name::TypeName::new(
+                    "bench/p/Owner",
+                )),
+                receiver_type: None,
+                member_prefix: "".to_string(),
+                receiver_expr: "Owner".to_string(),
+                arguments: None,
+            },
+            "",
+            vec![],
+            Some(Arc::from("Owner")),
+            Some(Arc::from("bench/p/Owner")),
+            Some(Arc::from("bench/p")),
+            vec![],
+        );
+
+        let t_slow = Instant::now();
+        let mut slow = 0usize;
+        for meta in view.iter_all_classes() {
+            if meta.package.as_deref() == Some("bench/p")
+                && meta.inner_class_of.as_deref() == Some("Owner")
+            {
+                slow += 1;
+            }
+        }
+        let slow_ms = t_slow.elapsed().as_secs_f64() * 1000.0;
+
+        let t_fast = Instant::now();
+        let fast_candidates = ExpressionProvider.provide(root_scope(), &ctx, &view);
+        let fast_ms = t_fast.elapsed().as_secs_f64() * 1000.0;
+        eprintln!(
+            "expression_member_zero_result_perf: slow_scan_ms={slow_ms:.3} fast_provider_ms={fast_ms:.3} slow_hits={slow} fast_hits={}",
+            fast_candidates.len()
+        );
+
+        assert!(fast_candidates.is_empty(), "{fast_candidates:?}");
+        assert!(slow == 0);
+        assert!(fast_ms < slow_ms);
     }
 }
