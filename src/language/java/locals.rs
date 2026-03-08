@@ -6,10 +6,10 @@ use crate::{
     language::{
         java::{
             JavaContextExtractor,
-            type_ctx::SourceTypeCtx,
+            type_ctx::{SourceTypeCtx, extract_param_type},
             utils::{find_ancestor, get_initializer_text, java_type_to_internal},
         },
-        ts_utils::{capture_text, find_method_by_offset, run_query},
+        ts_utils::{find_method_by_offset, run_query},
     },
     semantic::{LocalVar, types::type_name::TypeName},
 };
@@ -230,26 +230,52 @@ fn extract_params(
         Some(m) => m,
         None => return vec![],
     };
-    let query_src = r#"(formal_parameter type: (_) @type name: (identifier) @name)"#;
-    let q = match Query::new(&tree_sitter_java::LANGUAGE.into(), query_src) {
-        Ok(q) => q,
-        Err(_) => return vec![],
+    let Some(params_node) = method.child_by_field_name("parameters") else {
+        return vec![];
     };
-    let type_idx = q.capture_index_for_name("type").unwrap();
-    let name_idx = q.capture_index_for_name("name").unwrap();
-    run_query(&q, method, ctx.bytes(), None)
-        .into_iter()
-        .filter_map(|captures| {
-            let ty = capture_text(&captures, type_idx, ctx.bytes())?;
-            let name = capture_text(&captures, name_idx, ctx.bytes())?;
-            let raw_ty = ty.trim();
-            Some(LocalVar {
-                name: Arc::from(name),
-                type_internal: resolve_declared_source_type(raw_ty, type_ctx),
-                init_expr: None,
-            })
-        })
-        .collect()
+    let mut vars = Vec::new();
+    let mut cursor = params_node.walk();
+    for child in params_node.children(&mut cursor) {
+        if !matches!(child.kind(), "formal_parameter" | "spread_parameter") {
+            continue;
+        }
+        let name_node = child.child_by_field_name("name").or_else(|| {
+            let mut nc = child.walk();
+            for n in child.named_children(&mut nc) {
+                if n.kind() == "identifier" {
+                    return Some(n);
+                }
+                if n.kind() == "variable_declarator" {
+                    if let Some(named) = n.child_by_field_name("name") {
+                        return Some(named);
+                    }
+                    let mut vc = n.walk();
+                    if let Some(id) = n.named_children(&mut vc).find(|c| c.kind() == "identifier") {
+                        return Some(id);
+                    }
+                }
+            }
+            None
+        });
+        let Some(name_node) = name_node else {
+            continue;
+        };
+        let name = ctx.node_text(name_node).to_string();
+        let mut raw_ty = extract_param_type(ctx.node_text(child)).trim().to_string();
+        if child.kind() == "spread_parameter" || raw_ty.ends_with("...") {
+            raw_ty = if let Some(stripped) = raw_ty.strip_suffix("...") {
+                format!("{}[]", stripped.trim())
+            } else {
+                format!("{}[]", raw_ty.trim())
+            };
+        }
+        vars.push(LocalVar {
+            name: Arc::from(name),
+            type_internal: resolve_declared_source_type(raw_ty.as_str(), type_ctx),
+            init_expr: None,
+        });
+    }
+    vars
 }
 
 fn extract_locals_from_error_nodes(
@@ -412,6 +438,39 @@ mod tests {
         assert!(
             vars.iter().any(|v| v.name.as_ref() == "p2"
                 && v.type_internal.to_internal_with_generics() == "String")
+        );
+    }
+
+    #[test]
+    fn test_extract_varargs_params_as_array_type() {
+        let src = indoc::indoc! {r#"
+        class A {
+            void f(String sep, int... numbers) {
+                // cursor here
+            }
+        }
+        "#};
+        let offset = src.find("// cursor").unwrap();
+        let (ctx, tree) = setup(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let vars = extract_locals(&ctx, tree.root_node(), cursor_node);
+
+        assert!(
+            vars.iter().any(|v| v.name.as_ref() == "numbers"
+                && v.type_internal.to_internal_with_generics() == "int[]"),
+            "vars={:?}",
+            vars.iter()
+                .map(|v| format!("{}:{}", v.name, v.type_internal.to_internal_with_generics()))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            vars.iter().any(|v| v.name.as_ref() == "sep"
+                && v.type_internal.to_internal_with_generics() == "String"),
+            "vars={:?}",
+            vars.iter()
+                .map(|v| format!("{}:{}", v.name, v.type_internal.to_internal_with_generics()))
+                .collect::<Vec<_>>()
         );
     }
 

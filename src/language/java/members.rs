@@ -960,7 +960,7 @@ fn parse_params(
         }
 
         // name
-        if let Some(n) = child.child_by_field_name("name") {
+        if let Some(n) = extract_param_name_node(child) {
             out.items[i].name = Arc::from(ctx.node_text(n));
         }
 
@@ -976,6 +976,31 @@ fn parse_params(
     }
 
     out
+}
+
+fn extract_param_name_node(param_node: Node) -> Option<Node> {
+    if let Some(n) = param_node.child_by_field_name("name") {
+        return Some(n);
+    }
+    let mut wc = param_node.walk();
+    for child in param_node.named_children(&mut wc) {
+        if child.kind() == "identifier" {
+            return Some(child);
+        }
+        if child.kind() == "variable_declarator" {
+            if let Some(n) = child.child_by_field_name("name") {
+                return Some(n);
+            }
+            let mut vc = child.walk();
+            if let Some(id) = child
+                .named_children(&mut vc)
+                .find(|c| c.kind() == "identifier")
+            {
+                return Some(id);
+            }
+        }
+    }
+    None
 }
 
 fn has_spread_parameter(formals_node: Node) -> bool {
@@ -1060,6 +1085,15 @@ mod tests {
             join.desc().as_ref().contains("[LString;"),
             "expected varargs array descriptor in method signature, got {}",
             join.desc()
+        );
+        assert_eq!(
+            join.params
+                .param_names()
+                .iter()
+                .map(|n| n.as_ref())
+                .collect::<Vec<_>>(),
+            vec!["separator", "parts"],
+            "varargs parameter names should be preserved"
         );
     }
 

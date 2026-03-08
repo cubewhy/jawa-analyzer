@@ -1182,6 +1182,284 @@ mod tests {
     }
 
     #[test]
+    fn test_varargs_parameter_local_symbol_is_array_and_var_materializes_array() {
+        let src = indoc::indoc! {r#"
+        package org.cubewhy;
+
+        public class VarargsExample {
+            public static void printNumbers(int... numbers) {
+                var a = numbers;
+                a|
+            }
+        }
+        "#};
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(parse_java_source(src, ClassOrigin::Unknown, None));
+        idx.add_classes(vec![make_class("java/lang", "Object")]);
+        let view = idx.view(root_scope());
+        let (ctx, candidates) = ctx_and_candidates_from_marked_source(src, &view);
+
+        let nums = ctx
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "numbers")
+            .expect("numbers local should exist");
+        assert_eq!(nums.type_internal.to_internal_with_generics(), "int[]");
+
+        let a = candidates
+            .iter()
+            .find(|c| c.label.as_ref() == "a")
+            .expect("expected local variable completion for a");
+        match &a.kind {
+            crate::completion::CandidateKind::LocalVariable { type_descriptor } => {
+                assert_eq!(type_descriptor.as_ref(), "int[]");
+            }
+            other => panic!("expected local variable candidate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_later_declared_method_visible_in_earlier_method_completion() {
+        let src = indoc::indoc! {r#"
+        package org.cubewhy;
+
+        public class VarargsExample {
+            public static void main(String[] args) {
+                jo|
+            }
+
+            public static String join(String separator, String... parts) {
+                return "";
+            }
+        }
+        "#};
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(parse_java_source(src, ClassOrigin::Unknown, None));
+        idx.add_classes(vec![
+            make_class("java/lang", "Object"),
+            make_class("java/lang", "String"),
+        ]);
+        let view = idx.view(root_scope());
+        let (_, candidates) = ctx_and_candidates_from_marked_source(src, &view);
+        let join = candidates
+            .iter()
+            .find(|c| c.label.as_ref() == "join")
+            .expect("join should be completable regardless of declaration order");
+        assert!(
+            join.detail
+                .as_deref()
+                .is_some_and(|d| d.contains("String... parts")),
+            "join detail should preserve varargs name/type, got {:?}",
+            join.detail
+        );
+    }
+
+    #[test]
+    fn test_varargs_string_parts_bind_as_array_in_method_body() {
+        let src = indoc::indoc! {r#"
+        package org.cubewhy;
+
+        public class VarargsExample {
+            public static String join(String separator, String... parts) {
+                var p = parts;
+                p|
+                return "";
+            }
+        }
+        "#};
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(parse_java_source(src, ClassOrigin::Unknown, None));
+        idx.add_classes(vec![
+            make_class("java/lang", "Object"),
+            make_class("java/lang", "String"),
+        ]);
+        let view = idx.view(root_scope());
+        let (ctx, candidates) = ctx_and_candidates_from_marked_source(src, &view);
+
+        let parts = ctx
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "parts")
+            .expect("parts local should exist");
+        assert!(
+            parts
+                .type_internal
+                .to_internal_with_generics()
+                .ends_with("String[]"),
+            "parts should be array-typed, got {}",
+            parts.type_internal.to_internal_with_generics()
+        );
+
+        let p = candidates
+            .iter()
+            .find(|c| c.label.as_ref() == "p")
+            .expect("expected local variable completion for p");
+        match &p.kind {
+            crate::completion::CandidateKind::LocalVariable { type_descriptor } => {
+                assert!(
+                    type_descriptor.as_ref().ends_with("String[]"),
+                    "expected String[] local type descriptor, got {}",
+                    type_descriptor
+                );
+            }
+            other => panic!("expected local variable candidate, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_snapshot_varargs_join_callsite_context_members_and_candidates() {
+        let src = indoc::indoc! {r#"
+        public class VarargsExample {
+            public static void main(String[] args) {
+                String result = join|("-", "java", "lsp", "test");
+                System.out.println(result);
+            }
+
+            public static void printNumbers(int... numbers) {}
+
+            public static String join(String separator, String... parts) {
+                return "";
+            }
+        }
+        "#};
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(parse_java_source(src, ClassOrigin::Unknown, None));
+        idx.add_classes(vec![
+            make_class("java/lang", "Object"),
+            make_class("java/lang", "String"),
+            make_class("java/lang", "System"),
+        ]);
+        let view = idx.view(root_scope());
+        let (ctx, candidates) = ctx_and_candidates_from_marked_source(src, &view);
+
+        let mut locals: Vec<String> = ctx
+            .local_variables
+            .iter()
+            .map(|lv| format!("{}:{}", lv.name, lv.type_internal.to_internal_with_generics()))
+            .collect();
+        locals.sort();
+
+        let mut members: Vec<String> = ctx
+            .current_class_members
+            .values()
+            .map(|m| {
+                format!(
+                    "{}|{}|{}|{}",
+                    m.name(),
+                    if m.is_method() { "method" } else { "field" },
+                    m.descriptor(),
+                    if m.is_static() { "static" } else { "instance" }
+                )
+            })
+            .collect();
+        members.sort();
+
+        let mut out: Vec<String> = candidates
+            .iter()
+            .map(|c| {
+                format!(
+                    "{}@{}|{:?}",
+                    c.label,
+                    c.source,
+                    c.detail.as_deref().unwrap_or("")
+                )
+            })
+            .collect();
+        out.sort();
+
+        let snapshot = format!(
+            "location={:?}\nenclosing={:?}\nenclosing_internal={:?}\nlocals=\n{}\nclass_members=\n{}\ncandidates=\n{}",
+            ctx.location,
+            ctx.enclosing_class,
+            ctx.enclosing_internal_name,
+            locals.join("\n"),
+            members.join("\n"),
+            out.join("\n"),
+        );
+        insta::assert_snapshot!(
+            "varargs_join_callsite_context_members_and_candidates",
+            snapshot
+        );
+    }
+
+    #[test]
+    fn test_snapshot_varargs_parameter_metadata_and_body_locals() {
+        let src = indoc::indoc! {r#"
+        public class VarargsExample {
+            public static void printNumbers(int... numbers) {
+                var a = numbers;
+                a|;
+            }
+
+            public static String join(String separator, String... parts) {
+                return "";
+            }
+        }
+        "#};
+        let parsed = parse_java_source(src, ClassOrigin::Unknown, None);
+        let cls = parsed
+            .iter()
+            .find(|c| c.name.as_ref() == "VarargsExample")
+            .expect("VarargsExample class");
+        let mut method_rows: Vec<String> = cls
+            .methods
+            .iter()
+            .map(|m| {
+                format!(
+                    "{}|flags={}|params={:?}|param_names={:?}",
+                    m.name,
+                    m.access_flags,
+                    m.params
+                        .items
+                        .iter()
+                        .map(|p| p.descriptor.as_ref())
+                        .collect::<Vec<_>>(),
+                    m.params
+                        .items
+                        .iter()
+                        .map(|p| p.name.as_ref())
+                        .collect::<Vec<_>>()
+                )
+            })
+            .collect();
+        method_rows.sort();
+
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(parsed);
+        idx.add_classes(vec![
+            make_class("java/lang", "Object"),
+            make_class("java/lang", "String"),
+        ]);
+        let view = idx.view(root_scope());
+        let (ctx, candidates) = ctx_and_candidates_from_marked_source(src, &view);
+
+        let mut locals: Vec<String> = ctx
+            .local_variables
+            .iter()
+            .map(|lv| format!("{}:{}", lv.name, lv.type_internal.to_internal_with_generics()))
+            .collect();
+        locals.sort();
+        let mut local_candidates: Vec<String> = candidates
+            .iter()
+            .filter_map(|c| match &c.kind {
+                crate::completion::CandidateKind::LocalVariable { type_descriptor } => {
+                    Some(format!("{}:{}", c.label, type_descriptor))
+                }
+                _ => None,
+            })
+            .collect();
+        local_candidates.sort();
+
+        let snapshot = format!(
+            "methods=\n{}\nlocals=\n{}\nlocal_candidates=\n{}",
+            method_rows.join("\n"),
+            locals.join("\n"),
+            local_candidates.join("\n"),
+        );
+        insta::assert_snapshot!("varargs_parameter_metadata_and_body_locals", snapshot);
+    }
+
+    #[test]
     fn test_inner_class_constructor_reference_var_materializes_b() {
         let src = indoc::indoc! {r#"
         package org.cubewhy;

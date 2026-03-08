@@ -57,6 +57,17 @@ fn type_name_to_source_style(ty: &TypeName, provider: &impl SymbolProvider) -> S
     rendered
 }
 
+fn render_param_type_for_detail(method: &MethodSummary, idx: usize, rendered: String) -> String {
+    let is_last = idx + 1 == method.params.items.len();
+    if !(method.is_varargs() && is_last) {
+        return rendered;
+    }
+    if let Some(base) = rendered.strip_suffix("[]") {
+        return format!("{base}...");
+    }
+    rendered
+}
+
 #[instrument(skip(class_meta, method, provider))]
 pub fn method_detail(
     receiver_internal: &str,
@@ -121,13 +132,14 @@ pub fn method_detail(
         .into_iter()
         .enumerate()
         .map(|(i, type_name)| {
+            let display_type = render_param_type_for_detail(method, i, type_name);
             let param_name = method
                 .params
                 .param_names()
                 .get(i)
                 .cloned()
                 .unwrap_or_else(|| Arc::<str>::from(format!("arg{}", i)));
-            format!("{} {}", type_name, param_name)
+            format!("{} {}", display_type, param_name)
         })
         .collect();
 
@@ -273,13 +285,14 @@ pub fn source_member_detail(
             .into_iter()
             .enumerate()
             .map(|(i, type_name)| {
+                let display_type = render_param_type_for_detail(&md, i, type_name);
                 let param_name = md // method not found
                     .params
                     .param_names()
                     .get(i)
                     .cloned()
                     .unwrap_or_else(|| Arc::<str>::from(format!("arg{}", i)));
-                format!("{} {}", type_name, param_name)
+                format!("{} {}", display_type, param_name)
             })
             .collect();
 
@@ -306,5 +319,99 @@ pub fn source_member_detail(
             member.name(),
             source_style_type
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::index::{ClassMetadata, ClassOrigin, MethodParam, MethodParams};
+    use rust_asm::constants::{ACC_PUBLIC, ACC_VARARGS};
+
+    struct TestProvider;
+
+    impl SymbolProvider for TestProvider {
+        fn resolve_source_name(&self, internal_name: &str) -> Option<String> {
+            Some(internal_name.replace('/', "."))
+        }
+    }
+
+    fn empty_meta(internal: &str) -> ClassMetadata {
+        ClassMetadata {
+            package: Some(Arc::from("org/example")),
+            name: Arc::from("Demo"),
+            internal_name: Arc::from(internal),
+            super_name: None,
+            interfaces: vec![],
+            annotations: vec![],
+            methods: vec![],
+            fields: vec![],
+            access_flags: ACC_PUBLIC,
+            generic_signature: None,
+            inner_class_of: None,
+            origin: ClassOrigin::Unknown,
+        }
+    }
+
+    #[test]
+    fn test_method_detail_renders_true_varargs_with_ellipsis() {
+        let method = MethodSummary {
+            name: Arc::from("printf"),
+            params: MethodParams {
+                items: vec![
+                    MethodParam {
+                        descriptor: Arc::from("Ljava/lang/String;"),
+                        name: Arc::from("format"),
+                        annotations: vec![],
+                    },
+                    MethodParam {
+                        descriptor: Arc::from("[Ljava/lang/Object;"),
+                        name: Arc::from("args"),
+                        annotations: vec![],
+                    },
+                ],
+            },
+            annotations: vec![],
+            access_flags: ACC_PUBLIC | ACC_VARARGS,
+            is_synthetic: false,
+            generic_signature: None,
+            return_type: None,
+        };
+
+        let detail = method_detail(
+            "java/io/PrintStream",
+            &empty_meta("java/io/PrintStream"),
+            &method,
+            &TestProvider,
+        );
+        assert!(detail.contains("java.lang.Object... args"), "{detail}");
+    }
+
+    #[test]
+    fn test_method_detail_keeps_plain_array_when_not_varargs() {
+        let method = MethodSummary {
+            name: Arc::from("takeArray"),
+            params: MethodParams {
+                items: vec![MethodParam {
+                    descriptor: Arc::from("[Ljava/lang/Object;"),
+                    name: Arc::from("args"),
+                    annotations: vec![],
+                }],
+            },
+            annotations: vec![],
+            access_flags: ACC_PUBLIC,
+            is_synthetic: false,
+            generic_signature: None,
+            return_type: None,
+        };
+
+        let detail = method_detail(
+            "org/example/Demo",
+            &empty_meta("org/example/Demo"),
+            &method,
+            &TestProvider,
+        );
+        assert!(detail.contains("java.lang.Object[] args"), "{detail}");
+        assert!(!detail.contains("..."), "{detail}");
     }
 }

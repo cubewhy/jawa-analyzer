@@ -20,12 +20,17 @@ impl CompletionProvider for PackageProvider {
             CursorLocation::MemberAccess {
                 receiver_semantic_type,
                 receiver_type,
+                receiver_expr,
+                arguments,
                 ..
             } => {
                 if receiver_semantic_type.is_some()
                     || receiver_type.is_some()
                     || ctx.typed_chain_receiver.is_some()
                 {
+                    return false;
+                }
+                if receiver_expr.trim().is_empty() || arguments.is_some() {
                     return false;
                 }
                 true
@@ -55,6 +60,9 @@ impl CompletionProvider for PackageProvider {
                 member_prefix,
                 ..
             } => {
+                if receiver_expr.trim().is_empty() {
+                    return vec![];
+                }
                 if !receiver_expr.contains('.')
                     && receiver_expr
                         .chars()
@@ -235,6 +243,29 @@ mod tests {
             vec![],
         );
         assert!(!PackageProvider.is_applicable(&ctx));
+    }
+
+    #[test]
+    fn test_member_access_empty_receiver_call_not_applicable() {
+        let ctx = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: None,
+                receiver_type: None,
+                member_prefix: "join".to_string(),
+                receiver_expr: "".to_string(),
+                arguments: Some("(\"-\", \"java\")".to_string()),
+            },
+            "join",
+            vec![],
+            Some(Arc::from("VarargsExample")),
+            Some(Arc::from("VarargsExample")),
+            None,
+            vec![],
+        );
+        assert!(
+            !PackageProvider.is_applicable(&ctx),
+            "empty-receiver callsite should not dispatch package provider"
+        );
     }
 
     #[test]

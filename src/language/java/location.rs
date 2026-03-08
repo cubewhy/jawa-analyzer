@@ -213,12 +213,14 @@ fn infer_annotation_target(node: Node) -> Option<Arc<str>> {
             | "annotation_type_declaration" => "TYPE",
             "record_declaration" => "TYPE",
             // In records, constructor-header parameters map to RECORD_COMPONENT.
-            "formal_parameter" if n.parent().map(|p| p.kind()) == Some("record_declaration") => {
+            "formal_parameter" | "spread_parameter"
+                if n.parent().map(|p| p.kind()) == Some("record_declaration") =>
+            {
                 "RECORD_COMPONENT"
             }
             "method_declaration" => "METHOD",
             "field_declaration" => "FIELD",
-            "formal_parameter" => "PARAMETER",
+            "formal_parameter" | "spread_parameter" => "PARAMETER",
             "constructor_declaration" => "CONSTRUCTOR",
             "local_variable_declaration" => "LOCAL_VARIABLE",
             _ => {
@@ -664,7 +666,7 @@ fn handle_identifier(
                     clean,
                 );
             }
-            "formal_parameter" => {
+            "formal_parameter" | "spread_parameter" => {
                 if is_in_formal_param_name_position(node, ancestor) {
                     let type_name = ancestor
                         .child_by_field_name("type")

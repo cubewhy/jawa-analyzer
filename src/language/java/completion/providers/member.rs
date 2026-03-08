@@ -518,6 +518,12 @@ fn resolve_receiver_type(
         return r.map(TypeName::from);
     }
 
+    if expr.trim().is_empty() {
+        let r = ctx.enclosing_internal_name.clone();
+        tracing::debug!(?r, "empty receiver -> implicit enclosing");
+        return r.map(TypeName::from);
+    }
+
     if let Some(type_ctx) = ctx.extension::<SourceTypeCtx>() {
         let resolver = TypeResolver::new(index);
         let resolved = expression_typing::resolve_expression_type(

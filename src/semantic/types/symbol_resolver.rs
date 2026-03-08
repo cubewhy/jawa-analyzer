@@ -530,6 +530,50 @@ mod tests {
     }
 
     #[test]
+    fn test_source_resolution_is_independent_of_method_declaration_order() {
+        let idx = WorkspaceIndex::new();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        let src = indoc::indoc! {r#"
+            public class VarargsExample {
+                public static void main(String[] args) {
+                    join("-", "java", "lsp", "test");
+                }
+
+                public static String join(String separator, String... parts) {
+                    return "";
+                }
+            }
+        "#};
+        let origin = ClassOrigin::SourceFile(Arc::from("file:///tmp/VarargsExample.java"));
+        let classes = parse_java_source(src, origin.clone(), None);
+        idx.update_source(scope, origin, classes);
+        let view = idx.view(scope);
+        let resolver = SymbolResolver::new(&view);
+        let ctx = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: None,
+                receiver_type: None,
+                receiver_expr: "".to_string(),
+                member_prefix: "join".to_string(),
+                arguments: Some("(\"-\", \"java\", \"lsp\", \"test\")".to_string()),
+            },
+            "join",
+            vec![],
+            Some(Arc::from("VarargsExample")),
+            Some(Arc::from("VarargsExample")),
+            None,
+            vec![],
+        );
+        let resolved = resolver.resolve(&ctx).expect("resolved source method");
+        let ResolvedSymbol::Method { summary, .. } = resolved else {
+            panic!("expected method");
+        };
+        assert_eq!(summary.name.as_ref(), "join");
+    }
+
+    #[test]
     fn test_member_access_resolve_prefers_semantic_owner_over_legacy_receiver_type() {
         let idx = WorkspaceIndex::new();
         let scope = IndexScope {

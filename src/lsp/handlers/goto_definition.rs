@@ -437,6 +437,9 @@ fn find_var_decl_col(line: &str, var_name: &str) -> Option<usize> {
                 continue;
             }
             let before = line[..abs].trim_end();
+            if before.ends_with("...") {
+                return Some(abs);
+            }
             if let Some(&last) = before.as_bytes().last()
                 && (last.is_ascii_alphanumeric() || last == b'>' || last == b']' || last == b'_')
             {
@@ -505,4 +508,22 @@ fn extract_class_bytes(jar: &str, internal: &str) -> anyhow::Result<Vec<u8>> {
     let mut buf = Vec::new();
     std::io::Read::read_to_end(&mut entry, &mut buf)?;
     Ok(buf)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_find_var_decl_col_supports_varargs_parameter() {
+        let line = "    public static void printNumbers(int... numbers) {";
+        let col = find_var_decl_col(line, "numbers").expect("varargs parameter declaration");
+        assert_eq!(col, line.find("numbers").unwrap());
+    }
+
+    #[test]
+    fn test_find_var_decl_col_ignores_member_access_usage() {
+        let line = "        System.out.println(numbers.length);";
+        assert!(find_var_decl_col(line, "length").is_none());
+    }
 }

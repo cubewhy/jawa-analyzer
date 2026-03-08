@@ -318,6 +318,11 @@ impl MethodSummary {
 
         Arc::from(out)
     }
+
+    pub fn is_varargs(&self) -> bool {
+        use rust_asm::constants::ACC_VARARGS;
+        (self.access_flags & ACC_VARARGS) != 0
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

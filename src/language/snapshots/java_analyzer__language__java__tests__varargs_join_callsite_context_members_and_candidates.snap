@@ -1,0 +1,16 @@
+---
+source: src/language/java.rs
+expression: snapshot
+---
+location=MemberAccess { receiver_semantic_type: None, receiver_type: None, member_prefix: "join", receiver_expr: "", arguments: Some("(\"-\", \"java\", \"lsp\", \"test\")") }
+enclosing=Some("VarargsExample")
+enclosing_internal=Some("VarargsExample")
+locals=
+args:java/lang/String[]
+result:java/lang/String
+class_members=
+join|method|(Ljava/lang/String;[Ljava/lang/String;)Ljava/lang/String;|static
+main|method|([Ljava/lang/String;)V|static
+printNumbers|method|([I)V|static
+candidates=
+join@member|"VarargsExample — java.lang.String join(java.lang.String separator, java.lang.String... parts)"
