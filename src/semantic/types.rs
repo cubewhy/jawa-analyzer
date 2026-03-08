@@ -272,10 +272,8 @@ impl<'idx> TypeResolver<'idx> {
                 class.generic_signature.as_deref(),
                 &ret_jvm_str,
             ) {
-                let substituted = self.canonicalize_type_in_owner_scope(
-                    substituted,
-                    class.internal_name.as_ref(),
-                );
+                let substituted = self
+                    .canonicalize_type_in_owner_scope(substituted, class.internal_name.as_ref());
                 if substituted.erased_internal() == "void" {
                     return None;
                 }

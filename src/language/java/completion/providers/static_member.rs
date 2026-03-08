@@ -161,6 +161,22 @@ impl CompletionProvider for StaticMemberProvider {
             );
         }
 
+        for inner in index.direct_inner_classes_of(class_meta.internal_name.as_ref()) {
+            if !prefix_lower.is_empty() && !inner.name.to_lowercase().contains(&prefix_lower) {
+                continue;
+            }
+            results.push(
+                CompletionCandidate::new(
+                    Arc::clone(&inner.name),
+                    inner.name.to_string(),
+                    CandidateKind::ClassName,
+                    self.name(),
+                )
+                .with_detail(inner.source_name())
+                .with_score(62.0),
+            );
+        }
+
         results
     }
 }
@@ -846,5 +862,123 @@ mod tests {
                 .iter()
                 .all(|c| c.label.as_ref() != "notStartsWithma")
         );
+    }
+
+    #[test]
+    fn test_static_access_exposes_direct_nested_types() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("ChainCheck"),
+                internal_name: Arc::from("org/cubewhy/ChainCheck"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("Box"),
+                internal_name: Arc::from("org/cubewhy/ChainCheck$Box"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC | ACC_STATIC,
+                generic_signature: None,
+                inner_class_of: Some(Arc::from("ChainCheck")),
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+
+        let ctx = SemanticContext::new(
+            CursorLocation::StaticAccess {
+                class_internal_name: Arc::from("org/cubewhy/ChainCheck"),
+                member_prefix: "".to_string(),
+            },
+            "",
+            vec![],
+            Some(Arc::from("ChainCheck")),
+            Some(Arc::from("org/cubewhy/ChainCheck")),
+            Some(Arc::from("org/cubewhy")),
+            vec![],
+        );
+
+        let results = StaticMemberProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
+        let labels: Vec<&str> = results.iter().map(|c| c.label.as_ref()).collect();
+        assert!(labels.contains(&"Box"), "{:?}", labels);
+    }
+
+    #[test]
+    fn test_static_access_nested_owner_exposes_its_nested_types() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("ChainCheck"),
+                internal_name: Arc::from("org/cubewhy/ChainCheck"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("Box"),
+                internal_name: Arc::from("org/cubewhy/ChainCheck$Box"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC | ACC_STATIC,
+                generic_signature: None,
+                inner_class_of: Some(Arc::from("ChainCheck")),
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("BoxV"),
+                internal_name: Arc::from("org/cubewhy/ChainCheck$Box$BoxV"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC | ACC_STATIC,
+                generic_signature: None,
+                inner_class_of: Some(Arc::from("Box")),
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+
+        let ctx = SemanticContext::new(
+            CursorLocation::StaticAccess {
+                class_internal_name: Arc::from("org/cubewhy/ChainCheck$Box"),
+                member_prefix: "".to_string(),
+            },
+            "",
+            vec![],
+            Some(Arc::from("ChainCheck")),
+            Some(Arc::from("org/cubewhy/ChainCheck")),
+            Some(Arc::from("org/cubewhy")),
+            vec![],
+        );
+
+        let results = StaticMemberProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
+        let labels: Vec<&str> = results.iter().map(|c| c.label.as_ref()).collect();
+        assert!(labels.contains(&"BoxV"), "{:?}", labels);
     }
 }

@@ -140,15 +140,17 @@ impl<'a> ContextEnricher<'a> {
                 &type_ctx,
                 self.view,
             );
-            tracing::debug!(?resolved, receiver_expr, "enrich_context: resolved receiver expression");
+            tracing::debug!(
+                ?resolved,
+                receiver_expr,
+                "enrich_context: resolved receiver expression"
+            );
 
             tracing::debug!(?resolved, "enrich_context: resolved before final match");
 
             // Normalize to a canonical semantic receiver type before writing either field.
             let resolved_semantic = canonicalize_receiver_semantic(resolved, &type_ctx);
-            let typed_chain_receiver = resolved_semantic
-                .as_ref()
-                .map(build_typed_chain_receiver);
+            let typed_chain_receiver = resolved_semantic.as_ref().map(build_typed_chain_receiver);
             ctx.typed_chain_receiver = typed_chain_receiver;
 
             if receiver_semantic_type.is_none() {
@@ -192,6 +194,32 @@ impl<'a> ContextEnricher<'a> {
             }
         }
 
+        // If receiver expression is a class/type qualifier (not a value expression),
+        // normalize MemberAccess into StaticAccess so static members and nested types
+        // come from the same authoritative path.
+        let static_access_location = if let CursorLocation::MemberAccess {
+            receiver_expr,
+            member_prefix,
+            ..
+        } = &ctx.location
+        {
+            resolve_type_qualifier_internal(ctx, self.view, receiver_expr).map(|owner| {
+                (
+                    CursorLocation::StaticAccess {
+                        class_internal_name: owner,
+                        member_prefix: member_prefix.clone(),
+                    },
+                    member_prefix.clone(),
+                )
+            })
+        } else {
+            None
+        };
+        if let Some((location, query)) = static_access_location {
+            ctx.location = location;
+            ctx.query = query;
+        }
+
         // If the receiver text is a known package, reinterpret this as import completion.
         let import_location: Option<(CursorLocation, String)> =
             if let CursorLocation::MemberAccess {
@@ -233,12 +261,7 @@ fn canonicalize_receiver_semantic(
             None
         }
         Some(ty) if ty.contains_slash() => Some(ty),
-        Some(ty)
-            if matches!(
-                ty.base_internal.as_ref(),
-                "+" | "-" | "?" | "*" | "capture"
-            ) =>
-        {
+        Some(ty) if matches!(ty.base_internal.as_ref(), "+" | "-" | "?" | "*" | "capture") => {
             // Wildcard/capture receivers are not strict-resolvable class names.
             // Keep structured type so upper-bound lifting can pick an effective owner.
             Some(ty)
@@ -259,6 +282,60 @@ fn canonicalize_receiver_semantic(
             }
         }
     }
+}
+
+fn resolve_type_qualifier_internal(
+    ctx: &SemanticContext,
+    view: &IndexView,
+    receiver_expr: &str,
+) -> Option<Arc<str>> {
+    let expr = receiver_expr.trim();
+    if expr.is_empty() || expr == "this" {
+        return None;
+    }
+
+    // Type-qualifier resolution only applies to dotted/simple identifiers.
+    if !expr
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$' || c == '.')
+    {
+        return None;
+    }
+
+    let parts: Vec<&str> = expr.split('.').filter(|s| !s.is_empty()).collect();
+    if parts.is_empty() {
+        return None;
+    }
+
+    // Value symbols shadow type qualifiers.
+    if parts[0] == "this"
+        || ctx
+            .local_variables
+            .iter()
+            .any(|lv| lv.name.as_ref() == parts[0])
+    {
+        return None;
+    }
+
+    let resolver = SymbolResolver::new(view);
+    for split in (1..=parts.len()).rev() {
+        let head = parts[..split].join(".");
+        let Some(mut current) = resolver.resolve_type_name(ctx, &head) else {
+            continue;
+        };
+        let mut ok = true;
+        for seg in &parts[split..] {
+            let Some(inner) = view.resolve_direct_inner_class(&current, seg) else {
+                ok = false;
+                break;
+            };
+            current = Arc::clone(&inner.internal_name);
+        }
+        if ok {
+            return Some(current);
+        }
+    }
+    None
 }
 
 fn build_typed_chain_receiver(receiver_ty: &TypeName) -> TypedChainReceiver {
@@ -307,9 +384,7 @@ fn expand_local_type_strict(
 
     let base = ty.erased_internal();
 
-    if ty.args.is_empty()
-        && base.contains('<')
-    {
+    if ty.args.is_empty() && base.contains('<') {
         if let Some(mut resolved) = resolve_source_like_type_with_scope(ctx, type_ctx, sym, base) {
             resolved.array_dims = ty.array_dims;
             return resolved;
@@ -3144,7 +3219,9 @@ mod tests {
 
     #[test]
     fn test_snapshot_nums_add_substitution_old_vs_new_receiver_forms() {
-        use crate::semantic::types::generics::{JvmType, parse_method_signature_types, substitute_type};
+        use crate::semantic::types::generics::{
+            JvmType, parse_method_signature_types, substitute_type,
+        };
 
         let idx = make_index_with_list_add_box_for_expected_arg();
         let scope = IndexScope {
@@ -3183,10 +3260,18 @@ mod tests {
         let receiver_old = receiver_structured.to_internal_with_generics();
         let receiver_new = receiver_structured.to_internal_with_generics_for_substitution();
 
-        let old_sub = substitute_type(&receiver_old, list_meta.generic_signature.as_deref(), &param_token)
-            .map(|t| t.to_internal_with_generics());
-        let new_sub = substitute_type(&receiver_new, list_meta.generic_signature.as_deref(), &param_token)
-            .map(|t| t.to_internal_with_generics());
+        let old_sub = substitute_type(
+            &receiver_old,
+            list_meta.generic_signature.as_deref(),
+            &param_token,
+        )
+        .map(|t| t.to_internal_with_generics());
+        let new_sub = substitute_type(
+            &receiver_new,
+            list_meta.generic_signature.as_deref(),
+            &param_token,
+        )
+        .map(|t| t.to_internal_with_generics());
 
         let old_resolved = resolver
             .resolve_selected_param_type_from_generic_signature(&receiver_old, add, 0)
@@ -3204,12 +3289,18 @@ mod tests {
             .resolve_selected_param_type_from_generic_signature(&unresolved_new, add, 0)
             .map(|(t, exact)| (t.to_internal_with_generics(), exact));
 
-        let unresolved_old_sub =
-            substitute_type(&unresolved_old, list_meta.generic_signature.as_deref(), &param_token)
-                .map(|t| t.to_internal_with_generics());
-        let unresolved_new_sub =
-            substitute_type(&unresolved_new, list_meta.generic_signature.as_deref(), &param_token)
-                .map(|t| t.to_internal_with_generics());
+        let unresolved_old_sub = substitute_type(
+            &unresolved_old,
+            list_meta.generic_signature.as_deref(),
+            &param_token,
+        )
+        .map(|t| t.to_internal_with_generics());
+        let unresolved_new_sub = substitute_type(
+            &unresolved_new,
+            list_meta.generic_signature.as_deref(),
+            &param_token,
+        )
+        .map(|t| t.to_internal_with_generics());
 
         let parsed_new_arg = crate::semantic::types::generics::split_internal_name(&receiver_new)
             .1
@@ -3294,13 +3385,7 @@ mod tests {
             .with_extension(type_ctx.clone());
 
             let resolver = TypeResolver::new(&view);
-            let recv_before = resolve_hint_receiver_type(
-                &ctx,
-                &type_ctx,
-                &view,
-                &resolver,
-                "nums",
-            );
+            let recv_before = resolve_hint_receiver_type(&ctx, &type_ctx, &view, &resolver, "nums");
             let local_nums_before = ctx
                 .local_variables
                 .iter()
@@ -3393,7 +3478,9 @@ mod tests {
             format!(
                 "{title}:\nlocal_nums_before={}\nreceiver_before={:?}\nselected_add_desc={}\nselected_add_generic_signature={:?}\nparam_token={}\nreceiver_for_substitution={}\nsubstitution_result={:?}\nlocal_nums_after={}\nfinal_expected={:?}\nrender_detail_direct={}\nprovider_add_detail={}\n\n",
                 local_nums_before,
-                recv_before.as_ref().map(TypeName::to_internal_with_generics),
+                recv_before
+                    .as_ref()
+                    .map(TypeName::to_internal_with_generics),
                 add_meta.desc(),
                 add_meta.generic_signature,
                 param_token,
@@ -3534,7 +3621,10 @@ mod tests {
         }))
         .with_extension(type_ctx);
         ContextEnricher::new(&view).enrich(&mut nums_ctx);
-        let nums_receiver = nums_ctx.typed_expr_ctx.as_ref().and_then(|t| t.receiver_type.clone());
+        let nums_receiver = nums_ctx
+            .typed_expr_ctx
+            .as_ref()
+            .and_then(|t| t.receiver_type.clone());
         let nums_expected = nums_ctx
             .typed_expr_ctx
             .as_ref()
@@ -3560,7 +3650,9 @@ mod tests {
                 single_local_after,
                 nums_local,
                 nums_local_after,
-                single_eval.as_ref().map(TypeName::to_internal_with_generics),
+                single_eval
+                    .as_ref()
+                    .map(TypeName::to_internal_with_generics),
                 single_receiver.map(|t| t.to_internal_with_generics()),
                 nums_receiver.map(|t| t.to_internal_with_generics()),
                 nums_expected,
@@ -3649,11 +3741,7 @@ mod tests {
             "wildcard_upper_bound_chain_lifting",
             format!(
                 "semantic_receiver={:?}\nchain_receiver={:?}\nchain_mode={:?}\neffective_owner={:?}\nmember_labels={:?}\n",
-                semantic_receiver,
-                chain_receiver,
-                chain_mode,
-                effective_owner,
-                member_labels
+                semantic_receiver, chain_receiver, chain_mode, effective_owner, member_labels
             )
         );
     }
@@ -4794,6 +4882,137 @@ mod tests {
         assert_eq!(
             a.type_internal.to_internal_with_generics(),
             "org/cubewhy/Box<Ljava/lang/String;>"
+        );
+    }
+
+    fn make_index_with_nested_chaincheck() -> WorkspaceIndex {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("ChainCheck"),
+                internal_name: Arc::from("org/cubewhy/ChainCheck"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("Box"),
+                internal_name: Arc::from("org/cubewhy/ChainCheck$Box"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC | ACC_STATIC,
+                generic_signature: None,
+                inner_class_of: Some(Arc::from("ChainCheck")),
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("BoxV"),
+                internal_name: Arc::from("org/cubewhy/ChainCheck$Box$BoxV"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC | ACC_STATIC,
+                generic_signature: None,
+                inner_class_of: Some(Arc::from("Box")),
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+        idx
+    }
+
+    #[test]
+    fn test_member_access_type_qualifier_is_normalized_to_static_access() {
+        let idx = make_index_with_nested_chaincheck();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        let view = idx.view(scope);
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            Some(Arc::from("org/cubewhy")),
+            vec![],
+            Some(view.build_name_table()),
+        ));
+        let mut ctx = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: None,
+                receiver_type: None,
+                member_prefix: "".to_string(),
+                receiver_expr: "ChainCheck".to_string(),
+                arguments: None,
+            },
+            "",
+            vec![],
+            Some(Arc::from("ChainCheck")),
+            Some(Arc::from("org/cubewhy/ChainCheck")),
+            Some(Arc::from("org/cubewhy")),
+            vec![],
+        )
+        .with_extension(type_ctx);
+
+        ContextEnricher::new(&view).enrich(&mut ctx);
+        match &ctx.location {
+            CursorLocation::StaticAccess {
+                class_internal_name,
+                member_prefix,
+            } => {
+                assert_eq!(class_internal_name.as_ref(), "org/cubewhy/ChainCheck");
+                assert!(member_prefix.is_empty());
+            }
+            other => panic!("expected StaticAccess, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_member_access_local_shadow_stays_member_access() {
+        let idx = make_index_with_nested_chaincheck();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        let view = idx.view(scope);
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            Some(Arc::from("org/cubewhy")),
+            vec![],
+            Some(view.build_name_table()),
+        ));
+        let mut ctx = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: None,
+                receiver_type: None,
+                member_prefix: "".to_string(),
+                receiver_expr: "ChainCheck".to_string(),
+                arguments: None,
+            },
+            "",
+            vec![LocalVar {
+                name: Arc::from("ChainCheck"),
+                type_internal: TypeName::new("org/cubewhy/ChainCheck"),
+                init_expr: None,
+            }],
+            Some(Arc::from("ChainCheck")),
+            Some(Arc::from("org/cubewhy/ChainCheck")),
+            Some(Arc::from("org/cubewhy")),
+            vec![],
+        )
+        .with_extension(type_ctx);
+
+        ContextEnricher::new(&view).enrich(&mut ctx);
+        assert!(
+            matches!(ctx.location, CursorLocation::MemberAccess { .. }),
+            "local variable shadowing should keep member access"
         );
     }
 }

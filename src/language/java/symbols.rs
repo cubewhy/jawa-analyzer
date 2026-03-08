@@ -4,77 +4,74 @@ use tree_sitter::Node;
 use crate::lsp::converters::ts_node_to_range;
 
 pub fn collect_java_symbols<'a>(root: Node<'a>, bytes: &'a [u8]) -> Vec<DocumentSymbol> {
-    enum WorkItem<'a> {
-        Visit(Node<'a>),
-        FinishType(DocumentSymbol),
-    }
+    let mut out = Vec::new();
+    collect_type_declarations(root, bytes, &mut out);
+    out
+}
 
-    let mut scopes: Vec<Vec<DocumentSymbol>> = vec![Vec::new()];
-    let mut stack: Vec<WorkItem<'a>> = vec![WorkItem::Visit(root)];
-
-    while let Some(item) = stack.pop() {
-        match item {
-            WorkItem::Visit(node) => {
-                let mut cursor = node.walk();
-
-                for child in node.children(&mut cursor) {
-                    match child.kind() {
-                        "class_declaration"
-                        | "interface_declaration"
-                        | "enum_declaration"
-                        | "record_declaration"
-                        | "annotation_type_declaration" => {
-                            if let Some((sym, body)) = start_type_symbol(child, bytes) {
-                                scopes.push(Vec::new());
-
-                                stack.push(WorkItem::FinishType(sym));
-
-                                if let Some(body) = body {
-                                    stack.push(WorkItem::Visit(body));
-                                }
-                            }
-                        }
-
-                        "method_declaration" | "constructor_declaration" => {
-                            if let Some(sym) = parse_method_symbol(child, bytes) {
-                                scopes.last_mut().unwrap().push(sym);
-                            }
-                        }
-
-                        "enum_constant" | "enum_constant_declaration" => {
-                            if let Some(sym) = parse_enum_constant_symbol(child, bytes) {
-                                scopes.last_mut().unwrap().push(sym);
-                            }
-                        }
-
-                        "field_declaration" => {
-                            let fields = parse_field_symbols(child, bytes);
-                            scopes.last_mut().unwrap().extend(fields);
-                        }
-
-                        "class_body" | "interface_body" | "enum_body" | "program" | "ERROR" => {
-                            stack.push(WorkItem::Visit(child));
-                        }
-
-                        _ => {}
-                    }
-                }
+fn collect_type_declarations<'a>(node: Node<'a>, bytes: &'a [u8], out: &mut Vec<DocumentSymbol>) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if is_type_declaration(child.kind()) {
+            if let Some(sym) = build_type_symbol(child, bytes) {
+                out.push(sym);
             }
+            continue;
+        }
 
-            WorkItem::FinishType(mut sym) => {
-                let mut children = scopes.pop().expect("missing child scope for type");
-                children.reverse();
-
-                sym.children = Some(children);
-
-                scopes.last_mut().unwrap().push(sym);
-            }
+        match child.kind() {
+            "program" | "ERROR" => collect_type_declarations(child, bytes, out),
+            _ => {}
         }
     }
+}
 
-    let mut top = scopes.pop().unwrap();
-    top.reverse();
-    top
+fn is_type_declaration(kind: &str) -> bool {
+    matches!(
+        kind,
+        "class_declaration"
+            | "interface_declaration"
+            | "enum_declaration"
+            | "record_declaration"
+            | "annotation_type_declaration"
+    )
+}
+
+fn build_type_symbol<'a>(node: Node<'a>, bytes: &'a [u8]) -> Option<DocumentSymbol> {
+    let (mut sym, body) = start_type_symbol(node, bytes)?;
+    let children = body
+        .map(|body_node| collect_type_members(body_node, bytes))
+        .unwrap_or_default();
+    sym.children = Some(children);
+    Some(sym)
+}
+
+fn collect_type_members<'a>(body: Node<'a>, bytes: &'a [u8]) -> Vec<DocumentSymbol> {
+    let mut out = Vec::new();
+    let mut cursor = body.walk();
+    for child in body.children(&mut cursor) {
+        match child.kind() {
+            k if is_type_declaration(k) => {
+                if let Some(sym) = build_type_symbol(child, bytes) {
+                    out.push(sym);
+                }
+            }
+            "method_declaration" | "constructor_declaration" => {
+                if let Some(sym) = parse_method_symbol(child, bytes) {
+                    out.push(sym);
+                }
+            }
+            "enum_constant" | "enum_constant_declaration" => {
+                if let Some(sym) = parse_enum_constant_symbol(child, bytes) {
+                    out.push(sym);
+                }
+            }
+            "field_declaration" => out.extend(parse_field_symbols(child, bytes)),
+            "ERROR" => out.extend(collect_type_members(child, bytes)),
+            _ => {}
+        }
+    }
+    out
 }
 
 /// Generate a "type symbol (children empty for now) + body node (for continued traversal)"
@@ -198,4 +195,78 @@ fn parse_enum_constant_symbol<'a>(node: Node<'a>, bytes: &'a [u8]) -> Option<Doc
         selection_range: ts_node_to_range(&name_node),
         children: None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::language::java::make_java_parser;
+    use insta::assert_ron_snapshot;
+
+    fn collect(src: &str) -> Vec<DocumentSymbol> {
+        let mut parser = make_java_parser();
+        let tree = parser.parse(src, None).expect("parse java");
+        collect_java_symbols(tree.root_node(), src.as_bytes())
+    }
+
+    #[test]
+    fn nested_class_symbols_preserve_ownership_boundaries() {
+        let src = indoc::indoc! {r#"
+            package org.cubewhy;
+
+            class ChainCheck {
+                int outerField;
+                void outerMethod() {}
+
+                static class Box<T> {
+                    int innerField;
+                    T get() { return null; }
+                    static class BoxV<V> {
+                        V getV() { return null; }
+                    }
+                }
+            }
+        "#};
+        let syms = collect(src);
+        assert_ron_snapshot!(syms);
+    }
+
+    #[test]
+    fn nested_class_members_do_not_absorb_parent_members() {
+        let src = indoc::indoc! {r#"
+            class Outer {
+                int outerField;
+                void outerMethod() {}
+                static class Inner {
+                    int innerField;
+                    void innerMethod() {}
+                }
+            }
+        "#};
+        let syms = collect(src);
+        let outer = syms
+            .iter()
+            .find(|s| s.name == "Outer")
+            .expect("outer symbol");
+        let outer_children = outer.children.as_ref().expect("outer children");
+        let inner = outer_children
+            .iter()
+            .find(|s| s.name == "Inner")
+            .expect("inner symbol");
+        let inner_children = inner.children.as_ref().expect("inner children");
+
+        assert!(
+            inner_children.iter().all(|s| s.name != "outerField"),
+            "inner must not contain parent field"
+        );
+        assert!(
+            inner_children.iter().all(|s| s.name != "outerMethod"),
+            "inner must not contain parent method"
+        );
+        assert!(
+            outer_children.iter().any(|s| s.name == "outerField")
+                && outer_children.iter().any(|s| s.name == "outerMethod"),
+            "outer must keep its own members"
+        );
+    }
 }

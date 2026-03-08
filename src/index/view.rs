@@ -126,7 +126,9 @@ impl IndexView {
                 continue;
             }
             if let Some(parent) = class.inner_class_of.clone()
-                && let Some(pos) = scope_chain.iter().position(|n| n.as_ref() == parent.as_ref())
+                && let Some(pos) = scope_chain
+                    .iter()
+                    .position(|n| n.as_ref() == parent.as_ref())
             {
                 match &best {
                     Some((best_pos, _)) if *best_pos <= pos => {}
@@ -193,6 +195,46 @@ impl IndexView {
             }
         }
         by_internal.into_values().collect()
+    }
+
+    /// Returns classes directly declared in the package (excludes nested/inner classes).
+    /// Ownership is determined by authoritative `inner_class_of` metadata.
+    pub fn top_level_classes_in_package(&self, pkg: &str) -> Vec<Arc<ClassMetadata>> {
+        self.classes_in_package(pkg)
+            .into_iter()
+            .filter(|c| c.inner_class_of.is_none())
+            .collect()
+    }
+
+    /// Returns direct nested classes whose owner is `owner_internal`.
+    /// Ownership is determined by authoritative `inner_class_of` metadata.
+    pub fn direct_inner_classes_of(&self, owner_internal: &str) -> Vec<Arc<ClassMetadata>> {
+        let Some(owner) = self.get_class(owner_internal) else {
+            return vec![];
+        };
+        let owner_name = Arc::clone(&owner.name);
+        let owner_pkg = owner.package.clone();
+
+        self.iter_all_classes()
+            .into_iter()
+            .filter(|c| {
+                c.package == owner_pkg
+                    && c.inner_class_of
+                        .as_ref()
+                        .is_some_and(|p| p.as_ref() == owner_name.as_ref())
+            })
+            .collect()
+    }
+
+    /// Resolves a direct nested class by simple name under `owner_internal`.
+    pub fn resolve_direct_inner_class(
+        &self,
+        owner_internal: &str,
+        simple_name: &str,
+    ) -> Option<Arc<ClassMetadata>> {
+        self.direct_inner_classes_of(owner_internal)
+            .into_iter()
+            .find(|c| c.name.as_ref() == simple_name)
     }
 
     pub fn has_package(&self, pkg: &str) -> bool {
@@ -386,8 +428,8 @@ impl IndexView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::index::{IndexScope, ModuleId, WorkspaceIndex};
     use crate::index::{ClassOrigin, MethodParams};
+    use crate::index::{IndexScope, ModuleId, WorkspaceIndex};
     use rust_asm::constants::ACC_PUBLIC;
 
     fn make_class(
@@ -591,5 +633,116 @@ mod tests {
             view.get_source_type_name("org/cubewhy/TopLevel").as_deref(),
             Some("org.cubewhy.TopLevel")
         );
+    }
+
+    #[test]
+    fn test_top_level_classes_in_package_excludes_nested() {
+        let idx = WorkspaceIndex::new();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("Outer"),
+                internal_name: Arc::from("org/cubewhy/Outer"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: rust_asm::constants::ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("Inner"),
+                internal_name: Arc::from("org/cubewhy/Outer$Inner"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: rust_asm::constants::ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: Some(Arc::from("Outer")),
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+        let view = idx.view(scope);
+        let names: Vec<String> = view
+            .top_level_classes_in_package("org/cubewhy")
+            .into_iter()
+            .map(|c| c.name.to_string())
+            .collect();
+        assert_eq!(names, vec!["Outer".to_string()]);
+    }
+
+    #[test]
+    fn test_direct_inner_classes_of_returns_owner_children() {
+        let idx = WorkspaceIndex::new();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("ChainCheck"),
+                internal_name: Arc::from("org/cubewhy/ChainCheck"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: rust_asm::constants::ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("Box"),
+                internal_name: Arc::from("org/cubewhy/ChainCheck$Box"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: rust_asm::constants::ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: Some(Arc::from("ChainCheck")),
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("BoxV"),
+                internal_name: Arc::from("org/cubewhy/ChainCheck$Box$BoxV"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: rust_asm::constants::ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: Some(Arc::from("Box")),
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+
+        let view = idx.view(scope);
+        let outer_children: Vec<String> = view
+            .direct_inner_classes_of("org/cubewhy/ChainCheck")
+            .into_iter()
+            .map(|c| c.name.to_string())
+            .collect();
+        assert_eq!(outer_children, vec!["Box".to_string()]);
+        let box_children: Vec<String> = view
+            .direct_inner_classes_of("org/cubewhy/ChainCheck$Box")
+            .into_iter()
+            .map(|c| c.name.to_string())
+            .collect();
+        assert_eq!(box_children, vec!["BoxV".to_string()]);
     }
 }

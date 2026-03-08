@@ -205,7 +205,11 @@ impl CompletionProvider for MemberProvider {
         let resolved_semantic = receiver_semantic_type
             .cloned()
             .or_else(|| receiver_owner_internal.map(TypeName::new))
-            .or_else(|| ctx.typed_chain_receiver.as_ref().map(|t| t.receiver_ty.clone()))
+            .or_else(|| {
+                ctx.typed_chain_receiver
+                    .as_ref()
+                    .map(|t| t.receiver_ty.clone())
+            })
             .or_else(|| resolve_receiver_type(receiver_expr, ctx, index, scope));
 
         let resolved_original = match resolved_semantic {
@@ -470,14 +474,17 @@ fn resolve_receiver_type(
         }
     } else {
         if let Some(class_name) = extract_constructor_class(expr) {
-            return resolve_simple_name_to_internal(class_name, ctx, index, scope).map(TypeName::from);
+            return resolve_simple_name_to_internal(class_name, ctx, index, scope)
+                .map(TypeName::from);
         }
         if let Some(internal) = resolve_method_call_receiver(expr, ctx, index, scope) {
             return Some(internal);
         }
-        if let Some(resolved) =
-            TypeResolver::new(index).resolve(expr, &ctx.local_variables, ctx.enclosing_internal_name.as_ref())
-        {
+        if let Some(resolved) = TypeResolver::new(index).resolve(
+            expr,
+            &ctx.local_variables,
+            ctx.enclosing_internal_name.as_ref(),
+        ) {
             return Some(resolved);
         }
     }

@@ -7,9 +7,7 @@ use crate::{
         java::{
             JavaContextExtractor,
             type_ctx::SourceTypeCtx,
-            utils::{
-                find_ancestor, get_initializer_text, java_type_to_internal,
-            },
+            utils::{find_ancestor, get_initializer_text, java_type_to_internal},
         },
         ts_utils::{capture_text, find_method_by_offset, run_query},
     },

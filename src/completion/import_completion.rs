@@ -25,7 +25,7 @@ pub fn candidates_for_import(
             let mut results = Vec::new();
 
             // 当前包下的类，用 fuzzy 匹配
-            for meta in index.classes_in_package(&internal_pkg) {
+            for meta in index.top_level_classes_in_package(&internal_pkg) {
                 if !name_prefix.is_empty() && fuzzy_match(name_prefix, &meta.name).is_none() {
                     continue;
                 }
@@ -110,6 +110,9 @@ pub fn candidates_for_import(
 
             // 类名，fuzzy 匹配
             for meta in index.iter_all_classes().into_iter().take(200) {
+                if meta.inner_class_of.is_some() {
+                    continue;
+                }
                 if fuzzy_match(prefix, &meta.name).is_some() {
                     let fqn = fqn_of_meta(&meta);
                     let score = 55.0 + fuzzy_match(prefix, &meta.name).unwrap_or(0) as f32 * 0.01;
@@ -255,6 +258,49 @@ mod tests {
         assert!(labels.contains(&"org.cubewhy.Main"), "{:?}", labels);
         assert!(labels.contains(&"org.cubewhy.RealMain"), "{:?}", labels);
         assert!(labels.contains(&"org.cubewhy.utils."), "{:?}", labels);
+    }
+
+    #[test]
+    fn test_candidates_pkg_dot_excludes_nested_classes() {
+        let idx = make_index();
+        idx.add_jar_classes(
+            root_scope(),
+            vec![
+                ClassMetadata {
+                    package: Some(Arc::from("org/cubewhy")),
+                    name: Arc::from("Outer"),
+                    internal_name: Arc::from("org/cubewhy/Outer"),
+                    super_name: None,
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    generic_signature: None,
+                    inner_class_of: None,
+                    origin: ClassOrigin::Unknown,
+                },
+                ClassMetadata {
+                    package: Some(Arc::from("org/cubewhy")),
+                    name: Arc::from("Inner"),
+                    internal_name: Arc::from("org/cubewhy/Outer$Inner"),
+                    super_name: None,
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    generic_signature: None,
+                    inner_class_of: Some(Arc::from("Outer")),
+                    origin: ClassOrigin::Unknown,
+                },
+            ],
+        );
+        let view = idx.view(root_scope());
+        let results = candidates_for_import("org.cubewhy.", root_scope(), &view);
+        let labels: Vec<&str> = results.iter().map(|c| c.label.as_ref()).collect();
+        assert!(labels.contains(&"org.cubewhy.Outer"), "{:?}", labels);
+        assert!(!labels.contains(&"org.cubewhy.Inner"), "{:?}", labels);
     }
 
     #[test]

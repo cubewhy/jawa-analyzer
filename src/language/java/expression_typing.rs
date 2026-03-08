@@ -3,11 +3,11 @@ use std::sync::Arc;
 use crate::completion::parser::parse_chain_from_expr;
 use crate::index::IndexView;
 use crate::language::java::type_ctx::SourceTypeCtx;
+use crate::semantic::LocalVar;
 use crate::semantic::types::type_name::TypeName;
 use crate::semantic::types::{
     ChainSegment, TypeResolver, parse_single_type_to_internal, singleton_descriptor_to_type,
 };
-use crate::semantic::LocalVar;
 
 pub(crate) fn resolve_expression_type(
     expr: &str,
@@ -18,7 +18,14 @@ pub(crate) fn resolve_expression_type(
     view: &IndexView,
 ) -> Option<TypeName> {
     if looks_like_array_access(expr) {
-        return resolve_array_access_type(expr, locals, enclosing_internal, resolver, type_ctx, view);
+        return resolve_array_access_type(
+            expr,
+            locals,
+            enclosing_internal,
+            resolver,
+            type_ctx,
+            view,
+        );
     }
 
     let chain = parse_chain_from_expr(expr);
@@ -108,8 +115,14 @@ pub(crate) fn resolve_array_access_type(
     if array_expr.is_empty() {
         return None;
     }
-    let array_type =
-        resolve_expression_type(array_expr, locals, enclosing_internal, resolver, type_ctx, view)?;
+    let array_type = resolve_expression_type(
+        array_expr,
+        locals,
+        enclosing_internal,
+        resolver,
+        type_ctx,
+        view,
+    )?;
     array_type.element_type()
 }
 
@@ -185,7 +198,8 @@ pub(crate) fn evaluate_chain(
                 let recv_full: TypeName = if recv.contains_slash() {
                     recv.clone()
                 } else {
-                    let mut canonical = type_ctx.resolve_type_name_strict(recv.erased_internal())?;
+                    let mut canonical =
+                        type_ctx.resolve_type_name_strict(recv.erased_internal())?;
                     if !recv.args.is_empty() {
                         canonical.args = recv.args.clone();
                     }

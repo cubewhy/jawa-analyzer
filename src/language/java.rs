@@ -1820,7 +1820,10 @@ mod tests {
         let (ctor_line, ctor_col) = src_ctor
             .lines()
             .enumerate()
-            .find_map(|(i, l)| l.find("new Bo").map(|c| (i as u32, c as u32 + "new Bo".len() as u32)))
+            .find_map(|(i, l)| {
+                l.find("new Bo")
+                    .map(|c| (i as u32, c as u32 + "new Bo".len() as u32))
+            })
             .expect("new Bo marker");
         let ctor_ctx = {
             let rope = ropey::Rope::from_str(src_ctor);
@@ -3788,11 +3791,16 @@ mod tests {
             "previous local b should be visible"
         );
         assert!(
-            !ctx.local_variables.iter().any(|v| v.name.as_ref() == "nums"),
+            !ctx.local_variables
+                .iter()
+                .any(|v| v.name.as_ref() == "nums"),
             "incomplete next declaration should not leak nums into locals: {:?}",
             ctx.local_variables
                 .iter()
-                .map(|v| (v.name.to_string(), v.type_internal.to_internal_with_generics()))
+                .map(|v| (
+                    v.name.to_string(),
+                    v.type_internal.to_internal_with_generics()
+                ))
                 .collect::<Vec<_>>()
         );
     }
@@ -4201,5 +4209,86 @@ mod tests {
             .unwrap();
         // 仅确保不 panic，multibyte 处理正确
         let _ = parser.parse(ctx.source_str(), None);
+    }
+
+    fn make_nested_chaincheck_index() -> WorkspaceIndex {
+        let src = indoc::indoc! {r#"
+            package org.cubewhy;
+
+            class ChainCheck {
+                static class Box<T> {
+                    static class BoxV<V> {}
+                }
+            }
+
+            class Top {}
+        "#};
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(parse_java_source(src, ClassOrigin::Unknown, None));
+        idx
+    }
+
+    #[test]
+    fn test_package_like_member_access_excludes_nested_classes() {
+        let idx = make_nested_chaincheck_index();
+        let view = idx.view(root_scope());
+        let (_, labels) = ctx_and_labels_from_marked_source(
+            indoc::indoc! {r#"
+                package org.cubewhy;
+                class Probe {
+                    void test() {
+                        org.cubewhy.|
+                    }
+                }
+            "#},
+            &view,
+        );
+        assert!(
+            labels.iter().any(|l| l == "org.cubewhy.ChainCheck"),
+            "{labels:?}"
+        );
+        assert!(labels.iter().any(|l| l == "org.cubewhy.Top"), "{labels:?}");
+        assert!(
+            labels
+                .iter()
+                .all(|l| l != "org.cubewhy.Box" && l != "org.cubewhy.BoxV"),
+            "{labels:?}"
+        );
+    }
+
+    #[test]
+    fn test_class_qualifier_member_access_exposes_nested_class() {
+        let idx = make_nested_chaincheck_index();
+        let view = idx.view(root_scope());
+        let (_, labels) = ctx_and_labels_from_marked_source(
+            indoc::indoc! {r#"
+                package org.cubewhy;
+                class Probe {
+                    void test() {
+                        ChainCheck.|
+                    }
+                }
+            "#},
+            &view,
+        );
+        assert!(labels.iter().any(|l| l == "Box"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_nested_qualifier_member_access_exposes_nested_child_class() {
+        let idx = make_nested_chaincheck_index();
+        let view = idx.view(root_scope());
+        let (_, labels) = ctx_and_labels_from_marked_source(
+            indoc::indoc! {r#"
+                package org.cubewhy;
+                class Probe {
+                    void test() {
+                        ChainCheck.Box.|
+                    }
+                }
+            "#},
+            &view,
+        );
+        assert!(labels.iter().any(|l| l == "BoxV"), "{labels:?}");
     }
 }

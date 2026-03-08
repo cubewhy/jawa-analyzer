@@ -353,15 +353,12 @@ mod tests {
     #[test]
     fn test_type_annotation_includes_scoped_inner_box() {
         let index = WorkspaceIndex::new();
-        index.add_classes(vec![
-            make_cls("org/cubewhy", "ClassWithGenerics"),
-            {
-                let mut c = make_cls("org/cubewhy", "Box");
-                c.internal_name = Arc::from("org/cubewhy/ClassWithGenerics$Box");
-                c.inner_class_of = Some(Arc::from("ClassWithGenerics"));
-                c
-            },
-        ]);
+        index.add_classes(vec![make_cls("org/cubewhy", "ClassWithGenerics"), {
+            let mut c = make_cls("org/cubewhy", "Box");
+            c.internal_name = Arc::from("org/cubewhy/ClassWithGenerics$Box");
+            c.inner_class_of = Some(Arc::from("ClassWithGenerics"));
+            c
+        }]);
         let ctx = SemanticContext::new(
             CursorLocation::TypeAnnotation {
                 prefix: "Bo".to_string(),
