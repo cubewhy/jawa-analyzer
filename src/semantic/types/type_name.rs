@@ -123,7 +123,10 @@ impl TypeName {
                 return true;
             }
             chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-                && matches!(first, 'E' | 'K' | 'R' | 'T' | 'U' | 'V' | 'W' | 'X' | 'Y' | 'Z')
+                && matches!(
+                    first,
+                    'E' | 'K' | 'R' | 'T' | 'U' | 'V' | 'W' | 'X' | 'Y' | 'Z'
+                )
         }
 
         fn to_jvm_sig_for_substitution(ty: &TypeName) -> String {
@@ -149,11 +152,8 @@ impl TypeName {
                     if ty.args.is_empty() {
                         format!("L{};", base)
                     } else {
-                        let arg_sigs: Vec<String> = ty
-                            .args
-                            .iter()
-                            .map(to_jvm_sig_for_substitution)
-                            .collect();
+                        let arg_sigs: Vec<String> =
+                            ty.args.iter().map(to_jvm_sig_for_substitution).collect();
                         format!("L{}<{}>;", base, arg_sigs.join(""))
                     }
                 }
@@ -162,11 +162,8 @@ impl TypeName {
                     if ty.args.is_empty() {
                         format!("L{};", other)
                     } else {
-                        let arg_sigs: Vec<String> = ty
-                            .args
-                            .iter()
-                            .map(to_jvm_sig_for_substitution)
-                            .collect();
+                        let arg_sigs: Vec<String> =
+                            ty.args.iter().map(to_jvm_sig_for_substitution).collect();
                         format!("L{}<{}>;", other, arg_sigs.join(""))
                     }
                 }

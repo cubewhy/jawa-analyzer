@@ -301,13 +301,12 @@ impl CompletionProvider for MemberProvider {
                         self.name(),
                     )
                     .with_detail({
-                        let detail =
-                            render::method_detail(
-                                &class_internal_for_substitution,
-                                class_meta,
-                                method,
-                                &resolver,
-                            );
+                        let detail = render::method_detail(
+                            &class_internal_for_substitution,
+                            class_meta,
+                            method,
+                            &resolver,
+                        );
                         if trace_add {
                             tracing::debug!(
                                 method_name = %method.name,
@@ -460,6 +459,24 @@ fn resolve_receiver_type(
             type_internal = %lv.type_internal,
             "found in locals"
         );
+
+        if !lv.type_internal.args.is_empty() {
+            let mut structured = lv.type_internal.clone();
+            if !structured.contains_slash()
+                && let Some(type_ctx) = ctx.extension::<SourceTypeCtx>()
+                && let Some(mut canonical) =
+                    type_ctx.resolve_type_name_strict(structured.erased_internal())
+            {
+                canonical.args = structured.args.clone();
+                canonical.array_dims = structured.array_dims;
+                structured = canonical;
+            }
+            tracing::debug!(
+                internal = %structured.to_internal_with_generics(),
+                "using structured local receiver type"
+            );
+            return Some(structured);
+        }
 
         if let Some(type_ctx) = ctx.extension::<SourceTypeCtx>() {
             let ty_source = lv.type_internal.erased_internal_with_arrays();
@@ -1331,7 +1348,12 @@ mod tests {
                 super_name: None,
                 interfaces: vec![],
                 annotations: vec![],
-                methods: vec![make_method("get", "()Ljava/lang/Object;", ACC_PUBLIC, false)],
+                methods: vec![make_method(
+                    "get",
+                    "()Ljava/lang/Object;",
+                    ACC_PUBLIC,
+                    false,
+                )],
                 fields: vec![],
                 access_flags: ACC_PUBLIC,
                 generic_signature: Some(Arc::from("<T:Ljava/lang/Object;>Ljava/lang/Object;")),
@@ -1441,10 +1463,14 @@ mod tests {
             "java/util/List",
             vec![TypeName::with_args(
                 "Box",
-                vec![TypeName::with_args("+", vec![TypeName::new("java/lang/Number")])],
+                vec![TypeName::with_args(
+                    "+",
+                    vec![TypeName::new("java/lang/Number")],
+                )],
             )],
         );
-        let receiver_class_internal = receiver_semantic.to_internal_with_generics_for_substitution();
+        let receiver_class_internal =
+            receiver_semantic.to_internal_with_generics_for_substitution();
 
         let ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
@@ -1489,7 +1515,11 @@ mod tests {
         let param_token = add_meta
             .generic_signature
             .as_deref()
-            .and_then(|sig| sig.find('(').zip(sig.find(')')).map(|(s, e)| &sig[s + 1..e]))
+            .and_then(|sig| {
+                sig.find('(')
+                    .zip(sig.find(')'))
+                    .map(|(s, e)| &sig[s + 1..e])
+            })
             .unwrap_or("?");
         let substituted_param = substitute_type(
             &receiver_class_internal,

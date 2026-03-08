@@ -503,7 +503,8 @@ fn evaluate_chain(
                 let recv_full: TypeName = if recv.contains_slash() {
                     recv.clone()
                 } else {
-                    let mut canonical = type_ctx.resolve_type_name_strict(recv.erased_internal())?;
+                    let mut canonical =
+                        type_ctx.resolve_type_name_strict(recv.erased_internal())?;
                     if !recv.args.is_empty() {
                         canonical.args = recv.args.clone();
                     }
@@ -712,7 +713,11 @@ fn resolve_expected_type_from_method_argument(
     }
     let receiver_internal = receiver.to_internal_with_generics();
     let expected = resolver
-        .resolve_selected_param_type_from_generic_signature(&receiver_internal, selected, hint.arg_index)
+        .resolve_selected_param_type_from_generic_signature(
+            &receiver_internal,
+            selected,
+            hint.arg_index,
+        )
         .map(|(ty, exact)| {
             (
                 ty,
@@ -1794,6 +1799,117 @@ mod tests {
         idx
     }
 
+    fn make_index_with_var_local_generic_types() -> WorkspaceIndex {
+        let idx = WorkspaceIndex::new();
+        idx.add_jar_classes(
+            IndexScope {
+                module: ModuleId::ROOT,
+            },
+            vec![
+                ClassMetadata {
+                    package: Some(Arc::from("java/lang")),
+                    name: Arc::from("Object"),
+                    internal_name: Arc::from("java/lang/Object"),
+                    super_name: None,
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: None,
+                    origin: ClassOrigin::Unknown,
+                },
+                ClassMetadata {
+                    package: Some(Arc::from("java/lang")),
+                    name: Arc::from("String"),
+                    internal_name: Arc::from("java/lang/String"),
+                    super_name: Some(Arc::from("java/lang/Object")),
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: None,
+                    origin: ClassOrigin::Unknown,
+                },
+                ClassMetadata {
+                    package: Some(Arc::from("java/util")),
+                    name: Arc::from("HashMap"),
+                    internal_name: Arc::from("java/util/HashMap"),
+                    super_name: Some(Arc::from("java/lang/Object")),
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![MethodSummary {
+                        name: Arc::from("put"),
+                        params: MethodParams::from([
+                            ("Ljava/lang/Object;", "key"),
+                            ("Ljava/lang/Object;", "value"),
+                        ]),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: Some(Arc::from("(TK;TV;)TV;")),
+                        return_type: Some(Arc::from("Ljava/lang/Object;")),
+                    }],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: Some(Arc::from(
+                        "<K:Ljava/lang/Object;V:Ljava/lang/Object;>Ljava/lang/Object;",
+                    )),
+                    origin: ClassOrigin::Unknown,
+                },
+                ClassMetadata {
+                    package: Some(Arc::from("java/util")),
+                    name: Arc::from("List"),
+                    internal_name: Arc::from("java/util/List"),
+                    super_name: Some(Arc::from("java/lang/Object")),
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![MethodSummary {
+                        name: Arc::from("size"),
+                        params: MethodParams::empty(),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: None,
+                        return_type: Some(Arc::from("I")),
+                    }],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: Some(Arc::from("<E:Ljava/lang/Object;>Ljava/lang/Object;")),
+                    origin: ClassOrigin::Unknown,
+                },
+                ClassMetadata {
+                    package: Some(Arc::from("java/util")),
+                    name: Arc::from("ArrayList"),
+                    internal_name: Arc::from("java/util/ArrayList"),
+                    super_name: Some(Arc::from("java/lang/Object")),
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![MethodSummary {
+                        name: Arc::from("get"),
+                        params: MethodParams::from([("I", "index")]),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: Some(Arc::from("(I)TE;")),
+                        return_type: Some(Arc::from("Ljava/lang/Object;")),
+                    }],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: Some(Arc::from("<E:Ljava/lang/Object;>Ljava/lang/Object;")),
+                    origin: ClassOrigin::Unknown,
+                },
+            ],
+        );
+        idx
+    }
+
     #[test]
     fn test_enrich_context_resolves_simple_name_via_import() {
         let idx = make_index_with_random_class();
@@ -1960,8 +2076,8 @@ mod tests {
         );
 
         let resolved = Some(TypeName::with_args("RandomClass", vec![TypeName::new("R")]));
-        let canonical = super::canonicalize_receiver_semantic(resolved, &type_ctx)
-            .expect("canonicalized type");
+        let canonical =
+            super::canonicalize_receiver_semantic(resolved, &type_ctx).expect("canonicalized type");
 
         assert_eq!(canonical.erased_internal(), "org/cubewhy/RandomClass");
         assert_eq!(canonical.args.len(), 1);
@@ -2055,7 +2171,11 @@ mod tests {
         };
         let view = idx.view(scope);
         let name_table = view.build_name_table();
-        let type_ctx = Arc::new(SourceTypeCtx::new(None, vec!["java.util.*".into()], Some(name_table)));
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            None,
+            vec!["java.util.*".into()],
+            Some(name_table),
+        ));
         let mut ctx = SemanticContext::new(
             CursorLocation::MemberAccess {
                 receiver_semantic_type: None,
@@ -2086,7 +2206,8 @@ mod tests {
         ContextEnricher::new(&view).enrich(&mut ctx);
 
         if let CursorLocation::MemberAccess {
-            receiver_semantic_type, ..
+            receiver_semantic_type,
+            ..
         } = &ctx.location
         {
             let sem = receiver_semantic_type
@@ -2342,7 +2463,8 @@ mod tests {
     }
 
     #[test]
-    fn test_method_argument_expected_type_uses_generic_signature_with_receiver_substitution_exact() {
+    fn test_method_argument_expected_type_uses_generic_signature_with_receiver_substitution_exact()
+    {
         let idx = WorkspaceIndex::new();
         idx.add_jar_classes(
             IndexScope {
@@ -2384,7 +2506,10 @@ mod tests {
             "",
             vec![LocalVar {
                 name: Arc::from("holder"),
-                type_internal: TypeName::with_args("Holder", vec![TypeName::new("java/lang/String")]),
+                type_internal: TypeName::with_args(
+                    "Holder",
+                    vec![TypeName::new("java/lang/String")],
+                ),
                 init_expr: None,
             }],
             Some(Arc::from("Demo")),
@@ -2422,7 +2547,11 @@ mod tests {
         };
         let view = idx.view(scope);
         let name_table = view.build_name_table();
-        let type_ctx = Arc::new(SourceTypeCtx::new(None, vec!["java.util.*".into()], Some(name_table)));
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            None,
+            vec!["java.util.*".into()],
+            Some(name_table),
+        ));
         let mut ctx = SemanticContext::new(
             CursorLocation::Expression {
                 prefix: "".to_string(),
@@ -2780,7 +2909,11 @@ mod tests {
             };
             let view = idx.view(scope);
             let name_table = view.build_name_table();
-            let type_ctx = Arc::new(SourceTypeCtx::new(None, vec!["java.util.*".into()], Some(name_table)));
+            let type_ctx = Arc::new(SourceTypeCtx::new(
+                None,
+                vec!["java.util.*".into()],
+                Some(name_table),
+            ));
             let mut ctx = SemanticContext::new(
                 CursorLocation::MemberAccess {
                     receiver_semantic_type: None,
@@ -2878,9 +3011,11 @@ mod tests {
                         e.source.clone(),
                         e.confidence.clone()
                     )),
-                ctx.expected_sam
-                    .as_ref()
-                    .map(|s| (s.method_name.clone(), s.param_types.len(), s.return_type.clone())),
+                ctx.expected_sam.as_ref().map(|s| (
+                    s.method_name.clone(),
+                    s.param_types.len(),
+                    s.return_type.clone()
+                )),
                 ctx.typed_expr_ctx
                     .as_ref()
                     .and_then(|t| t.functional_compat.as_ref())
@@ -2965,9 +3100,11 @@ mod tests {
                         e.source.clone(),
                         e.confidence.clone()
                     )),
-                ctx.expected_sam
-                    .as_ref()
-                    .map(|s| (s.method_name.clone(), s.param_types.len(), s.return_type.clone())),
+                ctx.expected_sam.as_ref().map(|s| (
+                    s.method_name.clone(),
+                    s.param_types.len(),
+                    s.return_type.clone()
+                )),
                 ctx.typed_expr_ctx
                     .as_ref()
                     .and_then(|t| t.functional_compat.as_ref())
@@ -2991,7 +3128,11 @@ mod tests {
             };
             let view = idx.view(scope);
             let name_table = view.build_name_table();
-            let type_ctx = Arc::new(SourceTypeCtx::new(None, vec!["java.util.*".into()], Some(name_table)));
+            let type_ctx = Arc::new(SourceTypeCtx::new(
+                None,
+                vec!["java.util.*".into()],
+                Some(name_table),
+            ));
             let mut ctx = SemanticContext::new(
                 CursorLocation::Expression {
                     prefix: "".to_string(),
@@ -2999,7 +3140,10 @@ mod tests {
                 "",
                 vec![LocalVar {
                     name: Arc::from("nums"),
-                    type_internal: TypeName::with_args("java/util/List", vec![TypeName::new("Box")]),
+                    type_internal: TypeName::with_args(
+                        "java/util/List",
+                        vec![TypeName::new("Box")],
+                    ),
                     init_expr: None,
                 }],
                 Some(Arc::from("Demo")),
@@ -3154,7 +3298,9 @@ mod tests {
         );
         assert_eq!(
             trim_eval.as_ref().map(TypeName::to_internal_with_generics),
-            trim_direct_get.as_ref().map(TypeName::to_internal_with_generics),
+            trim_direct_get
+                .as_ref()
+                .map(TypeName::to_internal_with_generics),
             "chain evaluation should match direct callsite concretization for String::trim"
         );
 
@@ -3207,7 +3353,9 @@ mod tests {
         );
         assert_eq!(
             ctor_eval.as_ref().map(TypeName::to_internal_with_generics),
-            ctor_direct_get.as_ref().map(TypeName::to_internal_with_generics),
+            ctor_direct_get
+                .as_ref()
+                .map(TypeName::to_internal_with_generics),
             "chain evaluation should match direct callsite concretization for ArrayList::new"
         );
 
@@ -3269,6 +3417,157 @@ mod tests {
             ));
         }
 
-        insta::assert_snapshot!("chain_receiver_concretization_trim_and_constructor_new", out);
+        insta::assert_snapshot!(
+            "chain_receiver_concretization_trim_and_constructor_new",
+            out
+        );
+    }
+
+    #[test]
+    fn test_var_rhs_inference_preserves_structured_hashmap_generics() {
+        let idx = make_index_with_var_local_generic_types();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        let view = idx.view(scope);
+        let name_table = view.build_name_table();
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            None,
+            vec!["java.util.*".into(), "java.lang.*".into()],
+            Some(name_table),
+        ));
+
+        let mut ctx = SemanticContext::new(
+            CursorLocation::Expression {
+                prefix: "a".to_string(),
+            },
+            "a",
+            vec![LocalVar {
+                name: Arc::from("a"),
+                type_internal: TypeName::new("var"),
+                init_expr: Some("new HashMap<String, String>()".to_string()),
+            }],
+            Some(Arc::from("Demo")),
+            Some(Arc::from("Demo")),
+            None,
+            vec!["java.util.*".into(), "java.lang.*".into()],
+        )
+        .with_extension(type_ctx);
+
+        ContextEnricher::new(&view).enrich(&mut ctx);
+        let a = ctx
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "a")
+            .expect("local a");
+        assert_eq!(
+            a.type_internal.to_internal_with_generics(),
+            "java/util/HashMap<Ljava/lang/String;Ljava/lang/String;>"
+        );
+    }
+
+    #[test]
+    fn test_var_rhs_inference_propagates_receiver_generics_for_chain() {
+        use crate::completion::provider::CompletionProvider;
+        use crate::language::java::completion::providers::member::MemberProvider;
+
+        let idx = make_index_with_var_local_generic_types();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        let view = idx.view(scope);
+        let name_table = view.build_name_table();
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            None,
+            vec!["java.util.*".into(), "java.lang.*".into()],
+            Some(name_table),
+        ));
+
+        let mut ctx = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: None,
+                receiver_type: None,
+                member_prefix: "si".to_string(),
+                receiver_expr: "a.get(0)".to_string(),
+                arguments: None,
+            },
+            "si",
+            vec![LocalVar {
+                name: Arc::from("a"),
+                type_internal: TypeName::new("var"),
+                init_expr: Some("new ArrayList<List<String>>()".to_string()),
+            }],
+            Some(Arc::from("Demo")),
+            Some(Arc::from("Demo")),
+            None,
+            vec!["java.util.*".into(), "java.lang.*".into()],
+        )
+        .with_extension(type_ctx);
+
+        ContextEnricher::new(&view).enrich(&mut ctx);
+        if let CursorLocation::MemberAccess {
+            receiver_semantic_type,
+            ..
+        } = &ctx.location
+        {
+            assert_eq!(
+                receiver_semantic_type
+                    .as_ref()
+                    .map(TypeName::to_internal_with_generics),
+                Some("java/util/List<Ljava/lang/String;>".to_string())
+            );
+        } else {
+            panic!("expected member access location");
+        }
+
+        let labels: Vec<String> = MemberProvider
+            .provide(scope, &ctx, &view)
+            .into_iter()
+            .map(|c| c.label.to_string())
+            .collect();
+        assert!(
+            labels.iter().any(|l| l == "size"),
+            "expected List members on a.get(0)"
+        );
+    }
+
+    #[test]
+    fn test_var_rhs_inference_fallback_keeps_var_for_unresolved_init() {
+        let idx = make_index_with_var_local_generic_types();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        let view = idx.view(scope);
+        let name_table = view.build_name_table();
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            None,
+            vec!["java.util.*".into(), "java.lang.*".into()],
+            Some(name_table),
+        ));
+
+        let mut ctx = SemanticContext::new(
+            CursorLocation::Expression {
+                prefix: "a".to_string(),
+            },
+            "a",
+            vec![LocalVar {
+                name: Arc::from("a"),
+                type_internal: TypeName::new("var"),
+                init_expr: Some("unknownFactory()".to_string()),
+            }],
+            None,
+            None,
+            None,
+            vec!["java.util.*".into(), "java.lang.*".into()],
+        )
+        .with_extension(type_ctx);
+
+        ContextEnricher::new(&view).enrich(&mut ctx);
+        let a = ctx
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "a")
+            .expect("local a");
+        assert_eq!(a.type_internal.erased_internal(), "var");
     }
 }

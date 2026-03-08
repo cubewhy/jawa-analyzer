@@ -319,13 +319,12 @@ impl<'idx> TypeResolver<'idx> {
         let (_, receiver_type_args) = split_internal_name(receiver_internal);
 
         for (idx, param_ty) in param_jvm_types.iter().enumerate() {
-            let param_ty_substituted = if !class_type_params.is_empty()
-                && !receiver_type_args.is_empty()
-            {
-                param_ty.substitute(&class_type_params, &receiver_type_args)
-            } else {
-                param_ty.clone()
-            };
+            let param_ty_substituted =
+                if !class_type_params.is_empty() && !receiver_type_args.is_empty() {
+                    param_ty.substitute(&class_type_params, &receiver_type_args)
+                } else {
+                    param_ty.clone()
+                };
             let arg_ty = arg_types.get(idx);
             if let JvmType::TypeVar(name) = &param_ty_substituted
                 && return_type_vars.contains(name)
@@ -391,19 +390,17 @@ impl<'idx> TypeResolver<'idx> {
             return;
         };
 
-        let inferred = arg_ty
-            .and_then(type_name_to_jvm_type)
-            .or_else(|| {
-                arg_text.and_then(|txt| {
-                    self.infer_functional_arg_return_shallow(
-                        txt,
-                        locals,
-                        enclosing,
-                        qualifier_resolver,
-                        Some(param_ty),
-                    )
-                })
-            });
+        let inferred = arg_ty.and_then(type_name_to_jvm_type).or_else(|| {
+            arg_text.and_then(|txt| {
+                self.infer_functional_arg_return_shallow(
+                    txt,
+                    locals,
+                    enclosing,
+                    qualifier_resolver,
+                    Some(param_ty),
+                )
+            })
+        });
         if let Some(jvm) = inferred {
             bind_type_var(&ret_var, jvm, bindings, conflicted);
         }
@@ -424,7 +421,8 @@ impl<'idx> TypeResolver<'idx> {
 
         if let Some((qualifier, member, is_constructor)) = parse_method_reference_text(text) {
             if is_constructor {
-                let owner = self.resolve_owner_from_text_with_context(qualifier, qualifier_resolver)?;
+                let owner =
+                    self.resolve_owner_from_text_with_context(qualifier, qualifier_resolver)?;
                 let specialized = target_param_ty
                     .and_then(extract_functional_input_type)
                     .filter(is_concrete_jvm_type)
@@ -433,7 +431,8 @@ impl<'idx> TypeResolver<'idx> {
             }
 
             if is_likely_type_qualifier(qualifier) {
-                let owner = self.resolve_owner_from_text_with_context(qualifier, qualifier_resolver)?;
+                let owner =
+                    self.resolve_owner_from_text_with_context(qualifier, qualifier_resolver)?;
                 let ret = self.resolve_method_reference_return_on_owner(&owner, member)?;
                 return Some(ret);
             }
@@ -480,7 +479,11 @@ impl<'idx> TypeResolver<'idx> {
     ) -> Option<JvmType> {
         let mut fallback: Option<JvmType> = None;
         for class in self.view.mro(owner_internal) {
-            for method in class.methods.iter().filter(|m| m.name.as_ref() == member_name) {
+            for method in class
+                .methods
+                .iter()
+                .filter(|m| m.name.as_ref() == member_name)
+            {
                 let desc = method
                     .generic_signature
                     .clone()
@@ -509,17 +512,11 @@ impl<'idx> TypeResolver<'idx> {
             return None;
         }
         if text.contains('/') {
-            return self
-                .view
-                .get_class(text)
-                .map(|_| text.to_string());
+            return self.view.get_class(text).map(|_| text.to_string());
         }
         if text.contains('.') {
             let candidate = text.replace('.', "/");
-            return self
-                .view
-                .get_class(&candidate)
-                .map(|_| candidate);
+            return self.view.get_class(&candidate).map(|_| candidate);
         }
 
         let lang = format!("java/lang/{text}");
@@ -1687,18 +1684,12 @@ mod tests {
         let locals = vec![
             LocalVar {
                 name: Arc::from("strBox"),
-                type_internal: TypeName::with_args(
-                    "Box",
-                    vec![TypeName::new("java/lang/String")],
-                ),
+                type_internal: TypeName::with_args("Box", vec![TypeName::new("java/lang/String")]),
                 init_expr: None,
             },
             LocalVar {
                 name: Arc::from("s"),
-                type_internal: TypeName::with_args(
-                    "Box",
-                    vec![TypeName::new("java/lang/String")],
-                ),
+                type_internal: TypeName::with_args("Box", vec![TypeName::new("java/lang/String")]),
                 init_expr: None,
             },
         ];
@@ -2063,7 +2054,9 @@ mod tests {
             init_expr: None,
         }];
         let chain = parse_chain_from_expr("s.map(Pair::new).get()");
-        let result = resolver.resolve_chain(&chain, &locals, None).expect("resolved chain");
+        let result = resolver
+            .resolve_chain(&chain, &locals, None)
+            .expect("resolved chain");
 
         assert_eq!(result.erased_internal(), "Pair");
         assert!(
@@ -2157,7 +2150,9 @@ mod tests {
         let chain = parse_chain_from_expr("box.map(List::size).get()");
         let map_seg = chain.get(1).expect("map segment");
 
-        let receiver = resolver.resolve("box", &locals, None).expect("box receiver");
+        let receiver = resolver
+            .resolve("box", &locals, None)
+            .expect("box receiver");
         let receiver_internal = receiver.to_internal_with_generics();
         let (methods, _) = view.collect_inherited_members(receiver.erased_internal());
         let map_candidates: Vec<_> = methods
@@ -2267,7 +2262,10 @@ mod tests {
             chain_result.as_ref().map(TypeName::to_internal_with_generics),
         ));
 
-        insta::assert_snapshot!("functional_binding_provenance_map_list_size_ambiguous_list_owner", out);
+        insta::assert_snapshot!(
+            "functional_binding_provenance_map_list_size_ambiguous_list_owner",
+            out
+        );
     }
 
     #[test]
@@ -2306,14 +2304,13 @@ mod tests {
             let mut return_type_vars_sorted: Vec<_> = return_type_vars.iter().cloned().collect();
             return_type_vars_sorted.sort();
 
-            let inferred_functional_ret =
-                resolver.infer_functional_arg_return_shallow(
-                    functional_arg,
-                    &locals,
-                    None,
-                    None,
-                    None,
-                );
+            let inferred_functional_ret = resolver.infer_functional_arg_return_shallow(
+                functional_arg,
+                &locals,
+                None,
+                None,
+                None,
+            );
             let bindings = resolver.infer_method_type_bindings_shallow(
                 "map",
                 &map_sig,
@@ -2412,7 +2409,10 @@ mod tests {
             trace_case("strBox", "String::trim"),
             trace_case("s", "ArrayList::new")
         );
-        insta::assert_snapshot!("functional_chain_concretization_trim_and_constructor_new", out);
+        insta::assert_snapshot!(
+            "functional_chain_concretization_trim_and_constructor_new",
+            out
+        );
     }
 
     #[test]

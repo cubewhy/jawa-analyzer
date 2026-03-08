@@ -586,20 +586,20 @@ mod tests {
         language::java::{
             JavaContextExtractor,
             class_parser::parse_java_source,
-            make_java_parser,
-            render,
+            make_java_parser, render,
             scope::{extract_imports, extract_package},
             type_ctx::SourceTypeCtx,
         },
         semantic::context::CurrentClassMember,
         semantic::types::{
-            SymbolProvider, descriptor_to_source_type, signature_to_source_type,
+            SymbolProvider, descriptor_to_source_type,
             generics::{JvmType, substitute_type},
+            signature_to_source_type,
         },
     };
     use std::sync::Arc;
-    use tree_sitter::Query;
     use tracing_subscriber::{EnvFilter, fmt};
+    use tree_sitter::Query;
 
     fn init_test_tracing() {
         let _ = fmt()
@@ -790,7 +790,11 @@ public class Main {
             .iter()
             .find(|c| c.internal_name.as_ref() == "org/example/Demo")
             .unwrap();
-        let map = demo.methods.iter().find(|m| m.name.as_ref() == "map").unwrap();
+        let map = demo
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "map")
+            .unwrap();
         let sig = map.generic_signature.as_deref().unwrap_or("");
 
         assert!(
@@ -884,8 +888,7 @@ public class Main {
                 public <R> Demo<R> map(Function<? super T, ? extends R> fn) { return null; }
             }
         "#};
-        let expected_ideal =
-            "<R:Ljava/lang/Object;>(Ljava/util/function/Function<-TT;+TR;>;)Lorg/example/Demo<TR;>;";
+        let expected_ideal = "<R:Ljava/lang/Object;>(Ljava/util/function/Function<-TT;+TR;>;)Lorg/example/Demo<TR;>;";
 
         let mut parser = make_java_parser();
         let tree = parser.parse(src, None).expect("parse");
@@ -910,7 +913,9 @@ public class Main {
                 && ctx.node_text(name_node) == "map"
             {
                 extracted_method = match crate::language::java::members::parse_method_node(
-                    &ctx, &type_ctx, method_node,
+                    &ctx,
+                    &type_ctx,
+                    method_node,
                 ) {
                     Some(CurrentClassMember::Method(m)) => Some(m),
                     _ => None,
@@ -1051,11 +1056,8 @@ public class Main {
             .map(|i| &sig_to_use[i + 1..])
             .unwrap_or(base_return);
 
-        let substituted_return = substitute_type(
-            receiver_internal,
-            cls.generic_signature.as_deref(),
-            ret_jvm,
-        );
+        let substituted_return =
+            substitute_type(receiver_internal, cls.generic_signature.as_deref(), ret_jvm);
         let rendered_return = substituted_return
             .as_ref()
             .map(|t| t.to_internal_with_generics())
@@ -1070,11 +1072,8 @@ public class Main {
             while !params.is_empty() {
                 if let Some((_, rest)) = JvmType::parse(params) {
                     let raw = &params[..params.len() - rest.len()];
-                    let substituted = substitute_type(
-                        receiver_internal,
-                        cls.generic_signature.as_deref(),
-                        raw,
-                    );
+                    let substituted =
+                        substitute_type(receiver_internal, cls.generic_signature.as_deref(), raw);
                     let rendered = substituted
                         .as_ref()
                         .map(|t| t.to_internal_with_generics())
@@ -1122,9 +1121,7 @@ public class Main {
         for (idx, (raw, substituted, rendered)) in param_rows.iter().enumerate() {
             out.push_str(&format!(
                 "#{idx}: raw={raw} | substituted={:?} | rendered={rendered:?}\n",
-                substituted
-                    .as_ref()
-                    .map(|t| t.to_internal_with_generics())
+                substituted.as_ref().map(|t| t.to_internal_with_generics())
             ));
         }
         out.push_str("\nfinal_detail:\n");
@@ -1175,9 +1172,14 @@ public class Main {
             .expect("indexed method");
 
         let receiver_internal = "org/example/Box<Ljava/util/List<Ljava/lang/String;>;>";
-        let source_detail = render::method_detail(receiver_internal, source_cls, source_method, &TestProvider);
-        let indexed_detail =
-            render::method_detail(receiver_internal, &indexed_cls, indexed_method, &TestProvider);
+        let source_detail =
+            render::method_detail(receiver_internal, source_cls, source_method, &TestProvider);
+        let indexed_detail = render::method_detail(
+            receiver_internal,
+            &indexed_cls,
+            indexed_method,
+            &TestProvider,
+        );
 
         let out = format!(
             "source_detail:\n{}\n\nindexed_detail:\n{}\n\nequal={}\n",

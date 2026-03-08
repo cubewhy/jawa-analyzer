@@ -7,8 +7,9 @@ use crate::{
     semantic::{
         context::CurrentClassMember,
         types::{
-            SymbolProvider, descriptor_to_source_type, signature_to_source_type,
+            SymbolProvider, descriptor_to_source_type,
             generics::{JvmType, substitute_type},
+            signature_to_source_type,
             type_name::TypeName,
         },
     },

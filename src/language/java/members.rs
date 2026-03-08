@@ -8,7 +8,9 @@ use crate::{
         java::{
             JavaContextExtractor,
             type_ctx::{SourceTypeCtx, build_java_descriptor, extract_param_type, split_params},
-            utils::{extract_generic_signature, extract_type_parameters_prefix, parse_java_modifiers},
+            utils::{
+                extract_generic_signature, extract_type_parameters_prefix, parse_java_modifiers,
+            },
         },
         ts_utils::{capture_text, run_query},
     },

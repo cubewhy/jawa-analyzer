@@ -176,7 +176,8 @@ fn determine_location_impl(
             "field_access" => return handle_member_access(ctx, current),
             "method_reference" => return handle_method_reference(ctx, current),
             "object_creation_expression" => {
-                if let Some(type_args) = find_innermost_constructor_type_arguments(current, ctx.offset)
+                if let Some(type_args) =
+                    find_innermost_constructor_type_arguments(current, ctx.offset)
                 {
                     let prefix = find_prefix_in_type_arguments_hole(ctx, type_args);
                     return (
@@ -855,10 +856,7 @@ fn is_in_constructor_type_arguments(id_node: Node, ctor_node: Node) -> bool {
     is_descendant_of(type_args, ty) && is_descendant_of(id_node, type_args)
 }
 
-fn find_innermost_constructor_type_arguments(
-    ctor_node: Node,
-    offset: usize,
-) -> Option<Node> {
+fn find_innermost_constructor_type_arguments(ctor_node: Node, offset: usize) -> Option<Node> {
     let ty = ctor_node.child_by_field_name("type")?;
     let mut best: Option<Node> = None;
 
