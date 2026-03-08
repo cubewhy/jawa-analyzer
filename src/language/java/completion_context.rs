@@ -318,24 +318,7 @@ fn resolve_type_qualifier_internal(
     }
 
     let resolver = SymbolResolver::new(view);
-    for split in (1..=parts.len()).rev() {
-        let head = parts[..split].join(".");
-        let Some(mut current) = resolver.resolve_type_name(ctx, &head) else {
-            continue;
-        };
-        let mut ok = true;
-        for seg in &parts[split..] {
-            let Some(inner) = view.resolve_direct_inner_class(&current, seg) else {
-                ok = false;
-                break;
-            };
-            current = Arc::clone(&inner.internal_name);
-        }
-        if ok {
-            return Some(current);
-        }
-    }
-    None
+    resolver.resolve_type_name(ctx, &parts.join("."))
 }
 
 fn build_typed_chain_receiver(receiver_ty: &TypeName) -> TypedChainReceiver {

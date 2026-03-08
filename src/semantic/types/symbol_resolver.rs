@@ -49,7 +49,15 @@ impl<'a> SymbolResolver<'a> {
             CursorLocation::StaticAccess {
                 class_internal_name,
                 member_prefix,
-            } => self.resolve_member(ctx, class_internal_name, member_prefix, None),
+            } => {
+                if let Some(inner) = self
+                    .view
+                    .resolve_direct_inner_class(class_internal_name, member_prefix)
+                {
+                    return Some(ResolvedSymbol::Class(Arc::clone(&inner.internal_name)));
+                }
+                self.resolve_member(ctx, class_internal_name, member_prefix, None)
+            }
             CursorLocation::Expression { prefix } => {
                 if prefix.is_empty() {
                     return None;
@@ -243,6 +251,10 @@ impl<'a> SymbolResolver<'a> {
         };
 
         for part in parts {
+            if let Some(inner) = self.view.resolve_direct_inner_class(&current, part) {
+                current = Arc::clone(&inner.internal_name);
+                continue;
+            }
             tracing::debug!(owner = %current, field = %part, "resolve: chained field lookup");
             let (_, fields) = self.view.collect_inherited_members(&current);
             let field = fields.iter().find(|f| f.name.as_ref() == part)?;
@@ -254,31 +266,40 @@ impl<'a> SymbolResolver<'a> {
     }
 
     pub fn resolve_type_name(&self, ctx: &SemanticContext, name: &str) -> Option<Arc<str>> {
-        if name.contains('/') {
-            return self.view.get_class(name).map(|c| c.internal_name.clone());
+        let resolve_head = |head: &str| self.resolve_type_head(ctx, head);
+        let resolved = self
+            .view
+            .resolve_qualified_type_path(name, &resolve_head)
+            .map(|c| Arc::clone(&c.internal_name));
+        if resolved.is_none() {
+            tracing::debug!(name = %name, "resolve: type not found in index");
         }
+        resolved
+    }
 
-        if name.contains('.') {
-            let as_internal = name.replace('.', "/");
-            return self
-                .view
-                .get_class(&as_internal)
-                .map(|c| c.internal_name.clone());
+    fn resolve_type_head(&self, ctx: &SemanticContext, head: &str) -> Option<Arc<str>> {
+        if head.contains('/') {
+            return self.view.get_class(head).map(|c| c.internal_name.clone());
         }
-
-        if let Some(type_ctx) = ctx.extension::<SourceTypeCtx>()
-            && let Some(resolved) = type_ctx.resolve_simple_strict(name)
-        {
-            return Some(Arc::from(resolved));
+        if head.contains('.') {
+            let as_internal = head.replace('.', "/");
+            if let Some(cls) = self.view.get_class(&as_internal) {
+                return Some(Arc::clone(&cls.internal_name));
+            }
         }
-
+        if let Some(type_ctx) = ctx.extension::<SourceTypeCtx>() {
+            if let Some(resolved) = type_ctx.resolve_simple_strict(head) {
+                return Some(Arc::from(resolved));
+            }
+            if let Some(resolved) = type_ctx.resolve_type_name_strict(head) {
+                return Some(Arc::from(resolved.erased_internal()));
+            }
+        }
         if let Some(enclosing) = ctx.enclosing_internal_name.as_deref()
-            && let Some(inner) = self.view.resolve_scoped_inner_class(enclosing, name)
+            && let Some(inner) = self.view.resolve_scoped_inner_class(enclosing, head)
         {
             return Some(Arc::clone(&inner.internal_name));
         }
-
-        tracing::debug!(name = %name, "resolve: type not found in index");
         None
     }
 }
@@ -789,5 +810,147 @@ mod tests {
             resolved.is_none(),
             "unrelated inner class should not be guessed across enclosing scope"
         );
+    }
+
+    #[test]
+    fn test_static_access_resolves_nested_type_member() {
+        let idx = WorkspaceIndex::new();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        idx.add_jar_classes(
+            scope,
+            vec![
+                ClassMetadata {
+                    package: Some(Arc::from("org/cubewhy")),
+                    name: Arc::from("ChainCheck"),
+                    internal_name: Arc::from("org/cubewhy/ChainCheck"),
+                    super_name: None,
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: None,
+                    origin: ClassOrigin::Unknown,
+                },
+                ClassMetadata {
+                    package: Some(Arc::from("org/cubewhy")),
+                    name: Arc::from("Box"),
+                    internal_name: Arc::from("org/cubewhy/ChainCheck$Box"),
+                    super_name: None,
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: Some(Arc::from("ChainCheck")),
+                    generic_signature: None,
+                    origin: ClassOrigin::Unknown,
+                },
+            ],
+        );
+        let view = idx.view(scope);
+        let resolver = SymbolResolver::new(&view);
+        let ctx = SemanticContext::new(
+            CursorLocation::StaticAccess {
+                class_internal_name: Arc::from("org/cubewhy/ChainCheck"),
+                member_prefix: "Box".to_string(),
+            },
+            "Box",
+            vec![],
+            Some(Arc::from("ChainCheck")),
+            Some(Arc::from("org/cubewhy/ChainCheck")),
+            Some(Arc::from("org/cubewhy")),
+            vec![],
+        );
+
+        let resolved = resolver
+            .resolve(&ctx)
+            .expect("resolve nested type from static access");
+        match resolved {
+            ResolvedSymbol::Class(owner) => {
+                assert_eq!(owner.as_ref(), "org/cubewhy/ChainCheck$Box");
+            }
+            _ => panic!("expected class resolution"),
+        }
+    }
+
+    #[test]
+    fn test_resolve_type_name_supports_qualified_nested_type_path() {
+        let idx = WorkspaceIndex::new();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        idx.add_jar_classes(
+            scope,
+            vec![
+                ClassMetadata {
+                    package: Some(Arc::from("org/cubewhy")),
+                    name: Arc::from("ChainCheck"),
+                    internal_name: Arc::from("org/cubewhy/ChainCheck"),
+                    super_name: None,
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: None,
+                    origin: ClassOrigin::Unknown,
+                },
+                ClassMetadata {
+                    package: Some(Arc::from("org/cubewhy")),
+                    name: Arc::from("Box"),
+                    internal_name: Arc::from("org/cubewhy/ChainCheck$Box"),
+                    super_name: None,
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: Some(Arc::from("ChainCheck")),
+                    generic_signature: None,
+                    origin: ClassOrigin::Unknown,
+                },
+                ClassMetadata {
+                    package: Some(Arc::from("org/cubewhy")),
+                    name: Arc::from("BoxV"),
+                    internal_name: Arc::from("org/cubewhy/ChainCheck$Box$BoxV"),
+                    super_name: None,
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: Some(Arc::from("Box")),
+                    generic_signature: None,
+                    origin: ClassOrigin::Unknown,
+                },
+            ],
+        );
+        let view = idx.view(scope);
+        let resolver = SymbolResolver::new(&view);
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            Some(Arc::from("org/cubewhy")),
+            vec![],
+            Some(view.build_name_table()),
+        ));
+        let ctx = SemanticContext::new(
+            CursorLocation::Expression {
+                prefix: "".to_string(),
+            },
+            "",
+            vec![],
+            Some(Arc::from("ChainCheck")),
+            Some(Arc::from("org/cubewhy/ChainCheck")),
+            Some(Arc::from("org/cubewhy")),
+            vec![],
+        )
+        .with_extension(type_ctx);
+
+        let resolved = resolver.resolve_type_name(&ctx, "ChainCheck.Box.BoxV");
+        assert_eq!(resolved.as_deref(), Some("org/cubewhy/ChainCheck$Box$BoxV"));
     }
 }

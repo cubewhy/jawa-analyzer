@@ -4217,7 +4217,14 @@ mod tests {
 
             class ChainCheck {
                 static class Box<T> {
-                    static class BoxV<V> {}
+                    static class BoxV<V> {
+                        V getV() { return null; }
+                    }
+
+                    Box(T value) {
+                        var a = new BoxV();
+                        a.getV();
+                    }
                 }
             }
 
@@ -4290,5 +4297,86 @@ mod tests {
             &view,
         );
         assert!(labels.iter().any(|l| l == "BoxV"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_nested_constructor_var_materializes_local_type() {
+        let idx = make_nested_chaincheck_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            package org.cubewhy;
+
+            class ChainCheck {
+                static class Box<T> {
+                    static class BoxV<V> {
+                        V getV() { return null; }
+                    }
+
+                    Box(T value) {
+                        var a = new BoxV();
+                        a
+                    }
+                }
+            }
+        "#};
+        let line = src
+            .lines()
+            .position(|l| l.trim() == "a")
+            .expect("line containing a") as u32;
+        let ctx = at(src, line, 9);
+        let mut enriched = ctx.with_extension(Arc::new(SourceTypeCtx::new(
+            Some(Arc::from("org/cubewhy")),
+            vec![],
+            Some(view.build_name_table()),
+        )));
+        JavaLanguage.enrich_completion_context(&mut enriched, root_scope(), &view);
+        let a = enriched
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "a")
+            .expect("local a");
+        assert_eq!(
+            a.type_internal.to_internal_with_generics(),
+            "org/cubewhy/ChainCheck$Box$BoxV",
+            "location={:?} enclosing={:?} locals={:?}",
+            enriched.location,
+            enriched.enclosing_internal_name,
+            enriched
+                .local_variables
+                .iter()
+                .map(|lv| format!(
+                    "{}:{} init={:?}",
+                    lv.name,
+                    lv.type_internal.to_internal_with_generics(),
+                    lv.init_expr
+                ))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_nested_constructor_var_chain_completion_resolves_getv() {
+        let idx = make_nested_chaincheck_index();
+        let view = idx.view(root_scope());
+        let (_, labels) = ctx_and_labels_from_marked_source(
+            indoc::indoc! {r#"
+                package org.cubewhy;
+
+                class ChainCheck {
+                    static class Box<T> {
+                        static class BoxV<V> {
+                            V getV() { return null; }
+                        }
+
+                        Box(T value) {
+                            var a = new BoxV();
+                            a.g|
+                        }
+                    }
+                }
+            "#},
+            &view,
+        );
+        assert!(labels.iter().any(|l| l == "getV"), "{labels:?}");
     }
 }

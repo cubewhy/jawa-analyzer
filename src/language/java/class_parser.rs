@@ -39,7 +39,16 @@ pub fn parse_java_source(
     let imports = crate::language::java::scope::extract_imports(&ctx, root);
     let type_ctx = Arc::new(SourceTypeCtx::new(package.clone(), imports, name_table));
     let mut results = Vec::new();
-    collect_java_classes(&ctx, root, &package, None, &origin, &type_ctx, &mut results);
+    collect_java_classes(
+        &ctx,
+        root,
+        &package,
+        None,
+        None,
+        &origin,
+        &type_ctx,
+        &mut results,
+    );
 
     results
 }
@@ -48,7 +57,8 @@ fn parse_java_class(
     ctx: &JavaContextExtractor,
     node: Node,
     package: &Option<Arc<str>>,
-    outer_class: Option<Arc<str>>,
+    outer_internal: Option<Arc<str>>,
+    outer_simple: Option<Arc<str>>,
     origin: &ClassOrigin,
     type_ctx: &SourceTypeCtx,
 ) -> Option<ClassMetadata> {
@@ -59,8 +69,8 @@ fn parse_java_class(
     }
 
     let name: Arc<str> = Arc::from(class_name);
-    let internal_name: Arc<str> = match (package, &outer_class) {
-        (Some(pkg), Some(outer)) => Arc::from(format!("{}/{}${}", pkg, outer, class_name).as_str()),
+    let internal_name: Arc<str> = match (package, &outer_internal) {
+        (Some(_pkg), Some(outer)) => Arc::from(format!("{}${}", outer, class_name).as_str()),
         (Some(pkg), None) => Arc::from(format!("{}/{}", pkg, class_name).as_str()),
         (None, Some(outer)) => Arc::from(format!("{}${}", outer, class_name).as_str()),
         (None, None) => Arc::clone(&name),
@@ -172,7 +182,7 @@ fn parse_java_class(
         methods,
         fields,
         access_flags,
-        inner_class_of: outer_class,
+        inner_class_of: outer_simple,
         generic_signature: class_generic_signature,
         origin: origin.clone(),
     })
@@ -293,14 +303,15 @@ fn collect_java_classes(
     ctx: &JavaContextExtractor,
     root_node: Node,
     package: &Option<Arc<str>>,
-    initial_outer: Option<Arc<str>>,
+    initial_outer_internal: Option<Arc<str>>,
+    initial_outer_simple: Option<Arc<str>>,
     origin: &ClassOrigin,
     type_ctx: &Arc<SourceTypeCtx>,
     out: &mut Vec<ClassMetadata>,
 ) {
-    let mut stack = vec![(root_node, initial_outer)];
+    let mut stack = vec![(root_node, initial_outer_internal, initial_outer_simple)];
 
-    while let Some((node, outer_class)) = stack.pop() {
+    while let Some((node, outer_internal, outer_simple)) = stack.pop() {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             match child.kind() {
@@ -309,19 +320,26 @@ fn collect_java_classes(
                 | "enum_declaration"
                 | "annotation_type_declaration"
                 | "record_declaration" => {
-                    if let Some(meta) =
-                        parse_java_class(ctx, child, package, outer_class.clone(), origin, type_ctx)
-                    {
-                        let inner_outer = Some(Arc::clone(&meta.name));
+                    if let Some(meta) = parse_java_class(
+                        ctx,
+                        child,
+                        package,
+                        outer_internal.clone(),
+                        outer_simple.clone(),
+                        origin,
+                        type_ctx,
+                    ) {
+                        let inner_outer_internal = Some(Arc::clone(&meta.internal_name));
+                        let inner_outer_simple = Some(Arc::clone(&meta.name));
                         if let Some(body) = child.child_by_field_name("body") {
-                            stack.push((body, inner_outer));
+                            stack.push((body, inner_outer_internal, inner_outer_simple));
                         }
                         out.push(meta);
                     }
                 }
                 _ => {
                     // Continue searching downwards
-                    stack.push((child, outer_class.clone()));
+                    stack.push((child, outer_internal.clone(), outer_simple.clone()));
                 }
             }
         }
@@ -672,6 +690,25 @@ public class Main {
                 .any(|m| m.name.as_ref() == "randomFunction"),
             "randomFunction should be indexed"
         );
+    }
+
+    #[test]
+    fn test_double_nested_class_internal_name_uses_full_owner_chain() {
+        let src = r#"
+package org.cubewhy.a;
+public class Main {
+    public static class Nested {
+        public static class Leaf {}
+    }
+}
+"#;
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let leaf = classes.iter().find(|c| c.name.as_ref() == "Leaf").unwrap();
+        assert_eq!(
+            leaf.internal_name.as_ref(),
+            "org/cubewhy/a/Main$Nested$Leaf"
+        );
+        assert_eq!(leaf.inner_class_of.as_deref(), Some("Nested"));
     }
 
     #[test]

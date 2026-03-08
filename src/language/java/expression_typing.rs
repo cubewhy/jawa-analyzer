@@ -60,7 +60,7 @@ pub(crate) fn resolve_var_init_expr(
             "byte" | "short" | "int" | "long" | "float" | "double" | "boolean" | "char" => {
                 TypeName::new(type_name)
             }
-            _ => type_ctx.resolve_type_name_strict(type_name)?,
+            _ => resolve_constructor_type_name(type_name, enclosing_internal, type_ctx, view)?,
         };
         let after_type = rest[boundary_idx..].trim_start();
         if after_type.starts_with('[') || after_type.starts_with('{') {
@@ -76,6 +76,30 @@ pub(crate) fn resolve_var_init_expr(
     }
 
     resolve_expression_type(expr, locals, enclosing_internal, resolver, type_ctx, view)
+}
+
+fn resolve_constructor_type_name(
+    type_name: &str,
+    enclosing_internal: Option<&Arc<str>>,
+    type_ctx: &SourceTypeCtx,
+    view: &IndexView,
+) -> Option<TypeName> {
+    if let Some(strict) = type_ctx.resolve_type_name_strict(type_name) {
+        return Some(strict);
+    }
+    let resolve_head = |head: &str| {
+        if let Some(strict) = type_ctx.resolve_type_name_strict(head) {
+            return Some(Arc::from(strict.erased_internal()));
+        }
+        if let Some(enclosing_internal) = enclosing_internal {
+            return view
+                .resolve_scoped_inner_class(enclosing_internal, head)
+                .map(|c| c.internal_name.clone());
+        }
+        None
+    };
+    view.resolve_qualified_type_path(type_name, &resolve_head)
+        .map(|c| TypeName::new(c.internal_name.as_ref()))
 }
 
 pub(crate) fn looks_like_array_access(expr: &str) -> bool {

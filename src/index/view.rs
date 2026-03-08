@@ -11,6 +11,19 @@ pub struct IndexView {
 }
 
 impl IndexView {
+    fn resolve_internal_hint_to_class(&self, internal_hint: &str) -> Option<Arc<ClassMetadata>> {
+        let (pkg, simple) = internal_hint.rsplit_once('/')?;
+        let mut matches = self
+            .classes_in_package(pkg)
+            .into_iter()
+            .filter(|c| c.name.as_ref() == simple);
+        let first = matches.next()?;
+        if matches.next().is_some() {
+            return None;
+        }
+        Some(first)
+    }
+
     fn origin_precedence(class: &ClassMetadata) -> u8 {
         match class.origin {
             crate::index::ClassOrigin::SourceFile(_) => 2,
@@ -103,7 +116,9 @@ impl IndexView {
         enclosing_internal: &str,
         simple_name: &str,
     ) -> Option<Arc<ClassMetadata>> {
-        let enclosing = self.get_class(enclosing_internal)?;
+        let enclosing = self
+            .get_class(enclosing_internal)
+            .or_else(|| self.resolve_internal_hint_to_class(enclosing_internal))?;
         let enclosing_pkg = enclosing.package.clone();
 
         let mut scope_chain: Vec<Arc<str>> = vec![Arc::clone(&enclosing.name)];
@@ -235,6 +250,48 @@ impl IndexView {
         self.direct_inner_classes_of(owner_internal)
             .into_iter()
             .find(|c| c.name.as_ref() == simple_name)
+    }
+
+    /// Resolve a potentially-qualified nested type path (e.g. `Outer.Inner`, `a.b.Outer.Inner`)
+    /// by first resolving a head owner type, then following direct nested-owner edges.
+    /// Ownership is resolved only through authoritative `inner_class_of` metadata.
+    pub fn resolve_qualified_type_path(
+        &self,
+        path: &str,
+        resolve_head: &dyn Fn(&str) -> Option<Arc<str>>,
+    ) -> Option<Arc<ClassMetadata>> {
+        let text = path.trim();
+        if text.is_empty() {
+            return None;
+        }
+        if text.contains('/') {
+            return self.get_class(text);
+        }
+        let parts: Vec<&str> = text.split('.').filter(|s| !s.is_empty()).collect();
+        if parts.is_empty() {
+            return None;
+        }
+
+        for split in (1..=parts.len()).rev() {
+            let head = parts[..split].join(".");
+            let Some(mut current_internal) = resolve_head(&head) else {
+                continue;
+            };
+
+            let mut ok = true;
+            for seg in &parts[split..] {
+                let Some(inner) = self.resolve_direct_inner_class(&current_internal, seg) else {
+                    ok = false;
+                    break;
+                };
+                current_internal = Arc::clone(&inner.internal_name);
+            }
+
+            if ok && let Some(meta) = self.get_class(&current_internal) {
+                return Some(meta);
+            }
+        }
+        None
     }
 
     pub fn has_package(&self, pkg: &str) -> bool {
@@ -744,5 +801,128 @@ mod tests {
             .map(|c| c.name.to_string())
             .collect();
         assert_eq!(box_children, vec!["BoxV".to_string()]);
+    }
+
+    #[test]
+    fn test_resolve_qualified_type_path_follow_owner_chain() {
+        let idx = WorkspaceIndex::new();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("ChainCheck"),
+                internal_name: Arc::from("org/cubewhy/ChainCheck"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: rust_asm::constants::ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("Box"),
+                internal_name: Arc::from("org/cubewhy/ChainCheck$Box"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: rust_asm::constants::ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: Some(Arc::from("ChainCheck")),
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("BoxV"),
+                internal_name: Arc::from("org/cubewhy/ChainCheck$Box$BoxV"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: rust_asm::constants::ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: Some(Arc::from("Box")),
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+        let view = idx.view(scope);
+        let resolved = view.resolve_qualified_type_path("ChainCheck.Box.BoxV", &|head| {
+            if head == "ChainCheck" {
+                Some(Arc::from("org/cubewhy/ChainCheck"))
+            } else {
+                None
+            }
+        });
+        assert_eq!(
+            resolved.map(|m| m.internal_name.to_string()),
+            Some("org/cubewhy/ChainCheck$Box$BoxV".to_string())
+        );
+    }
+
+    #[test]
+    fn test_resolve_scoped_inner_class_accepts_unique_owner_internal_hint() {
+        let idx = WorkspaceIndex::new();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("ChainCheck"),
+                internal_name: Arc::from("org/cubewhy/ChainCheck"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: rust_asm::constants::ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("Box"),
+                internal_name: Arc::from("org/cubewhy/ChainCheck$Box"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: rust_asm::constants::ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: Some(Arc::from("ChainCheck")),
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("BoxV"),
+                internal_name: Arc::from("org/cubewhy/ChainCheck$Box$BoxV"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: rust_asm::constants::ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: Some(Arc::from("Box")),
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+        let view = idx.view(scope);
+        // owner internal hint uses source-like owner "org/cubewhy/Box" (missing outer owner path)
+        let resolved = view.resolve_scoped_inner_class("org/cubewhy/Box", "BoxV");
+        assert_eq!(
+            resolved.map(|c| c.internal_name.to_string()),
+            Some("org/cubewhy/ChainCheck$Box$BoxV".to_string())
+        );
     }
 }

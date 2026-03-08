@@ -57,15 +57,36 @@ impl<'idx> TypeResolver<'idx> {
                     TypeName::new(raw_ty)
                 }
                 _ => {
+                    let mut resolved = None;
                     if raw_ty.contains('.') {
-                        let internal = raw_ty.replace('.', "/");
-                        if self.view.get_class(&internal).is_some() {
-                            TypeName::new(internal)
-                        } else {
-                            return None;
-                        }
-                    } else {
-                        TypeName::new(raw_ty) // will be expanded later
+                        let resolve_head = |head: &str| {
+                            if head.contains('.') {
+                                let internal = head.replace('.', "/");
+                                self.view
+                                    .get_class(&internal)
+                                    .map(|c| c.internal_name.clone())
+                            } else if let Some(enclosing_internal) = enclosing {
+                                self.view
+                                    .resolve_scoped_inner_class(enclosing_internal, head)
+                                    .map(|c| c.internal_name.clone())
+                            } else {
+                                None
+                            }
+                        };
+                        resolved = self
+                            .view
+                            .resolve_qualified_type_path(raw_ty, &resolve_head)
+                            .map(|c| c.internal_name.clone());
+                    } else if let Some(enclosing_internal) = enclosing {
+                        resolved = self
+                            .view
+                            .resolve_scoped_inner_class(enclosing_internal, raw_ty)
+                            .map(|c| c.internal_name.clone());
+                    }
+
+                    match resolved {
+                        Some(internal) => TypeName::new(internal.as_ref()),
+                        None => TypeName::new(raw_ty), // unresolved source-like type; may be expanded later
                     }
                 }
             };
