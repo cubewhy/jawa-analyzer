@@ -4,6 +4,7 @@ use crate::{
         provider::CompletionProvider,
     },
     index::{IndexScope, IndexView},
+    language::java::completion::providers::type_lookup::qualified_nested_type_matches,
     semantic::context::{CursorLocation, SemanticContext},
     semantic::types::symbol_resolver::SymbolResolver,
 };
@@ -321,22 +322,9 @@ fn provide_qualified_type_prefix(
     index: &IndexView,
     source: &'static str,
 ) -> Vec<CompletionCandidate> {
-    let Some(dot) = prefix.rfind('.') else {
-        return vec![];
-    };
-    let qualifier = prefix[..dot].trim();
-    let member_prefix = prefix[dot + 1..].trim();
-    if qualifier.is_empty() {
-        return vec![];
-    }
-
-    let resolver = SymbolResolver::new(index);
-    let Some(owner_internal) = resolver.resolve_type_name(ctx, qualifier) else {
-        return vec![];
-    };
-
     let mut out = Vec::new();
-    for inner in index.direct_inner_classes_of(&owner_internal) {
+    let member_prefix = prefix.rsplit('.').next().unwrap_or("").trim();
+    for inner in qualified_nested_type_matches(prefix, ctx, index) {
         if !member_prefix.is_empty()
             && fuzzy::fuzzy_match(&member_prefix.to_lowercase(), &inner.name.to_lowercase())
                 .is_none()

@@ -6,6 +6,7 @@ use crate::{
         scorer::AccessFilter,
     },
     index::{IndexScope, IndexView},
+    language::java::completion::providers::type_lookup::qualified_nested_type_matches,
     language::java::location::normalize_top_level_generic_base,
     semantic::context::{CursorLocation, SemanticContext},
 };
@@ -39,83 +40,105 @@ impl CompletionProvider for ConstructorProvider {
         } else {
             class_prefix
         };
+        let metas = if class_prefix.contains('.') {
+            qualified_nested_type_matches(class_prefix, ctx, index)
+        } else {
+            index
+                .fuzzy_search_classes(search_prefix, 50)
+                .into_iter()
+                .filter(|meta| is_constructor_type_visible(meta, ctx, index))
+                .collect()
+        };
 
-        index
-            .fuzzy_search_classes(search_prefix, 50)
-            .into_iter()
-            .flat_map(|meta| {
-                let fqn = fqn_of_meta(&meta);
-                let needs_import = is_import_needed(
-                    &fqn,
-                    &ctx.existing_imports,
-                    ctx.enclosing_package.as_deref(),
-                );
+        let mut results = Vec::new();
+        for meta in metas {
+            let fqn = fqn_of_meta(&meta);
+            let needs_import = is_import_needed(
+                &fqn,
+                &ctx.existing_imports,
+                ctx.enclosing_package.as_deref(),
+            );
 
-                // Score boost when class name matches the expected LHS type
-                let type_score_boost = expected_type
-                    .map(|et| type_match_score(et, &meta.name))
-                    .unwrap_or(0.0);
+            // Score boost when class name matches the expected LHS type
+            let type_score_boost = expected_type
+                .map(|et| type_match_score(et, &meta.name))
+                .unwrap_or(0.0);
 
-                let filter = AccessFilter::member_completion();
-                let constructors: Vec<_> = meta
-                    .methods
-                    .iter()
-                    .filter(|m| {
-                        m.name.as_ref() == "<init>"
-                            && filter.is_method_accessible(m.access_flags, m.is_synthetic)
-                    })
-                    .collect();
+            let filter = AccessFilter::member_completion();
+            let constructors: Vec<_> = meta
+                .methods
+                .iter()
+                .filter(|m| {
+                    m.name.as_ref() == "<init>"
+                        && filter.is_method_accessible(m.access_flags, m.is_synthetic)
+                })
+                .collect();
 
-                if constructors.is_empty() {
-                    // Synthesise a default no-arg constructor
-                    let candidate = CompletionCandidate::new(
-                        Arc::clone(&meta.name),
-                        format!("{}()", meta.name),
-                        CandidateKind::Constructor {
-                            descriptor: Arc::from("()V"),
-                            defining_class: Arc::clone(&meta.name),
-                        },
-                        self.name(),
-                    )
-                    .with_detail(format!("new {}()", fqn))
-                    .with_score(type_score_boost);
+            if constructors.is_empty() {
+                // Synthesise a default no-arg constructor
+                let candidate = CompletionCandidate::new(
+                    Arc::clone(&meta.name),
+                    format!("{}()", meta.name),
+                    CandidateKind::Constructor {
+                        descriptor: Arc::from("()V"),
+                        defining_class: Arc::clone(&meta.name),
+                    },
+                    self.name(),
+                )
+                .with_detail(format!("new {}()", fqn))
+                .with_score(type_score_boost);
 
-                    let candidate = if needs_import {
-                        candidate.with_import(fqn)
-                    } else {
-                        candidate
-                    };
-                    return vec![candidate];
-                }
+                let candidate = if needs_import {
+                    candidate.with_import(fqn)
+                } else {
+                    candidate
+                };
+                results.push(candidate);
+                continue;
+            }
 
-                constructors
-                    .iter()
-                    .map(|ctor| {
-                        let readable_params = descriptor_params_to_readable(&ctor.desc());
-                        let insert_text = format!("{}(", meta.name);
-                        let detail = format!("new {}({})", fqn, readable_params);
-                        let candidate = CompletionCandidate::new(
-                            Arc::clone(&meta.name),
-                            insert_text,
-                            CandidateKind::Constructor {
-                                descriptor: Arc::clone(&ctor.desc()),
-                                defining_class: Arc::clone(&meta.name),
-                            },
-                            self.name(),
-                        )
-                        .with_detail(detail)
-                        .with_score(type_score_boost);
+            for ctor in constructors {
+                let readable_params = descriptor_params_to_readable(&ctor.desc());
+                let insert_text = format!("{}(", meta.name);
+                let detail = format!("new {}({})", fqn, readable_params);
+                let candidate = CompletionCandidate::new(
+                    Arc::clone(&meta.name),
+                    insert_text,
+                    CandidateKind::Constructor {
+                        descriptor: Arc::clone(&ctor.desc()),
+                        defining_class: Arc::clone(&meta.name),
+                    },
+                    self.name(),
+                )
+                .with_detail(detail)
+                .with_score(type_score_boost);
 
-                        if needs_import {
-                            candidate.with_import(fqn.clone())
-                        } else {
-                            candidate
-                        }
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect()
+                let candidate = if needs_import {
+                    candidate.with_import(fqn.clone())
+                } else {
+                    candidate
+                };
+                results.push(candidate);
+            }
+        }
+        results
     }
+}
+
+fn is_constructor_type_visible(
+    meta: &crate::index::ClassMetadata,
+    ctx: &SemanticContext,
+    index: &IndexView,
+) -> bool {
+    if meta.inner_class_of.is_none() {
+        return true;
+    }
+    let Some(enclosing) = ctx.enclosing_internal_name.as_deref() else {
+        return false;
+    };
+    index
+        .resolve_scoped_inner_class(enclosing, meta.name.as_ref())
+        .is_some_and(|resolved| resolved.internal_name == meta.internal_name)
 }
 
 /// Score boost based on how well the class name matches the expected type.
@@ -213,6 +236,7 @@ mod tests {
     use crate::index::{
         ClassMetadata, ClassOrigin, IndexScope, MethodParams, MethodSummary, ModuleId,
     };
+    use crate::language::java::type_ctx::SourceTypeCtx;
     use crate::semantic::context::{CursorLocation, SemanticContext};
     use rust_asm::constants::ACC_PUBLIC;
     use std::sync::Arc;
@@ -271,6 +295,86 @@ mod tests {
             None,
             Some(Arc::from("org/cubewhy/a")),
             imports,
+        )
+    }
+
+    fn make_nested_index() -> WorkspaceIndex {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("ChainCheck"),
+                internal_name: Arc::from("org/cubewhy/ChainCheck"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("Box"),
+                internal_name: Arc::from("org/cubewhy/ChainCheck$Box"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![MethodSummary {
+                    name: Arc::from("<init>"),
+                    params: MethodParams::empty(),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    generic_signature: None,
+                    return_type: None,
+                }],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: Some(Arc::from("ChainCheck")),
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("BoxV"),
+                internal_name: Arc::from("org/cubewhy/ChainCheck$Box$BoxV"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![MethodSummary {
+                    name: Arc::from("<init>"),
+                    params: MethodParams::empty(),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    generic_signature: None,
+                    return_type: None,
+                }],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: Some(Arc::from("Box")),
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+        idx
+    }
+
+    fn make_nested_ctx(prefix: &str, enclosing_internal: Option<&str>) -> SemanticContext {
+        SemanticContext::new(
+            CursorLocation::ConstructorCall {
+                class_prefix: prefix.to_string(),
+                expected_type: None,
+            },
+            prefix,
+            vec![],
+            Some(Arc::from("Probe")),
+            enclosing_internal.map(Arc::from),
+            Some(Arc::from("org/cubewhy")),
+            vec![],
         )
     }
 
@@ -486,6 +590,85 @@ mod tests {
         assert_eq!(
             descriptor_params_to_readable("([Ljava/lang/String;)V"),
             "String[]"
+        );
+    }
+
+    #[test]
+    fn test_constructor_completion_inside_enclosing_class_sees_nested() {
+        let idx = make_nested_index();
+        let view = idx.view(root_scope());
+        let ctx = make_nested_ctx("BoxV", Some("org/cubewhy/ChainCheck$Box")).with_extension(
+            Arc::new(SourceTypeCtx::new(
+                Some(Arc::from("org/cubewhy")),
+                vec![],
+                Some(view.build_name_table()),
+            )),
+        );
+        let results = ConstructorProvider.provide(root_scope(), &ctx, &view);
+        assert!(
+            results.iter().any(|c| c.label.as_ref() == "BoxV"),
+            "{:?}",
+            results
+                .iter()
+                .map(|c| format!("{} detail={:?}", c.label, c.detail))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_constructor_completion_owner_qualified_nested() {
+        let idx = make_nested_index();
+        let view = idx.view(root_scope());
+        let ctx = make_nested_ctx("ChainCheck.Box", Some("org/cubewhy/Probe")).with_extension(
+            Arc::new(SourceTypeCtx::new(
+                Some(Arc::from("org/cubewhy")),
+                vec![],
+                Some(view.build_name_table()),
+            )),
+        );
+        let results = ConstructorProvider.provide(root_scope(), &ctx, &view);
+        assert!(
+            results.iter().any(|c| c.label.as_ref() == "Box"),
+            "{:?}",
+            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_constructor_completion_deep_owner_qualified_nested() {
+        let idx = make_nested_index();
+        let view = idx.view(root_scope());
+        let ctx = make_nested_ctx("ChainCheck.Box.BoxV", Some("org/cubewhy/Probe")).with_extension(
+            Arc::new(SourceTypeCtx::new(
+                Some(Arc::from("org/cubewhy")),
+                vec![],
+                Some(view.build_name_table()),
+            )),
+        );
+        let results = ConstructorProvider.provide(root_scope(), &ctx, &view);
+        assert!(
+            results.iter().any(|c| c.label.as_ref() == "BoxV"),
+            "{:?}",
+            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_constructor_completion_unqualified_does_not_leak_unrelated_nested() {
+        let idx = make_nested_index();
+        let view = idx.view(root_scope());
+        let ctx = make_nested_ctx("Box", Some("org/cubewhy/Unrelated")).with_extension(Arc::new(
+            SourceTypeCtx::new(
+                Some(Arc::from("org/cubewhy")),
+                vec![],
+                Some(view.build_name_table()),
+            ),
+        ));
+        let results = ConstructorProvider.provide(root_scope(), &ctx, &view);
+        assert!(
+            results.iter().all(|c| c.label.as_ref() != "Box"),
+            "{:?}",
+            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
         );
     }
 }
