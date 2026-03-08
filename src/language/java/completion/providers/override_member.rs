@@ -324,6 +324,30 @@ mod tests {
         }
     }
 
+    fn make_nested_class(
+        pkg: &str,
+        internal_name: &str,
+        simple_name: &str,
+        owner_internal: &str,
+        super_name: Option<&str>,
+        methods: Vec<MethodSummary>,
+    ) -> ClassMetadata {
+        ClassMetadata {
+            package: Some(Arc::from(pkg)),
+            name: Arc::from(simple_name),
+            internal_name: Arc::from(internal_name),
+            super_name: super_name.map(Arc::from),
+            interfaces: vec![],
+            annotations: vec![],
+            methods,
+            fields: vec![],
+            access_flags: ACC_PUBLIC,
+            generic_signature: None,
+            inner_class_of: Some(Arc::from(owner_internal)),
+            origin: ClassOrigin::Unknown,
+        }
+    }
+
     fn ctx_with_prefix(prefix: &str, enclosing_internal: &str) -> SemanticContext {
         SemanticContext::new(
             CursorLocation::Expression {
@@ -1185,6 +1209,100 @@ mod tests {
     }
 
     #[test]
+    fn test_override_available_in_nested_class_body_member_position() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            make_class(
+                "com/example",
+                "RunnableParent",
+                None,
+                vec![method("run", "()V", ACC_PUBLIC)],
+            ),
+            make_class("com/example", "Outer", None, vec![]),
+            make_nested_class(
+                "com/example",
+                "com/example/Outer$Nested",
+                "Nested",
+                "com/example/Outer",
+                Some("com/example/RunnableParent"),
+                vec![],
+            ),
+        ]);
+
+        let ctx = ctx_from_marked_source(
+            r#"
+            package com.example;
+            class Outer {
+                static class Nested extends RunnableParent {
+                    pub|
+                }
+            }
+            "#,
+        );
+        let results = OverrideProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
+
+        assert!(
+            ctx.is_class_member_position,
+            "nested class body is a valid member position"
+        );
+        assert_eq!(
+            ctx.enclosing_internal_name.as_deref(),
+            Some("com/example/Outer$Nested")
+        );
+        assert!(
+            results.iter().any(|c| c.label.contains("run")),
+            "override candidate should be available in nested class body"
+        );
+    }
+
+    #[test]
+    fn test_override_available_in_inner_class_body_member_position() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            make_class(
+                "com/example",
+                "RunnableParent",
+                None,
+                vec![method("run", "()V", ACC_PUBLIC)],
+            ),
+            make_class("com/example", "Outer", None, vec![]),
+            make_nested_class(
+                "com/example",
+                "com/example/Outer$Inner",
+                "Inner",
+                "com/example/Outer",
+                Some("com/example/RunnableParent"),
+                vec![],
+            ),
+        ]);
+
+        let ctx = ctx_from_marked_source(
+            r#"
+            package com.example;
+            class Outer {
+                class Inner extends RunnableParent {
+                    pub|
+                }
+            }
+            "#,
+        );
+        let results = OverrideProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
+
+        assert!(
+            ctx.is_class_member_position,
+            "inner class body is a valid member position"
+        );
+        assert_eq!(
+            ctx.enclosing_internal_name.as_deref(),
+            Some("com/example/Outer$Inner")
+        );
+        assert!(
+            results.iter().any(|c| c.label.contains("run")),
+            "override candidate should be available in inner class body"
+        );
+    }
+
+    #[test]
     fn test_override_skipped_inside_method_body() {
         let idx = WorkspaceIndex::new();
         idx.add_classes(vec![
@@ -1286,6 +1404,51 @@ mod tests {
         assert!(
             results.is_empty(),
             "override must be skipped in initializer block"
+        );
+    }
+
+    #[test]
+    fn test_override_skipped_inside_method_body_of_nested_class() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            make_class(
+                "com/example",
+                "RunnableParent",
+                None,
+                vec![method("run", "()V", ACC_PUBLIC)],
+            ),
+            make_class("com/example", "Outer", None, vec![]),
+            make_nested_class(
+                "com/example",
+                "com/example/Outer$Nested",
+                "Nested",
+                "com/example/Outer",
+                Some("com/example/RunnableParent"),
+                vec![],
+            ),
+        ]);
+
+        let ctx = ctx_from_marked_source(
+            r#"
+            package com.example;
+            class Outer {
+                static class Nested extends RunnableParent {
+                    void f() {
+                        pub|
+                    }
+                }
+            }
+            "#,
+        );
+        let results = OverrideProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
+
+        assert!(
+            !ctx.is_class_member_position,
+            "method body in nested class is executable context"
+        );
+        assert!(
+            results.is_empty(),
+            "override must be skipped in method body"
         );
     }
 }

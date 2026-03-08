@@ -1,0 +1,19 @@
+---
+source: src/language/java/injection.rs
+expression: out
+---
+cursor_node_kind=Some("class_body")
+injected_source=
+public class VarargsExample {
+    public static class Test implements Runnable {
+        @Override
+        public void run() {
+            throw new RuntimeException("Not implemented yet");
+        }
+    }
+
+    // cursor here
+    void __KIRO__() {}
+}
+;
+result=Some((Expression { prefix: "" }, ""))

@@ -4,6 +4,7 @@ use crate::{
     language::java::{
         JavaContextExtractor, SENTINEL,
         location::determine_location,
+        scope::is_cursor_in_class_member_position,
         utils::{
             close_open_brackets, error_has_new_keyword, error_has_trailing_dot,
             find_error_ancestor, strip_sentinel, strip_sentinel_from_location,
@@ -162,6 +163,7 @@ pub fn build_injected_source(
     extractor: &JavaContextExtractor,
     cursor_node: Option<Node>,
 ) -> String {
+    let class_member_position = is_cursor_in_class_member_position(cursor_node);
     let before = extractor.byte_slice(0, extractor.offset);
     let trimmed = before.trim_end();
 
@@ -285,6 +287,17 @@ pub fn build_injected_source(
     };
 
     if replace_start == replace_end {
+        if class_member_position {
+            // In class/interface/enum member position, injecting a bare identifier statement
+            // (`__KIRO__;`) produces ERROR and collapses location to Unknown.
+            // Inject a syntactically valid member declaration to keep AST classification stable.
+            return inject_at(
+                extractor,
+                extractor.offset,
+                extractor.offset,
+                &format!("void {SENTINEL}() {{}}"),
+            );
+        }
         // Nothing at cursor, insert sentinel
         inject_at(
             extractor,
@@ -548,7 +561,7 @@ mod tests {
         "#};
         // Find the end of `cl.`
         let offset = src.find("cl.").unwrap() + 3;
-        let (ctx, tree) = setup_ctx(src, offset);
+        let (ctx, tree) = setup_ctx(&src, offset);
         let cursor_node = ctx.find_cursor_node(tree.root_node());
 
         let injected = build_injected_source(&ctx, cursor_node);
@@ -575,7 +588,7 @@ mod tests {
         }
         "#};
         let offset = src.find("new ").unwrap() + 4;
-        let (ctx, tree) = setup_ctx(src, offset);
+        let (ctx, tree) = setup_ctx(&src, offset);
         let cursor_node = ctx.find_cursor_node(tree.root_node());
 
         let injected = build_injected_source(&ctx, cursor_node);
@@ -599,7 +612,7 @@ mod tests {
         }
         "#};
         let offset = src.find("myVa").unwrap() + 4;
-        let (ctx, tree) = setup_ctx(src, offset);
+        let (ctx, tree) = setup_ctx(&src, offset);
         let cursor_node = ctx.find_cursor_node(tree.root_node());
 
         let injected = build_injected_source(&ctx, cursor_node);
@@ -623,7 +636,7 @@ mod tests {
         }
         "#};
         let offset = src.find("java.util.A").unwrap() + 11;
-        let (ctx, tree) = setup_ctx(src, offset);
+        let (ctx, tree) = setup_ctx(&src, offset);
         let cursor_node = ctx.find_cursor_node(tree.root_node());
 
         let injected = build_injected_source(&ctx, cursor_node);
@@ -647,7 +660,7 @@ mod tests {
         }
         "#};
         let offset = src.find("cl.").unwrap() + 3;
-        let (ctx, tree) = setup_ctx(src, offset);
+        let (ctx, tree) = setup_ctx(&src, offset);
         let cursor_node = ctx.find_cursor_node(tree.root_node());
 
         let result = inject_and_determine(&ctx, cursor_node, None);
@@ -678,7 +691,7 @@ mod tests {
         }
         "#};
         let offset = src.find("RandomCla").unwrap() + 9;
-        let (ctx, tree) = setup_ctx(src, offset);
+        let (ctx, tree) = setup_ctx(&src, offset);
         let cursor_node = ctx.find_cursor_node(tree.root_node());
 
         let result = inject_and_determine(&ctx, cursor_node, None);
@@ -770,6 +783,75 @@ mod tests {
             location
         );
         assert_eq!(query, "Str");
+    }
+
+    #[test]
+    fn test_inject_and_determine_class_body_slot_after_nested_class_is_not_unknown() {
+        let src_with_cursor = indoc::indoc! {r#"
+        public class VarargsExample {
+            public static class Test implements Runnable {
+                @Override
+                public void run() {
+                    throw new RuntimeException("Not implemented yet");
+                }
+            }
+
+            // cursor here
+            |
+        }
+        "#};
+        let offset = src_with_cursor.find('|').expect("cursor marker");
+        let src = src_with_cursor.replacen('|', "", 1);
+        let (ctx, tree) = setup_ctx(&src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+        let injected = build_injected_source(&ctx, cursor_node);
+
+        assert!(
+            injected.contains(&format!("void {SENTINEL}() {{}}")),
+            "class-body injection should use valid member declaration, got:\n{}",
+            injected
+        );
+
+        let result = inject_and_determine(&ctx, cursor_node, None)
+            .expect("inject_and_determine should succeed in class member slot");
+        let (location, query) = result;
+
+        assert!(
+            !matches!(location, CursorLocation::Unknown),
+            "class-body slot after nested class must not be Unknown: {:?}",
+            location
+        );
+        assert_eq!(query, "");
+    }
+
+    #[test]
+    fn test_snapshot_injection_class_body_slot_after_nested_class() {
+        let src_with_cursor = indoc::indoc! {r#"
+        public class VarargsExample {
+            public static class Test implements Runnable {
+                @Override
+                public void run() {
+                    throw new RuntimeException("Not implemented yet");
+                }
+            }
+
+            // cursor here
+            |
+        }
+        "#};
+        let offset = src_with_cursor.find('|').expect("cursor marker");
+        let src = src_with_cursor.replacen('|', "", 1);
+        let (ctx, tree) = setup_ctx(&src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+        let injected = build_injected_source(&ctx, cursor_node);
+        let result = inject_and_determine(&ctx, cursor_node, None);
+        let out = format!(
+            "cursor_node_kind={:?}\ninjected_source=\n{}\nresult={:?}\n",
+            cursor_node.map(|n| n.kind().to_string()),
+            injected,
+            result
+        );
+        insta::assert_snapshot!("injection_class_body_slot_after_nested_class", out);
     }
 
     #[test]

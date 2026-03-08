@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tree_sitter::{Node, Query};
 
 use crate::language::{
-    java::{JavaContextExtractor, utils::find_ancestor},
+    java::JavaContextExtractor,
     ts_utils::{capture_text, run_query},
 };
 
@@ -92,7 +92,7 @@ pub fn extract_enclosing_class(
     ctx: &JavaContextExtractor,
     cursor_node: Option<Node>,
 ) -> Option<Arc<str>> {
-    let class_node = cursor_node.and_then(|n| find_ancestor(n, "class_declaration"))?;
+    let class_node = cursor_node.and_then(find_nearest_type_declaration)?;
     let name_node = class_node.child_by_field_name("name")?;
     Some(Arc::from(ctx.node_text(name_node)))
 }
@@ -132,6 +132,41 @@ pub(crate) fn extract_enclosing_class_by_offset(
     }
     dfs(root, ctx.offset, ctx.bytes(), &mut result);
     result
+}
+
+pub(crate) fn extract_enclosing_internal_name(
+    ctx: &JavaContextExtractor,
+    cursor_node: Option<Node>,
+    enclosing_package: Option<&Arc<str>>,
+) -> Option<Arc<str>> {
+    let decl = cursor_node.and_then(find_nearest_type_declaration)?;
+
+    let mut names: Vec<String> = Vec::new();
+    let mut current = Some(decl);
+    while let Some(node) = current {
+        if let Some(name_node) = node.child_by_field_name("name") {
+            names.push(ctx.node_text(name_node).to_string());
+        }
+        current = find_parent_type_declaration(node);
+    }
+
+    if names.is_empty() {
+        return None;
+    }
+
+    names.reverse();
+    let mut internal = String::new();
+    if let Some(pkg) = enclosing_package {
+        internal.push_str(pkg);
+        internal.push('/');
+    }
+    internal.push_str(&names[0]);
+    for nested in names.iter().skip(1) {
+        internal.push('$');
+        internal.push_str(nested);
+    }
+
+    Some(Arc::from(internal))
 }
 
 pub(crate) fn is_cursor_in_class_member_position(cursor_node: Option<Node>) -> bool {
@@ -184,6 +219,28 @@ fn find_nearest_type_body(start: Node) -> Option<Node> {
     None
 }
 
+fn find_nearest_type_declaration(start: Node) -> Option<Node> {
+    let mut current = Some(start);
+    while let Some(node) = current {
+        if is_type_declaration_kind(node.kind()) {
+            return Some(node);
+        }
+        current = node.parent();
+    }
+    None
+}
+
+fn find_parent_type_declaration(node: Node) -> Option<Node> {
+    let mut parent = node.parent();
+    while let Some(p) = parent {
+        if is_type_declaration_kind(p.kind()) {
+            return Some(p);
+        }
+        parent = p.parent();
+    }
+    None
+}
+
 fn is_type_body_kind(kind: &str) -> bool {
     matches!(kind, "class_body" | "interface_body" | "enum_body")
 }
@@ -191,7 +248,7 @@ fn is_type_body_kind(kind: &str) -> bool {
 fn is_type_declaration_kind(kind: &str) -> bool {
     matches!(
         kind,
-        "class_declaration" | "interface_declaration" | "enum_declaration"
+        "class_declaration" | "interface_declaration" | "enum_declaration" | "record_declaration"
     )
 }
 

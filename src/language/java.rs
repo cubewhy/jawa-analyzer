@@ -363,7 +363,8 @@ impl JavaContextExtractor {
             .or_else(|| scope::extract_enclosing_class_by_offset(&self, root));
         let enclosing_package = scope::extract_package(&self, root);
         let enclosing_internal_name =
-            utils::build_internal_name(&enclosing_package, &enclosing_class);
+            scope::extract_enclosing_internal_name(&self, cursor_node, enclosing_package.as_ref())
+                .or_else(|| utils::build_internal_name(&enclosing_package, &enclosing_class));
         let existing_imports = scope::extract_imports(&self, root);
         let type_ctx = Arc::new(SourceTypeCtx::new(
             enclosing_package.clone(),
@@ -4803,5 +4804,119 @@ mod tests {
         eprintln!("nested_completion_timing_ms: ChainCheck.={d1:.3} ChainCheck.Box.={d2:.3}");
         assert!(labels1.iter().any(|l| l == "Box"), "{labels1:?}");
         assert!(labels2.iter().any(|l| l == "BoxV"), "{labels2:?}");
+    }
+
+    #[test]
+    fn test_context_class_body_slot_after_nested_class_not_unknown() {
+        let idx = WorkspaceIndex::new();
+        let view = idx.view(root_scope());
+        let (ctx, _candidates) = ctx_and_candidates_from_marked_source(
+            indoc::indoc! {r#"
+                public class VarargsExample {
+                    public static class Test implements Runnable {
+                        @Override
+                        public void run() {
+                            throw new RuntimeException("Not implemented yet");
+                        }
+                    }
+
+                    |
+                }
+            "#},
+            &view,
+        );
+        assert!(
+            !matches!(ctx.location, CursorLocation::Unknown),
+            "class body slot should not be Unknown: {:?}",
+            ctx.location
+        );
+        assert!(
+            ctx.is_class_member_position,
+            "outer class body slot should be class-member position"
+        );
+    }
+
+    #[test]
+    fn test_context_nested_class_body_slot_not_unknown() {
+        let idx = WorkspaceIndex::new();
+        let view = idx.view(root_scope());
+        let (ctx, _candidates) = ctx_and_candidates_from_marked_source(
+            indoc::indoc! {r#"
+                public class VarargsExample {
+                    public static class Test implements Runnable {
+                        |
+                    }
+                }
+            "#},
+            &view,
+        );
+        assert!(
+            !matches!(ctx.location, CursorLocation::Unknown),
+            "nested class body slot should not be Unknown: {:?}",
+            ctx.location
+        );
+        assert!(
+            ctx.is_class_member_position,
+            "nested class body slot should be class-member position"
+        );
+    }
+
+    #[test]
+    fn test_context_top_level_class_body_slot_not_unknown() {
+        let idx = WorkspaceIndex::new();
+        let view = idx.view(root_scope());
+        let (ctx, _candidates) = ctx_and_candidates_from_marked_source(
+            indoc::indoc! {r#"
+                public class VarargsExample {
+                    |
+                }
+            "#},
+            &view,
+        );
+        assert!(
+            !matches!(ctx.location, CursorLocation::Unknown),
+            "top-level class body slot should not be Unknown: {:?}",
+            ctx.location
+        );
+        assert!(
+            ctx.is_class_member_position,
+            "top-level class body slot should be class-member position"
+        );
+    }
+
+    #[test]
+    fn test_context_method_and_constructor_bodies_not_class_member_position() {
+        let idx = WorkspaceIndex::new();
+        let view = idx.view(root_scope());
+
+        let (method_ctx, _) = ctx_and_candidates_from_marked_source(
+            indoc::indoc! {r#"
+                public class VarargsExample {
+                    void f() {
+                        |
+                    }
+                }
+            "#},
+            &view,
+        );
+        assert!(
+            !method_ctx.is_class_member_position,
+            "method body must not be class-member position"
+        );
+
+        let (ctor_ctx, _) = ctx_and_candidates_from_marked_source(
+            indoc::indoc! {r#"
+                public class VarargsExample {
+                    VarargsExample() {
+                        |
+                    }
+                }
+            "#},
+            &view,
+        );
+        assert!(
+            !ctor_ctx.is_class_member_position,
+            "constructor body must not be class-member position"
+        );
     }
 }
