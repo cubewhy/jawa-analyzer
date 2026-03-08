@@ -453,9 +453,13 @@ impl JavaContextExtractor {
 mod tests {
     use super::*;
     use crate::{
+        completion::engine::CompletionEngine,
+        index::{ClassMetadata, ClassOrigin, IndexScope, ModuleId, WorkspaceIndex},
         language::{java::injection::build_injected_source, rope_utils::line_col_to_offset},
         semantic::context::{CurrentClassMember, CursorLocation},
     };
+    use rust_asm::constants::ACC_PUBLIC;
+    use std::sync::Arc;
 
     fn at(src: &str, line: u32, col: u32) -> SemanticContext {
         at_with_trigger(src, line, col, None)
@@ -487,11 +491,74 @@ mod tests {
         at(src, line, col)
     }
 
+    fn root_scope() -> IndexScope {
+        IndexScope {
+            module: ModuleId::ROOT,
+        }
+    }
+
+    fn make_class(pkg: &str, name: &str) -> ClassMetadata {
+        ClassMetadata {
+            package: Some(Arc::from(pkg)),
+            name: Arc::from(name),
+            internal_name: Arc::from(format!("{}/{}", pkg, name)),
+            super_name: None,
+            interfaces: vec![],
+            annotations: vec![],
+            methods: vec![],
+            fields: vec![],
+            access_flags: ACC_PUBLIC,
+            inner_class_of: None,
+            generic_signature: None,
+            origin: ClassOrigin::Unknown,
+        }
+    }
+
     #[test]
     fn test_import() {
         let src = "import com.example.Foo;";
         let ctx = end_of(src);
         assert!(matches!(ctx.location, CursorLocation::Import { .. }));
+    }
+
+    #[test]
+    fn test_generic_type_argument_position_completes_type_candidates() {
+        let src = indoc::indoc! {r#"
+        import java.util.*;
+        class A {
+            void f() {
+                List<Bo> nums = new ArrayList<>();
+            }
+        }
+        "#};
+        let line = 3u32;
+        let raw = src.lines().nth(3).unwrap();
+        let col = raw.find("Bo").unwrap() as u32 + 2;
+        let ctx = at(src, line, col);
+        assert!(
+            matches!(ctx.location, CursorLocation::TypeAnnotation { .. }),
+            "generic type argument should route to TypeAnnotation, got {:?}",
+            ctx.location
+        );
+
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            make_class("java/util", "List"),
+            make_class("java/util", "Map"),
+            make_class("java/util", "ArrayList"),
+            make_class("org/example", "Box"),
+            make_class("java/lang", "String"),
+        ]);
+        let view = idx.view(root_scope());
+        let engine = CompletionEngine::new();
+        let results = engine.complete(root_scope(), ctx, &JavaLanguage, &view);
+        let labels: Vec<&str> = results.iter().map(|c| c.label.as_ref()).collect();
+
+        assert!(
+            !labels.is_empty() && labels.iter().any(|l| *l == "Box"),
+            "type candidates should be available in generic arg position, got {:?}",
+            labels
+        );
     }
 
     #[test]

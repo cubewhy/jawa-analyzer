@@ -608,8 +608,13 @@ fn handle_identifier(
                 }
 
                 if is_in_type_subtree(node, ancestor) {
-                    // Force injection fallback for better recovery in this subtree.
-                    return (CursorLocation::Unknown, String::new());
+                    let text = cursor_truncated_text(ctx, node);
+                    return (
+                        CursorLocation::TypeAnnotation {
+                            prefix: text.clone(),
+                        },
+                        text,
+                    );
                 }
                 let text = cursor_truncated_text(ctx, node);
                 let clean = strip_sentinel(&text);
@@ -1020,6 +1025,72 @@ mod tests {
             loc
         );
         assert_eq!(query, "HashM");
+    }
+
+    #[test]
+    fn test_generic_type_argument_position_is_type_annotation() {
+        let src = indoc::indoc! {r#"
+    class A {
+        void f() {
+            List<Bo> nums = null;
+        }
+    }
+    "#};
+        let offset = src.find("Bo").unwrap() + 2;
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let (loc, query) = determine_location(&ctx, cursor_node, None);
+        assert!(
+            matches!(loc, CursorLocation::TypeAnnotation { .. }),
+            "Expected TypeAnnotation in generic type argument, got {:?}",
+            loc
+        );
+        assert_eq!(query, "Bo");
+    }
+
+    #[test]
+    fn test_nested_generic_type_argument_position_is_type_annotation() {
+        let src = indoc::indoc! {r#"
+    class A {
+        void f() {
+            Map<String, In> m = null;
+        }
+    }
+    "#};
+        let offset = src.find("In").unwrap() + 2;
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let (loc, query) = determine_location(&ctx, cursor_node, None);
+        assert!(
+            matches!(loc, CursorLocation::TypeAnnotation { .. }),
+            "Expected TypeAnnotation in nested generic arg, got {:?}",
+            loc
+        );
+        assert_eq!(query, "In");
+    }
+
+    #[test]
+    fn test_wildcard_bound_type_argument_position_is_type_annotation() {
+        let src = indoc::indoc! {r#"
+    class A<T> {
+        void f() {
+            Function<? super T, ? extends Nu> fn = null;
+        }
+    }
+    "#};
+        let offset = src.find("Nu").unwrap() + 2;
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let (loc, query) = determine_location(&ctx, cursor_node, None);
+        assert!(
+            matches!(loc, CursorLocation::TypeAnnotation { .. }),
+            "Expected TypeAnnotation in wildcard bound arg, got {:?}",
+            loc
+        );
+        assert_eq!(query, "Nu");
     }
 
     #[test]
