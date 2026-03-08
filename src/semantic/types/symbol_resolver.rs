@@ -131,7 +131,9 @@ impl<'a> SymbolResolver<'a> {
             if !named_candidates.is_empty() {
                 let summaries: Vec<&MethodSummary> =
                     named_candidates.iter().map(|m| m.as_ref()).collect();
-                let best_summary = resolver.select_overload(&summaries, arg_count, &arg_types)?;
+                let best_summary = resolver
+                    .select_overload_match(&summaries, arg_count, &arg_types)?
+                    .method;
 
                 if let Some(found_arc) = named_candidates
                     .iter()
@@ -346,6 +348,7 @@ mod tests {
         ClassMetadata, ClassOrigin, IndexScope, MethodParams, MethodSummary, ModuleId,
         WorkspaceIndex,
     };
+    use crate::language::java::class_parser::parse_java_source;
     use crate::language::java::type_ctx::SourceTypeCtx;
     use crate::semantic::context::{CursorLocation, SemanticContext};
     use rust_asm::constants::ACC_PUBLIC;
@@ -459,6 +462,71 @@ mod tests {
         } else {
             panic!("Expected Method");
         }
+
+        let ctx_invalid = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: None,
+                receiver_type: Some(Arc::from("java/io/PrintStream")),
+                receiver_expr: "out".to_string(),
+                member_prefix: "println".to_string(),
+                arguments: Some("(\"a\", \"b\", \"c\")".to_string()),
+            },
+            "",
+            vec![],
+            None,
+            None,
+            None,
+            vec![],
+        );
+        assert!(
+            resolver.resolve(&ctx_invalid).is_none(),
+            "no applicable overload should not resolve arbitrarily"
+        );
+    }
+
+    #[test]
+    fn test_overload_resolution_in_symbol_resolver_source_varargs_join_many_args() {
+        let idx = WorkspaceIndex::new();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        let src = indoc::indoc! {r#"
+            public class VarargsExample {
+                public static String join(String separator, String... parts) {
+                    return "";
+                }
+            }
+        "#};
+        let origin = ClassOrigin::SourceFile(Arc::from("file:///tmp/VarargsExample.java"));
+        let classes = parse_java_source(src, origin.clone(), None);
+        idx.update_source(scope, origin, classes);
+        let view = idx.view(scope);
+        let resolver = SymbolResolver::new(&view);
+        let ctx = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: None,
+                receiver_type: None,
+                receiver_expr: "".to_string(),
+                member_prefix: "join".to_string(),
+                arguments: Some("(\"-\", \"java\", \"lsp\", \"test\")".to_string()),
+            },
+            "join",
+            vec![],
+            Some(Arc::from("VarargsExample")),
+            Some(Arc::from("VarargsExample")),
+            None,
+            vec![],
+        );
+        let resolved = resolver.resolve(&ctx);
+        let ResolvedSymbol::Method { summary, .. } = resolved.expect("resolved varargs method")
+        else {
+            panic!("expected method");
+        };
+        assert!(
+            summary.desc().as_ref().contains("[LString;"),
+            "expected varargs descriptor shape, got {}",
+            summary.desc()
+        );
     }
 
     #[test]

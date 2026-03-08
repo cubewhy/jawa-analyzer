@@ -1,4 +1,4 @@
-use rust_asm::constants::{ACC_PRIVATE, ACC_PROTECTED, ACC_PUBLIC, ACC_STATIC};
+use rust_asm::constants::{ACC_PRIVATE, ACC_PROTECTED, ACC_PUBLIC, ACC_STATIC, ACC_VARARGS};
 use std::sync::Arc;
 use tree_sitter::{Node, Query};
 
@@ -249,6 +249,10 @@ pub fn parse_partial_methods_from_error(
             );
         }
 
+        if has_spread_parameter(params_node) {
+            flags |= ACC_VARARGS;
+        }
+
         result.push(CurrentClassMember::Method(Arc::new(MethodSummary {
             name: Arc::from(name),
             params: parse_params(ctx, &descriptor, params_node, type_ctx),
@@ -403,6 +407,11 @@ pub fn parse_method_node(
 
     let name = name.filter(|n| *n != "<init>" && *n != "<clinit>" && !is_java_keyword(n))?;
     let params_text = params_node.map(|n| ctx.node_text(n)).unwrap_or("()");
+    if let Some(params_node) = params_node
+        && has_spread_parameter(params_node)
+    {
+        flags |= ACC_VARARGS;
+    }
     let descriptor = build_java_descriptor(params_text, ret_type, type_ctx);
 
     let generic_signature =
@@ -707,6 +716,11 @@ fn parse_misread_method(
     let params = params_node
         .map(|n| parse_params(ctx, &descriptor, n, type_ctx))
         .unwrap_or(MethodParams { items: vec![] });
+    if let Some(pn) = params_node
+        && has_spread_parameter(pn)
+    {
+        flags |= ACC_VARARGS;
+    }
 
     Some(CurrentClassMember::Method(Arc::new(MethodSummary {
         name: Arc::from(name),
@@ -964,6 +978,13 @@ fn parse_params(
     out
 }
 
+fn has_spread_parameter(formals_node: Node) -> bool {
+    let mut cursor = formals_node.walk();
+    formals_node
+        .children(&mut cursor)
+        .any(|c| c.kind() == "spread_parameter")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1013,6 +1034,33 @@ mod tests {
             .find(|m| m.name().as_ref() == "methodB")
             .unwrap();
         assert!(mb.is_method() && mb.is_static() && mb.is_private());
+    }
+
+    #[test]
+    fn test_parse_varargs_method_sets_acc_varargs() {
+        let src = indoc::indoc! {r#"
+        class A {
+            public static String join(String separator, String... parts) { return ""; }
+        }
+        "#};
+        let (ctx, tree) = setup(src);
+        let type_ctx = SourceTypeCtx::new(None, vec![], None);
+        let mut members = Vec::new();
+        collect_members_from_node(&ctx, tree.root_node(), &type_ctx, &mut members);
+
+        let join = members
+            .iter()
+            .find(|m| m.name().as_ref() == "join")
+            .expect("join method");
+        let CurrentClassMember::Method(join) = join else {
+            panic!("join should be method");
+        };
+        assert_ne!(join.access_flags & ACC_VARARGS, 0);
+        assert!(
+            join.desc().as_ref().contains("[LString;"),
+            "expected varargs array descriptor in method signature, got {}",
+            join.desc()
+        );
     }
 
     #[test]

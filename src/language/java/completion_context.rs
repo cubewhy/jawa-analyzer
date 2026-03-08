@@ -15,10 +15,11 @@ use crate::semantic::context::{
 use crate::semantic::types::symbol_resolver::SymbolResolver;
 use crate::semantic::types::type_name::TypeName;
 use crate::semantic::types::{
-    TypeResolver, parse_single_type_to_internal, singleton_descriptor_to_type,
+    OverloadInvocationMode, TypeResolver, parse_single_type_to_internal,
+    singleton_descriptor_to_type,
 };
 use crate::semantic::{CursorLocation, SemanticContext};
-use rust_asm::constants::{ACC_ABSTRACT, ACC_STATIC};
+use rust_asm::constants::{ACC_ABSTRACT, ACC_STATIC, ACC_VARARGS};
 
 pub struct ContextEnricher<'a> {
     view: &'a IndexView,
@@ -537,20 +538,24 @@ fn resolve_expected_type_from_method_argument(
                 .unwrap_or_else(|| TypeName::new("unknown"))
         })
         .collect();
-    let arg_count = hint.arg_texts.len() as i32;
-    let selected = match resolver.select_overload(&candidates, arg_count, &arg_types) {
-        Some(s) => s,
-        None => return (None, Some(receiver)),
-    };
-    if selected.params.items.get(hint.arg_index).is_none() {
-        return (None, Some(receiver));
+    let mut arg_types_for_selection = arg_types.clone();
+    if hint.arg_index < arg_types_for_selection.len() {
+        // Expected-type inference should not be blocked by the currently-edited argument text.
+        arg_types_for_selection[hint.arg_index] = TypeName::new("unknown");
     }
+    let arg_count = hint.arg_texts.len() as i32;
+    let selected =
+        match resolver.select_overload_match(&candidates, arg_count, &arg_types_for_selection) {
+            Some(s) => s,
+            None => return (None, Some(receiver)),
+        };
     let receiver_internal = receiver.to_internal_with_generics_for_substitution();
     let expected = resolver
         .resolve_selected_param_type_from_generic_signature(
             &receiver_internal,
-            selected,
+            selected.method,
             hint.arg_index,
+            selected.mode,
         )
         .map(|(ty, exact)| {
             (
@@ -563,14 +568,25 @@ fn resolve_expected_type_from_method_argument(
             )
         })
         .or_else(|| {
-            selected
-                .params
-                .items
-                .get(hint.arg_index)
-                .and_then(|param| descriptor_to_type_name(&param.descriptor))
-                .map(|ty| (ty, ExpectedTypeConfidence::Exact))
+            resolve_selected_param_descriptor_for_call(
+                &resolver,
+                selected.method,
+                hint.arg_index,
+                selected.mode,
+            )
+            .and_then(|desc| descriptor_to_type_name(&desc))
+            .map(|ty| (ty, ExpectedTypeConfidence::Exact))
         });
     (expected, Some(receiver))
+}
+
+fn resolve_selected_param_descriptor_for_call(
+    resolver: &TypeResolver,
+    selected: &MethodSummary,
+    arg_index: usize,
+    mode: OverloadInvocationMode,
+) -> Option<Arc<str>> {
+    resolver.resolve_selected_param_descriptor_for_call(selected, arg_index, mode)
 }
 
 fn resolve_hint_receiver_type(
@@ -862,8 +878,7 @@ fn evaluate_constructor_ref_candidates(
         if method.name.as_ref() != "<init>" {
             continue;
         }
-        let method_params = method.params.len();
-        if method_params != sam.param_types.len() {
+        if !method_accepts_arity(method, sam.param_types.len()) {
             continue;
         }
         let actual_desc = format!("L{};", owner.erased_internal());
@@ -897,11 +912,11 @@ fn evaluate_type_method_ref_candidates(
         if method.name.as_ref() != member_name {
             continue;
         }
-        let method_params = method.params.len();
-        let static_form =
-            (method.access_flags & ACC_STATIC) != 0 && method_params == sam.param_types.len();
-        let unbound_form =
-            (method.access_flags & ACC_STATIC) == 0 && method_params + 1 == sam.param_types.len();
+        let static_form = (method.access_flags & ACC_STATIC) != 0
+            && method_accepts_arity(&method, sam.param_types.len());
+        let unbound_form = (method.access_flags & ACC_STATIC) == 0
+            && sam.param_types.len() >= 1
+            && method_accepts_arity(&method, sam.param_types.len() - 1);
         if !static_form && !unbound_form {
             continue;
         }
@@ -932,7 +947,7 @@ fn evaluate_expr_method_ref_candidates(
         if (method.access_flags & ACC_STATIC) != 0 {
             continue;
         }
-        if method.params.len() != sam.param_types.len() {
+        if !method_accepts_arity(&method, sam.param_types.len()) {
             continue;
         }
         let status = check_method_return_compatibility(resolver, method.as_ref(), sam, expected);
@@ -962,6 +977,27 @@ fn reduce_compat_candidates(candidates: Vec<FunctionalCompat>) -> Option<Functio
         return Some(partial.clone());
     }
     candidates.into_iter().next()
+}
+
+fn is_varargs_method_summary(method: &MethodSummary) -> bool {
+    (method.access_flags & ACC_VARARGS) != 0
+        && method
+            .params
+            .items
+            .last()
+            .is_some_and(|p| p.descriptor.starts_with('['))
+}
+
+fn method_accepts_arity(method: &MethodSummary, arg_count: usize) -> bool {
+    let param_len = method.params.len();
+    if !is_varargs_method_summary(method) {
+        return param_len == arg_count;
+    }
+    if param_len == 0 {
+        return false;
+    }
+    let fixed_prefix = param_len - 1;
+    arg_count >= fixed_prefix
 }
 
 fn evaluate_lambda_compatibility(
@@ -1158,7 +1194,7 @@ mod tests {
         ClassMetadata, ClassOrigin, IndexScope, MethodParams, MethodSummary, WorkspaceIndex,
     };
     use crate::semantic::LocalVar;
-    use rust_asm::constants::{ACC_ABSTRACT, ACC_PUBLIC};
+    use rust_asm::constants::{ACC_ABSTRACT, ACC_PUBLIC, ACC_VARARGS};
 
     fn seg_names(expr: &str) -> Vec<(String, Option<i32>)> {
         parse_chain_from_expr(expr)
@@ -3257,19 +3293,39 @@ mod tests {
         .map(|t| t.to_internal_with_generics());
 
         let old_resolved = resolver
-            .resolve_selected_param_type_from_generic_signature(&receiver_old, add, 0)
+            .resolve_selected_param_type_from_generic_signature(
+                &receiver_old,
+                add,
+                0,
+                OverloadInvocationMode::Fixed,
+            )
             .map(|(t, exact)| (t.to_internal_with_generics(), exact));
         let new_resolved = resolver
-            .resolve_selected_param_type_from_generic_signature(&receiver_new, add, 0)
+            .resolve_selected_param_type_from_generic_signature(
+                &receiver_new,
+                add,
+                0,
+                OverloadInvocationMode::Fixed,
+            )
             .map(|(t, exact)| (t.to_internal_with_generics(), exact));
 
         let unresolved_old = "List<Box<? extends Number>>".to_string();
         let unresolved_new = unresolved_old.clone();
         let unresolved_old_resolved = resolver
-            .resolve_selected_param_type_from_generic_signature(&unresolved_old, add, 0)
+            .resolve_selected_param_type_from_generic_signature(
+                &unresolved_old,
+                add,
+                0,
+                OverloadInvocationMode::Fixed,
+            )
             .map(|(t, exact)| (t.to_internal_with_generics(), exact));
         let unresolved_new_resolved = resolver
-            .resolve_selected_param_type_from_generic_signature(&unresolved_new, add, 0)
+            .resolve_selected_param_type_from_generic_signature(
+                &unresolved_new,
+                add,
+                0,
+                OverloadInvocationMode::Fixed,
+            )
             .map(|(t, exact)| (t.to_internal_with_generics(), exact));
 
         let unresolved_old_sub = substitute_type(
@@ -4997,5 +5053,68 @@ mod tests {
             matches!(ctx.location, CursorLocation::MemberAccess { .. }),
             "local variable shadowing should keep member access"
         );
+    }
+
+    #[test]
+    fn test_method_argument_expected_type_maps_varargs_trailing_to_element_type() {
+        let idx = WorkspaceIndex::new();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        idx.add_classes(vec![ClassMetadata {
+            package: None,
+            name: Arc::from("Owner"),
+            internal_name: Arc::from("Owner"),
+            super_name: None,
+            interfaces: vec![],
+            annotations: vec![],
+            methods: vec![MethodSummary {
+                name: Arc::from("addAll"),
+                params: MethodParams::from_method_descriptor("([Ljava/lang/String;)V"),
+                annotations: vec![],
+                access_flags: ACC_PUBLIC | ACC_VARARGS,
+                is_synthetic: false,
+                generic_signature: None,
+                return_type: None,
+            }],
+            fields: vec![],
+            access_flags: ACC_PUBLIC,
+            generic_signature: None,
+            inner_class_of: None,
+            origin: ClassOrigin::Unknown,
+        }]);
+        let view = idx.view(scope);
+        let type_ctx = SourceTypeCtx::new(None, vec![], Some(view.build_name_table()));
+        let ctx = SemanticContext::new(
+            CursorLocation::MethodArgument {
+                prefix: "\"c\"".to_string(),
+            },
+            "\"c\"",
+            vec![LocalVar {
+                name: Arc::from("o"),
+                type_internal: TypeName::new("Owner"),
+                init_expr: None,
+            }],
+            Some(Arc::from("Test")),
+            Some(Arc::from("Test")),
+            None,
+            vec![],
+        );
+        let hint = FunctionalMethodCallHint {
+            receiver_expr: "o".to_string(),
+            method_name: "addAll".to_string(),
+            arg_index: 2,
+            arg_texts: vec![
+                "\"a\"".to_string(),
+                "\"b\"".to_string(),
+                "\"c\"".to_string(),
+            ],
+        };
+
+        let (expected, _) =
+            resolve_expected_type_from_method_argument(&ctx, &view, &type_ctx, &hint);
+        let (ty, confidence) = expected.expect("expected type");
+        assert_eq!(ty.erased_internal(), "java/lang/String");
+        assert_eq!(confidence, ExpectedTypeConfidence::Exact);
     }
 }

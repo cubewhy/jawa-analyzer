@@ -8,6 +8,7 @@ use crate::{
     index::{IndexView, MethodSummary},
     jvm::descriptor::{consume_one_descriptor_type, split_param_descriptors},
 };
+use rust_asm::constants::ACC_VARARGS;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -24,6 +25,19 @@ pub trait SymbolProvider {
 
 pub struct TypeResolver<'idx> {
     view: &'idx IndexView,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OverloadInvocationMode {
+    Fixed,
+    Varargs,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct OverloadMatch<'a> {
+    pub method: &'a MethodSummary,
+    pub mode: OverloadInvocationMode,
+    pub score: i32,
 }
 
 impl<'idx> TypeResolver<'idx> {
@@ -260,7 +274,8 @@ impl<'idx> TypeResolver<'idx> {
                 continue;
             }
 
-            let method = self.select_overload(&candidates, arg_count, arg_types)?;
+            let selected = self.select_overload_match(&candidates, arg_count, arg_types)?;
+            let method = selected.method;
             let sig = method
                 .generic_signature
                 .clone()
@@ -659,66 +674,49 @@ impl<'idx> TypeResolver<'idx> {
         arg_count: i32,
         arg_types: &[TypeName],
     ) -> Option<&'a MethodSummary> {
-        tracing::debug!(?candidates, ?arg_types, "select_overload");
+        self.select_overload_match(candidates, arg_count, arg_types)
+            .map(|m| m.method)
+    }
+
+    pub fn select_overload_match<'a>(
+        &self,
+        candidates: &[&'a MethodSummary],
+        arg_count: i32,
+        arg_types: &[TypeName],
+    ) -> Option<OverloadMatch<'a>> {
+        tracing::debug!(?candidates, ?arg_types, arg_count, "select_overload_match");
 
         if candidates.is_empty() {
             return None;
         }
 
-        if candidates.len() == 1 {
-            return Some(candidates[0]);
-        }
+        let call_arg_count = normalize_call_arg_count(arg_count, arg_types);
+        let normalized_args = normalize_arg_types(call_arg_count, arg_types);
 
-        let by_count: Vec<&MethodSummary> = candidates
-            .iter()
-            .copied()
-            .filter(|m| m.params.len() == arg_count as usize)
-            .collect();
-
-        if by_count.is_empty() {
-            tracing::warn!(
-                arg_count,
-                "no method matches parameter count, falling back to candidates[0]"
-            );
-            return Some(candidates[0]);
-        }
-
-        if by_count.len() == 1 {
-            return Some(by_count[0]);
-        }
-
-        let mut best_score = -1;
-        let mut best_match: Option<&MethodSummary> = None;
-
-        for m in &by_count {
-            let score = self.score_params(&m.desc(), arg_types);
-
-            tracing::debug!(
-                method = %m.name,
-                desc = %m.desc(),
-                score = score,
-                "evaluating candidate"
-            );
-
-            if score > best_score {
-                best_score = score;
-                best_match = Some(*m);
+        let mut best: Option<OverloadMatch<'a>> = None;
+        for method in candidates.iter().copied() {
+            if let Some(score) = self.score_fixed_applicability(method, &normalized_args) {
+                let m = OverloadMatch {
+                    method,
+                    mode: OverloadInvocationMode::Fixed,
+                    score,
+                };
+                if better_overload_match(best, m) {
+                    best = Some(m);
+                }
+            }
+            if let Some(score) = self.score_varargs_applicability(method, &normalized_args) {
+                let m = OverloadMatch {
+                    method,
+                    mode: OverloadInvocationMode::Varargs,
+                    score,
+                };
+                if better_overload_match(best, m) {
+                    best = Some(m);
+                }
             }
         }
-
-        match best_match {
-            Some(m) if best_score >= 0 => {
-                tracing::debug!(selected = %m.desc(), score = best_score, "selected best match");
-                Some(m)
-            }
-            _ => {
-                // If all count-matched candidates fail scoring, still prefer a count-matched fallback.
-                tracing::warn!(
-                    "all overloads failed type scoring, falling back to first count-matched method"
-                );
-                Some(by_count[0])
-            }
-        }
+        best
     }
 
     pub fn resolve_chain(
@@ -812,10 +810,19 @@ impl<'idx> TypeResolver<'idx> {
         receiver_internal: &str,
         selected: &MethodSummary,
         arg_index: usize,
+        mode: OverloadInvocationMode,
     ) -> Option<(TypeName, bool)> {
         let sig = selected.generic_signature.as_deref()?;
         let (params, _) = parse_method_signature_types(sig)?;
-        let mut param = params.get(arg_index)?.clone();
+        let (mapped_index, vararg_element) =
+            map_argument_index_to_parameter(selected, arg_index, mode, params.len())?;
+        let mut param = params.get(mapped_index)?.clone();
+        if vararg_element {
+            let JvmType::Array(inner) = param else {
+                return None;
+            };
+            param = *inner;
+        }
 
         let (receiver_owner, receiver_args) = split_internal_name(receiver_internal);
         if !receiver_args.is_empty()
@@ -836,6 +843,25 @@ impl<'idx> TypeResolver<'idx> {
 
         let exact = is_concrete_jvm_type(&param);
         Some((param.to_type_name(), exact))
+    }
+
+    pub fn resolve_selected_param_descriptor_for_call(
+        &self,
+        selected: &MethodSummary,
+        arg_index: usize,
+        mode: OverloadInvocationMode,
+    ) -> Option<Arc<str>> {
+        let params = &selected.params.items;
+        let (mapped_index, vararg_element) =
+            map_argument_index_to_parameter(selected, arg_index, mode, params.len())?;
+        let desc = params.get(mapped_index)?.descriptor.clone();
+        if !vararg_element {
+            return Some(desc);
+        }
+        if let Some(elem) = desc.strip_prefix('[') {
+            return Some(Arc::from(elem));
+        }
+        None
     }
 
     fn find_declaring_class_generic_signature(
@@ -880,6 +906,77 @@ impl<'idx> TypeResolver<'idx> {
 
         tracing::debug!(total_score = total_score, "score_params finished");
         total_score
+    }
+
+    fn score_fixed_applicability(
+        &self,
+        method: &MethodSummary,
+        arg_types: &[TypeName],
+    ) -> Option<i32> {
+        if method.params.len() != arg_types.len() {
+            return None;
+        }
+        self.score_descriptor_list(
+            &method
+                .params
+                .items
+                .iter()
+                .map(|p| p.descriptor.as_ref())
+                .collect::<Vec<_>>(),
+            arg_types,
+        )
+    }
+
+    fn score_varargs_applicability(
+        &self,
+        method: &MethodSummary,
+        arg_types: &[TypeName],
+    ) -> Option<i32> {
+        if !is_varargs_method(method) {
+            return None;
+        }
+        let params = &method.params.items;
+        if params.is_empty() {
+            return None;
+        }
+        let fixed_prefix = params.len() - 1;
+        if arg_types.len() < fixed_prefix {
+            return None;
+        }
+        let mut total = 0;
+        for (i, p) in params.iter().take(fixed_prefix).enumerate() {
+            total += self.score_argument_against_descriptor(&p.descriptor, &arg_types[i])?;
+        }
+        let vararg_desc = params.last()?.descriptor.as_ref();
+        let vararg_elem = vararg_desc.strip_prefix('[')?;
+        for arg in arg_types.iter().skip(fixed_prefix) {
+            total += self.score_argument_against_descriptor(vararg_elem, arg)?;
+        }
+        // Prefer fixed invocation when both are otherwise applicable.
+        Some(total - 1)
+    }
+
+    fn score_descriptor_list(&self, param_descs: &[&str], arg_types: &[TypeName]) -> Option<i32> {
+        if param_descs.len() != arg_types.len() {
+            return None;
+        }
+        let mut total = 0;
+        for (desc, arg) in param_descs.iter().zip(arg_types.iter()) {
+            total += self.score_argument_against_descriptor(desc, arg)?;
+        }
+        Some(total)
+    }
+
+    fn score_argument_against_descriptor(&self, desc: &str, arg_ty: &TypeName) -> Option<i32> {
+        if is_type_variable_descriptor_token(desc) {
+            return Some(0);
+        }
+        if arg_ty.erased_internal() == "unknown" {
+            return Some(0);
+        }
+        let ty_str = arg_ty.erased_internal_with_arrays();
+        let score = self.score_single_descriptor(desc, &ty_str);
+        (score >= 0).then_some(score)
     }
 
     pub fn score_single_descriptor(&self, desc: &str, ty: &str) -> i32 {
@@ -984,6 +1081,95 @@ impl<'idx> TypeResolver<'idx> {
         tracing::debug!("score: -1 (no match found)");
         -1
     }
+}
+
+fn normalize_call_arg_count(arg_count: i32, arg_types: &[TypeName]) -> usize {
+    if arg_count >= 0 {
+        arg_count as usize
+    } else {
+        arg_types.len()
+    }
+}
+
+fn normalize_arg_types(arg_count: usize, arg_types: &[TypeName]) -> Vec<TypeName> {
+    if arg_types.len() >= arg_count {
+        return arg_types[..arg_count].to_vec();
+    }
+    let mut out = arg_types.to_vec();
+    while out.len() < arg_count {
+        out.push(TypeName::new("unknown"));
+    }
+    out
+}
+
+fn is_varargs_method(method: &MethodSummary) -> bool {
+    if (method.access_flags & ACC_VARARGS) == 0 || method.params.is_empty() {
+        return false;
+    }
+    method
+        .params
+        .items
+        .last()
+        .is_some_and(|p| p.descriptor.starts_with('['))
+}
+
+fn better_overload_match(current: Option<OverloadMatch<'_>>, candidate: OverloadMatch<'_>) -> bool {
+    let Some(current) = current else {
+        return true;
+    };
+    let mode_rank = |m: OverloadInvocationMode| match m {
+        OverloadInvocationMode::Fixed => 1,
+        OverloadInvocationMode::Varargs => 0,
+    };
+    if mode_rank(candidate.mode) != mode_rank(current.mode) {
+        return mode_rank(candidate.mode) > mode_rank(current.mode);
+    }
+    candidate.score > current.score
+}
+
+fn map_argument_index_to_parameter(
+    selected: &MethodSummary,
+    arg_index: usize,
+    mode: OverloadInvocationMode,
+    param_len: usize,
+) -> Option<(usize, bool)> {
+    if param_len == 0 {
+        return None;
+    }
+    match mode {
+        OverloadInvocationMode::Fixed => {
+            if arg_index >= param_len {
+                None
+            } else {
+                Some((arg_index, false))
+            }
+        }
+        OverloadInvocationMode::Varargs => {
+            if !is_varargs_method(selected) {
+                return None;
+            }
+            let fixed_prefix = param_len - 1;
+            if arg_index < fixed_prefix {
+                Some((arg_index, false))
+            } else {
+                Some((param_len - 1, true))
+            }
+        }
+    }
+}
+
+fn is_type_variable_descriptor_token(desc: &str) -> bool {
+    if desc.starts_with('T') && desc.ends_with(';') {
+        return true;
+    }
+    if !(desc.starts_with('L') && desc.ends_with(';')) {
+        return false;
+    }
+    let inner = &desc[1..desc.len() - 1];
+    if inner.is_empty() || inner.contains('/') || inner.contains('.') || inner.contains('$') {
+        return false;
+    }
+    inner.len() <= 3 && inner.chars().all(|c| c.is_ascii_uppercase())
 }
 
 pub fn descriptor_to_source_type(desc: &str, provider: &impl SymbolProvider) -> Option<String> {
@@ -2830,6 +3016,201 @@ mod tests {
             best_wrapper.unwrap().desc().as_ref(),
             "(Ljava/lang/Integer;)V"
         );
+    }
+
+    #[test]
+    fn test_overload_resolution_no_applicable_returns_none() {
+        use crate::index::MethodSummary;
+        use rust_asm::constants::ACC_PUBLIC;
+
+        let noarg = MethodSummary {
+            name: Arc::from("println"),
+            params: MethodParams::empty(),
+            annotations: vec![],
+            access_flags: ACC_PUBLIC,
+            is_synthetic: false,
+            generic_signature: None,
+            return_type: None,
+        };
+        let one_string = MethodSummary {
+            name: Arc::from("println"),
+            params: MethodParams::from_method_descriptor("(Ljava/lang/String;)V"),
+            annotations: vec![],
+            access_flags: ACC_PUBLIC,
+            is_synthetic: false,
+            generic_signature: None,
+            return_type: None,
+        };
+        let idx = WorkspaceIndex::new();
+        let view = idx.view(root_scope());
+        let resolver = TypeResolver::new(&view);
+        let candidates = vec![&noarg, &one_string];
+        let args = vec![
+            TypeName::new("java/lang/String"),
+            TypeName::new("java/lang/String"),
+            TypeName::new("java/lang/String"),
+        ];
+        assert!(
+            resolver
+                .select_overload_match(&candidates, 3, &args)
+                .is_none(),
+            "no applicable overload should yield None"
+        );
+    }
+
+    #[test]
+    fn test_varargs_applicability_zero_one_many_and_array_form() {
+        use crate::index::MethodSummary;
+        use rust_asm::constants::{ACC_PUBLIC, ACC_VARARGS};
+
+        let varargs = MethodSummary {
+            name: Arc::from("join"),
+            params: MethodParams::from_method_descriptor("([Ljava/lang/String;)V"),
+            annotations: vec![],
+            access_flags: ACC_PUBLIC | ACC_VARARGS,
+            is_synthetic: false,
+            generic_signature: None,
+            return_type: None,
+        };
+        let idx = WorkspaceIndex::new();
+        let view = idx.view(root_scope());
+        let resolver = TypeResolver::new(&view);
+        let candidates = vec![&varargs];
+
+        let m0 = resolver
+            .select_overload_match(&candidates, 0, &[])
+            .expect("varargs zero args");
+        assert_eq!(m0.mode, OverloadInvocationMode::Varargs);
+
+        let m1 = resolver
+            .select_overload_match(&candidates, 1, &[TypeName::new("java/lang/String")])
+            .expect("varargs one arg");
+        assert_eq!(m1.mode, OverloadInvocationMode::Varargs);
+
+        let m3 = resolver
+            .select_overload_match(
+                &candidates,
+                3,
+                &[
+                    TypeName::new("java/lang/String"),
+                    TypeName::new("java/lang/String"),
+                    TypeName::new("java/lang/String"),
+                ],
+            )
+            .expect("varargs many args");
+        assert_eq!(m3.mode, OverloadInvocationMode::Varargs);
+
+        let arr = resolver
+            .select_overload_match(&candidates, 1, &[TypeName::new("java/lang/String[]")])
+            .expect("single-array form");
+        assert_eq!(
+            arr.mode,
+            OverloadInvocationMode::Fixed,
+            "single-array form should resolve as fixed invocation mode"
+        );
+    }
+
+    #[test]
+    fn test_overload_resolution_prefers_fixed_over_varargs_when_both_applicable() {
+        use crate::index::MethodSummary;
+        use rust_asm::constants::{ACC_PUBLIC, ACC_VARARGS};
+
+        let fixed = MethodSummary {
+            name: Arc::from("m"),
+            params: MethodParams::from_method_descriptor("(Ljava/lang/String;)V"),
+            annotations: vec![],
+            access_flags: ACC_PUBLIC,
+            is_synthetic: false,
+            generic_signature: None,
+            return_type: None,
+        };
+        let varargs = MethodSummary {
+            name: Arc::from("m"),
+            params: MethodParams::from_method_descriptor("([Ljava/lang/String;)V"),
+            annotations: vec![],
+            access_flags: ACC_PUBLIC | ACC_VARARGS,
+            is_synthetic: false,
+            generic_signature: None,
+            return_type: None,
+        };
+        let idx = WorkspaceIndex::new();
+        let view = idx.view(root_scope());
+        let resolver = TypeResolver::new(&view);
+        let candidates = vec![&varargs, &fixed];
+        let selected = resolver
+            .select_overload_match(&candidates, 1, &[TypeName::new("java/lang/String")])
+            .expect("resolved");
+        assert_eq!(selected.method.desc().as_ref(), "(Ljava/lang/String;)V");
+        assert_eq!(selected.mode, OverloadInvocationMode::Fixed);
+    }
+
+    #[test]
+    fn test_varargs_trailing_expected_type_maps_to_element_descriptor() {
+        use crate::index::MethodSummary;
+        use rust_asm::constants::{ACC_PUBLIC, ACC_VARARGS};
+
+        let method = MethodSummary {
+            name: Arc::from("addAll"),
+            params: MethodParams::from_method_descriptor("(I[Ljava/lang/String;)V"),
+            annotations: vec![],
+            access_flags: ACC_PUBLIC | ACC_VARARGS,
+            is_synthetic: false,
+            generic_signature: None,
+            return_type: None,
+        };
+        let idx = WorkspaceIndex::new();
+        let view = idx.view(root_scope());
+        let resolver = TypeResolver::new(&view);
+        let desc = resolver
+            .resolve_selected_param_descriptor_for_call(&method, 3, OverloadInvocationMode::Varargs)
+            .expect("vararg trailing descriptor");
+        assert_eq!(desc.as_ref(), "Ljava/lang/String;");
+    }
+
+    #[test]
+    fn test_constructor_varargs_uses_same_shared_overload_matcher() {
+        use crate::index::MethodSummary;
+        use rust_asm::constants::{ACC_PUBLIC, ACC_VARARGS};
+
+        let ctor_fixed = MethodSummary {
+            name: Arc::from("<init>"),
+            params: MethodParams::from_method_descriptor("(Ljava/lang/String;)V"),
+            annotations: vec![],
+            access_flags: ACC_PUBLIC,
+            is_synthetic: false,
+            generic_signature: None,
+            return_type: None,
+        };
+        let ctor_varargs = MethodSummary {
+            name: Arc::from("<init>"),
+            params: MethodParams::from_method_descriptor("([Ljava/lang/String;)V"),
+            annotations: vec![],
+            access_flags: ACC_PUBLIC | ACC_VARARGS,
+            is_synthetic: false,
+            generic_signature: None,
+            return_type: None,
+        };
+        let idx = WorkspaceIndex::new();
+        let view = idx.view(root_scope());
+        let resolver = TypeResolver::new(&view);
+        let candidates = vec![&ctor_varargs, &ctor_fixed];
+        let one = resolver
+            .select_overload_match(&candidates, 1, &[TypeName::new("java/lang/String")])
+            .expect("constructor one arg");
+        assert_eq!(one.method.desc().as_ref(), "(Ljava/lang/String;)V");
+        let many = resolver
+            .select_overload_match(
+                &candidates,
+                3,
+                &[
+                    TypeName::new("java/lang/String"),
+                    TypeName::new("java/lang/String"),
+                    TypeName::new("java/lang/String"),
+                ],
+            )
+            .expect("constructor varargs");
+        assert_eq!(many.method.desc().as_ref(), "([Ljava/lang/String;)V");
+        assert_eq!(many.mode, OverloadInvocationMode::Varargs);
     }
 
     #[test]
