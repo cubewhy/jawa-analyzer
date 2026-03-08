@@ -503,7 +503,12 @@ fn evaluate_chain(
                 let recv_full: TypeName = if recv.contains_slash() {
                     recv.clone()
                 } else {
-                    type_ctx.resolve_type_name_strict(recv.erased_internal())?
+                    let mut canonical = type_ctx.resolve_type_name_strict(recv.erased_internal())?;
+                    if !recv.args.is_empty() {
+                        canonical.args = recv.args.clone();
+                    }
+                    canonical.array_dims = recv.array_dims;
+                    canonical
                 };
 
                 if seg.arg_count.is_some() {
@@ -1657,6 +1662,119 @@ mod tests {
         idx
     }
 
+    fn make_index_with_box_map_get_trim_and_constructor_chain() -> WorkspaceIndex {
+        let idx = WorkspaceIndex::new();
+        idx.add_jar_classes(
+            IndexScope {
+                module: ModuleId::ROOT,
+            },
+            vec![
+                ClassMetadata {
+                    package: None,
+                    name: Arc::from("Box"),
+                    internal_name: Arc::from("Box"),
+                    super_name: None,
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![
+                        MethodSummary {
+                            name: Arc::from("map"),
+                            params: MethodParams::from([("Ljava/util/function/Function;", "fn")]),
+                            annotations: vec![],
+                            access_flags: ACC_PUBLIC,
+                            is_synthetic: false,
+                            generic_signature: Some(Arc::from(
+                                "<R:Ljava/lang/Object;>(Ljava/util/function/Function<-TT;+TR;>;)LBox<TR;>;",
+                            )),
+                            return_type: Some(Arc::from("LBox;")),
+                        },
+                        MethodSummary {
+                            name: Arc::from("get"),
+                            params: MethodParams::empty(),
+                            annotations: vec![],
+                            access_flags: ACC_PUBLIC,
+                            is_synthetic: false,
+                            generic_signature: Some(Arc::from("()TT;")),
+                            return_type: Some(Arc::from("Ljava/lang/Object;")),
+                        },
+                    ],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: Some(Arc::from("<T:Ljava/lang/Object;>Ljava/lang/Object;")),
+                    origin: ClassOrigin::Unknown,
+                },
+                ClassMetadata {
+                    package: Some(Arc::from("java/lang")),
+                    name: Arc::from("String"),
+                    internal_name: Arc::from("java/lang/String"),
+                    super_name: None,
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![
+                        MethodSummary {
+                            name: Arc::from("trim"),
+                            params: MethodParams::empty(),
+                            annotations: vec![],
+                            access_flags: ACC_PUBLIC,
+                            is_synthetic: false,
+                            generic_signature: None,
+                            return_type: Some(Arc::from("Ljava/lang/String;")),
+                        },
+                        MethodSummary {
+                            name: Arc::from("substring"),
+                            params: MethodParams::from([("I", "beginIndex")]),
+                            annotations: vec![],
+                            access_flags: ACC_PUBLIC,
+                            is_synthetic: false,
+                            generic_signature: None,
+                            return_type: Some(Arc::from("Ljava/lang/String;")),
+                        },
+                    ],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: None,
+                    origin: ClassOrigin::Unknown,
+                },
+                ClassMetadata {
+                    package: Some(Arc::from("java/util")),
+                    name: Arc::from("ArrayList"),
+                    internal_name: Arc::from("java/util/ArrayList"),
+                    super_name: None,
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![
+                        MethodSummary {
+                            name: Arc::from("<init>"),
+                            params: MethodParams::empty(),
+                            annotations: vec![],
+                            access_flags: ACC_PUBLIC,
+                            is_synthetic: false,
+                            generic_signature: None,
+                            return_type: None,
+                        },
+                        MethodSummary {
+                            name: Arc::from("add"),
+                            params: MethodParams::from([("Ljava/lang/Object;", "e")]),
+                            annotations: vec![],
+                            access_flags: ACC_PUBLIC,
+                            is_synthetic: false,
+                            generic_signature: None,
+                            return_type: Some(Arc::from("Z")),
+                        },
+                    ],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: None,
+                    origin: ClassOrigin::Unknown,
+                },
+            ],
+        );
+        idx
+    }
+
     #[test]
     fn test_enrich_context_resolves_simple_name_via_import() {
         let idx = make_index_with_random_class();
@@ -2788,5 +2906,227 @@ mod tests {
         }
 
         insta::assert_snapshot!("semantic_pipeline_regression_baseline", out);
+    }
+
+    #[test]
+    fn test_snapshot_chain_receiver_concretization_trim_and_constructor_new() {
+        use crate::completion::provider::CompletionProvider;
+        use crate::language::java::completion::providers::member::MemberProvider;
+
+        let idx = make_index_with_box_map_get_trim_and_constructor_chain();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        let view = idx.view(scope);
+        let name_table = view.build_name_table();
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            None,
+            vec!["java.util.*".into(), "java.lang.*".into()],
+            Some(name_table),
+        ));
+
+        let mk_ctx = |receiver_expr: &str, prefix: &str| {
+            SemanticContext::new(
+                CursorLocation::MemberAccess {
+                    receiver_semantic_type: None,
+                    receiver_type: None,
+                    member_prefix: prefix.to_string(),
+                    receiver_expr: receiver_expr.to_string(),
+                    arguments: None,
+                },
+                prefix,
+                vec![
+                    LocalVar {
+                        name: Arc::from("strBox"),
+                        type_internal: TypeName::with_args(
+                            "Box",
+                            vec![TypeName::new("java/lang/String")],
+                        ),
+                        init_expr: None,
+                    },
+                    LocalVar {
+                        name: Arc::from("s"),
+                        type_internal: TypeName::with_args(
+                            "Box",
+                            vec![TypeName::new("java/lang/String")],
+                        ),
+                        init_expr: None,
+                    },
+                ],
+                Some(Arc::from("Demo")),
+                Some(Arc::from("Demo")),
+                None,
+                vec!["java.util.*".into(), "java.lang.*".into()],
+            )
+            .with_extension(type_ctx.clone())
+        };
+
+        let resolver = TypeResolver::new(&view);
+        let resolve_qualifier = |q: &str| type_ctx.resolve_type_name_strict(q);
+        let mut ctx_trim = mk_ctx("strBox.map(String::trim).get()", "sub");
+        let trim_chain = parse_chain_from_expr("strBox.map(String::trim).get()");
+        let trim_eval = evaluate_chain(
+            &trim_chain,
+            &ctx_trim.local_variables,
+            ctx_trim.enclosing_internal_name.as_ref(),
+            &resolver,
+            ctx_trim.extension::<SourceTypeCtx>().expect("type ctx"),
+            &view,
+        );
+        let trim_canonical = canonicalize_receiver_semantic(
+            trim_eval.clone(),
+            ctx_trim.extension::<SourceTypeCtx>().expect("type ctx"),
+        );
+        let trim_direct_map = resolver.resolve_method_return_with_callsite_and_qualifier_resolver(
+            "Box<Ljava/lang/String;>",
+            "map",
+            1,
+            &[],
+            &["String::trim".to_string()],
+            &ctx_trim.local_variables,
+            ctx_trim.enclosing_internal_name.as_ref(),
+            Some(&resolve_qualifier),
+        );
+        let trim_direct_get = trim_direct_map.as_ref().and_then(|m| {
+            resolver.resolve_method_return_with_callsite_and_qualifier_resolver(
+                &m.to_internal_with_generics(),
+                "get",
+                0,
+                &[],
+                &[],
+                &ctx_trim.local_variables,
+                ctx_trim.enclosing_internal_name.as_ref(),
+                Some(&resolve_qualifier),
+            )
+        });
+        ContextEnricher::new(&view).enrich(&mut ctx_trim);
+        let mut trim_labels: Vec<String> = MemberProvider
+            .provide(scope, &ctx_trim, &view)
+            .into_iter()
+            .map(|c| c.label.to_string())
+            .collect();
+        trim_labels.sort();
+        assert!(
+            trim_labels.iter().any(|l| l == "substring"),
+            "trim chain should expose String members"
+        );
+        assert_eq!(
+            trim_eval.as_ref().map(TypeName::to_internal_with_generics),
+            trim_direct_get.as_ref().map(TypeName::to_internal_with_generics),
+            "chain evaluation should match direct callsite concretization for String::trim"
+        );
+
+        let mut ctx_ctor = mk_ctx("s.map(ArrayList::new).get()", "ad");
+        let ctor_chain = parse_chain_from_expr("s.map(ArrayList::new).get()");
+        let ctor_eval = evaluate_chain(
+            &ctor_chain,
+            &ctx_ctor.local_variables,
+            ctx_ctor.enclosing_internal_name.as_ref(),
+            &resolver,
+            ctx_ctor.extension::<SourceTypeCtx>().expect("type ctx"),
+            &view,
+        );
+        let ctor_canonical = canonicalize_receiver_semantic(
+            ctor_eval.clone(),
+            ctx_ctor.extension::<SourceTypeCtx>().expect("type ctx"),
+        );
+        let ctor_direct_map = resolver.resolve_method_return_with_callsite_and_qualifier_resolver(
+            "Box<Ljava/lang/String;>",
+            "map",
+            1,
+            &[],
+            &["ArrayList::new".to_string()],
+            &ctx_ctor.local_variables,
+            ctx_ctor.enclosing_internal_name.as_ref(),
+            Some(&resolve_qualifier),
+        );
+        let ctor_direct_get = ctor_direct_map.as_ref().and_then(|m| {
+            resolver.resolve_method_return_with_callsite_and_qualifier_resolver(
+                &m.to_internal_with_generics(),
+                "get",
+                0,
+                &[],
+                &[],
+                &ctx_ctor.local_variables,
+                ctx_ctor.enclosing_internal_name.as_ref(),
+                Some(&resolve_qualifier),
+            )
+        });
+        ContextEnricher::new(&view).enrich(&mut ctx_ctor);
+        let mut ctor_labels: Vec<String> = MemberProvider
+            .provide(scope, &ctx_ctor, &view)
+            .into_iter()
+            .map(|c| c.label.to_string())
+            .collect();
+        ctor_labels.sort();
+        assert!(
+            ctor_labels.iter().any(|l| l == "add"),
+            "constructor chain should expose ArrayList members"
+        );
+        assert_eq!(
+            ctor_eval.as_ref().map(TypeName::to_internal_with_generics),
+            ctor_direct_get.as_ref().map(TypeName::to_internal_with_generics),
+            "chain evaluation should match direct callsite concretization for ArrayList::new"
+        );
+
+        let mut out = String::new();
+        if let CursorLocation::MemberAccess {
+            receiver_semantic_type,
+            receiver_type,
+            ..
+        } = &ctx_trim.location
+        {
+            out.push_str(&format!(
+                "case_trim:\nreceiver_semantic={:?}\nreceiver_type={:?}\nlabels={:?}\n\n",
+                receiver_semantic_type
+                    .as_ref()
+                    .map(TypeName::to_internal_with_generics),
+                receiver_type,
+                trim_labels
+            ));
+            out.push_str(&format!(
+                "trim_internal_trace:\ndirect_map={:?}\ndirect_get={:?}\nevaluate_chain={:?}\ncanonicalized={:?}\n\n",
+                trim_direct_map
+                    .as_ref()
+                    .map(TypeName::to_internal_with_generics),
+                trim_direct_get
+                    .as_ref()
+                    .map(TypeName::to_internal_with_generics),
+                trim_eval.as_ref().map(TypeName::to_internal_with_generics),
+                trim_canonical
+                    .as_ref()
+                    .map(TypeName::to_internal_with_generics)
+            ));
+        }
+        if let CursorLocation::MemberAccess {
+            receiver_semantic_type,
+            receiver_type,
+            ..
+        } = &ctx_ctor.location
+        {
+            out.push_str(&format!(
+                "case_constructor:\nreceiver_semantic={:?}\nreceiver_type={:?}\nlabels={:?}\n",
+                receiver_semantic_type
+                    .as_ref()
+                    .map(TypeName::to_internal_with_generics),
+                receiver_type,
+                ctor_labels
+            ));
+            out.push_str(&format!(
+                "constructor_internal_trace:\ndirect_map={:?}\ndirect_get={:?}\nevaluate_chain={:?}\ncanonicalized={:?}\n",
+                ctor_direct_map
+                    .as_ref()
+                    .map(TypeName::to_internal_with_generics),
+                ctor_direct_get
+                    .as_ref()
+                    .map(TypeName::to_internal_with_generics),
+                ctor_eval.as_ref().map(TypeName::to_internal_with_generics),
+                ctor_canonical
+                    .as_ref()
+                    .map(TypeName::to_internal_with_generics)
+            ));
+        }
+
+        insta::assert_snapshot!("chain_receiver_concretization_trim_and_constructor_new", out);
     }
 }

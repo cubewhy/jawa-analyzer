@@ -1258,6 +1258,7 @@ mod tests {
     use crate::{
         completion::parser::parse_chain_from_expr,
         index::{IndexScope, IndexView, MethodParams, ModuleId, WorkspaceIndex},
+        language::java::render,
     };
 
     fn root_scope() -> IndexScope {
@@ -1491,6 +1492,123 @@ mod tests {
             init_expr: None,
         }];
         (idx.view(root_scope()), locals)
+    }
+
+    fn make_functional_binding_trim_constructor_fixture() -> (IndexView, Vec<LocalVar>) {
+        use crate::index::{ClassMetadata, ClassOrigin, MethodSummary};
+        use rust_asm::constants::ACC_PUBLIC;
+
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: None,
+                name: Arc::from("Box"),
+                internal_name: Arc::from("Box"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![
+                    MethodSummary {
+                        name: Arc::from("map"),
+                        params: MethodParams::from_method_descriptor(
+                            "(Ljava/util/function/Function;)LBox;",
+                        ),
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        annotations: vec![],
+                        generic_signature: Some(Arc::from(
+                            "<R:Ljava/lang/Object;>(Ljava/util/function/Function<-TT;+TR;>;)LBox<TR;>;",
+                        )),
+                        return_type: Some(Arc::from("LBox;")),
+                    },
+                    MethodSummary {
+                        name: Arc::from("get"),
+                        params: MethodParams::empty(),
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        annotations: vec![],
+                        generic_signature: Some(Arc::from("()TT;")),
+                        return_type: Some(Arc::from("Ljava/lang/Object;")),
+                    },
+                ],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: None,
+                generic_signature: Some(Arc::from("<T:Ljava/lang/Object;>Ljava/lang/Object;")),
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("String"),
+                internal_name: Arc::from("java/lang/String"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![MethodSummary {
+                    name: Arc::from("trim"),
+                    params: MethodParams::empty(),
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    annotations: vec![],
+                    generic_signature: None,
+                    return_type: Some(Arc::from("Ljava/lang/String;")),
+                }],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: None,
+                generic_signature: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/util")),
+                name: Arc::from("ArrayList"),
+                internal_name: Arc::from("java/util/ArrayList"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![MethodSummary {
+                    name: Arc::from("<init>"),
+                    params: MethodParams::empty(),
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    annotations: vec![],
+                    generic_signature: None,
+                    return_type: None,
+                }],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: None,
+                generic_signature: None,
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+
+        let locals = vec![
+            LocalVar {
+                name: Arc::from("strBox"),
+                type_internal: TypeName::with_args(
+                    "Box",
+                    vec![TypeName::new("java/lang/String")],
+                ),
+                init_expr: None,
+            },
+            LocalVar {
+                name: Arc::from("s"),
+                type_internal: TypeName::with_args(
+                    "Box",
+                    vec![TypeName::new("java/lang/String")],
+                ),
+                init_expr: None,
+            },
+        ];
+        (idx.view(root_scope()), locals)
+    }
+
+    struct SnapshotProvider;
+    impl SymbolProvider for SnapshotProvider {
+        fn resolve_source_name(&self, internal_name: &str) -> Option<String> {
+            Some(internal_name.replace('/', "."))
+        }
     }
 
     #[test]
@@ -1946,6 +2064,141 @@ mod tests {
         ));
 
         insta::assert_snapshot!("functional_binding_provenance_map_list_size_ambiguous_list_owner", out);
+    }
+
+    #[test]
+    fn test_snapshot_functional_chain_concretization_trim_and_constructor_new() {
+        let (view, locals) = make_functional_binding_trim_constructor_fixture();
+        let resolver = TypeResolver::new(&view);
+
+        let trace_case = |var_name: &str, functional_arg: &str| {
+            let mut out = String::new();
+            let expr = format!("{var_name}.map({functional_arg}).get()");
+            let chain = parse_chain_from_expr(&expr);
+            let map_seg = chain.get(1).expect("map segment");
+            let receiver = resolver
+                .resolve(var_name, &locals, None)
+                .expect("receiver local");
+            let receiver_internal = receiver.to_internal_with_generics();
+
+            let (methods, _) = view.collect_inherited_members(receiver.erased_internal());
+            let map_candidates: Vec<_> = methods
+                .iter()
+                .filter(|m| m.name.as_ref() == "map")
+                .map(|m| m.as_ref())
+                .collect();
+            let selected_map = resolver
+                .select_overload(&map_candidates, map_seg.arg_count.unwrap_or(-1), &[])
+                .expect("selected map");
+            let map_sig = selected_map
+                .generic_signature
+                .clone()
+                .unwrap_or_else(|| selected_map.desc());
+            let (map_params, map_ret) =
+                parse_method_signature_types(&map_sig).expect("parsed map sig");
+
+            let mut return_type_vars = std::collections::HashSet::new();
+            collect_type_vars(&map_ret, &mut return_type_vars);
+            let mut return_type_vars_sorted: Vec<_> = return_type_vars.iter().cloned().collect();
+            return_type_vars_sorted.sort();
+
+            let inferred_functional_ret =
+                resolver.infer_functional_arg_return_shallow(functional_arg, &locals, None, None);
+            let bindings = resolver.infer_method_type_bindings_shallow(
+                "map",
+                &map_sig,
+                &map_params,
+                &map_ret,
+                &[],
+                &map_seg.arg_texts,
+                &locals,
+                None,
+                None,
+            );
+            let mut bindings_sorted: Vec<_> = bindings
+                .iter()
+                .map(|(k, v)| (k.clone(), v.to_signature_string()))
+                .collect();
+            bindings_sorted.sort_by(|a, b| a.0.cmp(&b.0));
+
+            let map_result = resolver.resolve_method_return_with_callsite(
+                &receiver_internal,
+                "map",
+                map_seg.arg_count.unwrap_or(-1),
+                &[],
+                &map_seg.arg_texts,
+                &locals,
+                None,
+            );
+            let get_receiver = map_result
+                .as_ref()
+                .map(TypeName::to_internal_with_generics)
+                .unwrap_or_else(|| "<none>".to_string());
+            let get_result = map_result.as_ref().and_then(|r| {
+                resolver.resolve_method_return_with_callsite(
+                    &r.to_internal_with_generics(),
+                    "get",
+                    0,
+                    &[],
+                    &[],
+                    &locals,
+                    None,
+                )
+            });
+            let chain_result = resolver.resolve_chain(&chain, &locals, None);
+
+            let (box_methods, _) = view.collect_inherited_members("Box");
+            let get_method = box_methods
+                .iter()
+                .find(|m| m.name.as_ref() == "get")
+                .expect("get method");
+            let box_meta = view.get_class("Box").expect("Box class");
+            let rendered_get_detail = render::method_detail(
+                &get_receiver,
+                &box_meta,
+                get_method.as_ref(),
+                &SnapshotProvider,
+            );
+
+            out.push_str(&format!("expr={expr}\n"));
+            out.push_str(&format!(
+                "selected_map: desc={} generic_signature={:?} return_type={:?}\n",
+                selected_map.desc(),
+                selected_map.generic_signature,
+                selected_map.return_type
+            ));
+            out.push_str(&format!(
+                "parsed_map: params={:?} return={} return_type_vars={:?}\n",
+                map_params
+                    .iter()
+                    .map(JvmType::to_signature_string)
+                    .collect::<Vec<_>>(),
+                map_ret.to_signature_string(),
+                return_type_vars_sorted
+            ));
+            out.push_str(&format!(
+                "functional_inference: inferred_return={:?} inferred_bindings={:?}\n",
+                inferred_functional_ret.map(|t| t.to_signature_string()),
+                bindings_sorted
+            ));
+            out.push_str(&format!(
+                "chain_types: receiver_before_map={} map_result={:?} get_receiver={} get_result={:?} final_chain={:?}\n",
+                receiver_internal,
+                map_result.as_ref().map(TypeName::to_internal_with_generics),
+                get_receiver,
+                get_result.as_ref().map(TypeName::to_internal_with_generics),
+                chain_result.as_ref().map(TypeName::to_internal_with_generics),
+            ));
+            out.push_str(&format!("rendered_get_detail={rendered_get_detail}\n"));
+            out
+        };
+
+        let out = format!(
+            "case_trim:\n{}\ncase_constructor:\n{}",
+            trace_case("strBox", "String::trim"),
+            trace_case("s", "ArrayList::new")
+        );
+        insta::assert_snapshot!("functional_chain_concretization_trim_and_constructor_new", out);
     }
 
     #[test]

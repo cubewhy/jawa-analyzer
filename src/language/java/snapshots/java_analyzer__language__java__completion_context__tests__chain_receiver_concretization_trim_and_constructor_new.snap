@@ -1,0 +1,24 @@
+---
+source: src/language/java/completion_context.rs
+expression: out
+---
+case_trim:
+receiver_semantic=Some("java/lang/String")
+receiver_type=Some("java/lang/String")
+labels=["substring"]
+
+trim_internal_trace:
+direct_map=Some("Box<Ljava/lang/String;>")
+direct_get=Some("java/lang/String")
+evaluate_chain=Some("java/lang/String")
+canonicalized=Some("java/lang/String")
+
+case_constructor:
+receiver_semantic=Some("java/util/ArrayList")
+receiver_type=Some("java/util/ArrayList")
+labels=["add"]
+constructor_internal_trace:
+direct_map=Some("Box<Ljava/util/ArrayList;>")
+direct_get=Some("java/util/ArrayList")
+evaluate_chain=Some("java/util/ArrayList")
+canonicalized=Some("java/util/ArrayList")
