@@ -1222,6 +1222,109 @@ mod tests {
     }
 
     #[test]
+    fn test_binary_expression_var_materialization_surfaces_int_in_completion() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![make_class("java/lang", "Object")]);
+        let view = idx.view(root_scope());
+
+        let src_a = indoc::indoc! {r#"
+        class Demo {
+            void f() {
+                int i = 1;
+                var a = 1 + 1;
+                var b = i + 1;
+                a|
+            }
+        }
+        "#};
+        let (_ctx_a, candidates_a) = ctx_and_candidates_from_marked_source(src_a, &view);
+        let cand_a = candidates_a
+            .iter()
+            .find(|c| c.label.as_ref() == "a")
+            .expect("expected local candidate a");
+        match &cand_a.kind {
+            crate::completion::CandidateKind::LocalVariable { type_descriptor } => {
+                assert_eq!(type_descriptor.as_ref(), "int");
+            }
+            other => panic!("expected local variable candidate for a, got {other:?}"),
+        }
+
+        let src_b = indoc::indoc! {r#"
+        class Demo {
+            void f() {
+                int i = 1;
+                var a = 1 + 1;
+                var b = i + 1;
+                b|
+            }
+        }
+        "#};
+        let (_ctx_b, candidates_b) = ctx_and_candidates_from_marked_source(src_b, &view);
+
+        let cand_b = candidates_b
+            .iter()
+            .find(|c| c.label.as_ref() == "b")
+            .expect("expected local candidate b");
+        match &cand_b.kind {
+            crate::completion::CandidateKind::LocalVariable { type_descriptor } => {
+                assert_eq!(type_descriptor.as_ref(), "int");
+            }
+            other => panic!("expected local variable candidate for b, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_mixed_expression_var_materialization_surfaces_double_and_string_in_completion() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![make_class("java/lang", "Object")]);
+        let view = idx.view(root_scope());
+
+        let src_a = indoc::indoc! {r#"
+        class Demo {
+            void f() {
+                double i = 1;
+                var a = i + 1.0;
+                var b = i + "random str";
+                a|
+            }
+        }
+        "#};
+        let (_ctx_a, candidates_a) = ctx_and_candidates_from_marked_source(src_a, &view);
+        let cand_a = candidates_a
+            .iter()
+            .find(|c| c.label.as_ref() == "a")
+            .expect("expected local candidate a");
+        match &cand_a.kind {
+            crate::completion::CandidateKind::LocalVariable { type_descriptor } => {
+                assert_eq!(type_descriptor.as_ref(), "double");
+            }
+            other => panic!("expected local variable candidate for a, got {other:?}"),
+        }
+
+        let src_b = indoc::indoc! {r#"
+        class Demo {
+            void f() {
+                double i = 1;
+                var a = i + 1.0;
+                var b = i + "random str";
+                b|
+            }
+        }
+        "#};
+        let (_ctx_b, candidates_b) = ctx_and_candidates_from_marked_source(src_b, &view);
+        let cand_b = candidates_b
+            .iter()
+            .find(|c| c.label.as_ref() == "b")
+            .expect("expected local candidate b");
+        match &cand_b.kind {
+            crate::completion::CandidateKind::LocalVariable { type_descriptor } => {
+                assert_eq!(type_descriptor.as_ref(), "java/lang/String");
+            }
+            other => panic!("expected local variable candidate for b, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn test_later_declared_method_visible_in_earlier_method_completion() {
         let src = indoc::indoc! {r#"
         package org.cubewhy;

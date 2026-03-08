@@ -8,6 +8,7 @@ use crate::semantic::types::type_name::TypeName;
 use crate::semantic::types::{
     ChainSegment, TypeResolver, parse_single_type_to_internal, singleton_descriptor_to_type,
 };
+use tree_sitter::Node;
 
 pub(crate) fn resolve_expression_type(
     expr: &str,
@@ -17,6 +18,17 @@ pub(crate) fn resolve_expression_type(
     type_ctx: &SourceTypeCtx,
     view: &IndexView,
 ) -> Option<TypeName> {
+    let expr = expr.trim();
+    if expr.is_empty() {
+        return None;
+    }
+
+    if let Some(ty) =
+        resolve_expression_type_ast(expr, locals, enclosing_internal, resolver, type_ctx, view)
+    {
+        return Some(ty);
+    }
+
     if looks_like_array_access(expr) {
         return resolve_array_access_type(
             expr,
@@ -33,6 +45,229 @@ pub(crate) fn resolve_expression_type(
         return resolver.resolve(expr, locals, enclosing_internal);
     }
     evaluate_chain(&chain, locals, enclosing_internal, resolver, type_ctx, view)
+}
+
+fn resolve_expression_type_ast(
+    expr: &str,
+    locals: &[LocalVar],
+    enclosing_internal: Option<&Arc<str>>,
+    resolver: &TypeResolver,
+    type_ctx: &SourceTypeCtx,
+    view: &IndexView,
+) -> Option<TypeName> {
+    let wrapped = format!("class __ExprTyping {{ Object __e() {{ return {expr}; }} }}");
+    let mut parser = tree_sitter::Parser::new();
+    parser
+        .set_language(&tree_sitter_java::LANGUAGE.into())
+        .ok()?;
+    let tree = parser.parse(&wrapped, None)?;
+    let root = tree.root_node();
+    let return_stmt = find_first_node_of_kind(root, "return_statement")?;
+    let expr_node = return_stmt
+        .child_by_field_name("value")
+        .or_else(|| first_named_child(return_stmt))?;
+
+    resolve_ast_node_type(
+        expr_node,
+        wrapped.as_bytes(),
+        locals,
+        enclosing_internal,
+        resolver,
+        type_ctx,
+        view,
+    )
+}
+
+fn first_named_child<'a>(node: Node<'a>) -> Option<Node<'a>> {
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor).next()
+}
+
+fn find_first_node_of_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
+    if node.kind() == kind {
+        return Some(node);
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if let Some(found) = find_first_node_of_kind(child, kind) {
+            return Some(found);
+        }
+    }
+    None
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_ast_node_type(
+    node: Node,
+    bytes: &[u8],
+    locals: &[LocalVar],
+    enclosing_internal: Option<&Arc<str>>,
+    resolver: &TypeResolver,
+    type_ctx: &SourceTypeCtx,
+    view: &IndexView,
+) -> Option<TypeName> {
+    match node.kind() {
+        "parenthesized_expression" => {
+            let inner = node
+                .child_by_field_name("expression")
+                .or_else(|| first_named_child(node))?;
+            resolve_ast_node_type(
+                inner,
+                bytes,
+                locals,
+                enclosing_internal,
+                resolver,
+                type_ctx,
+                view,
+            )
+        }
+        "identifier" => {
+            let text = node.utf8_text(bytes).ok()?;
+            resolver.resolve(text.trim(), locals, enclosing_internal)
+        }
+        "decimal_integer_literal"
+        | "hex_integer_literal"
+        | "octal_integer_literal"
+        | "binary_integer_literal" => {
+            let text = node.utf8_text(bytes).ok()?;
+            resolve_integer_literal_type(text)
+        }
+        "decimal_floating_point_literal" | "hex_floating_point_literal" => {
+            let text = node.utf8_text(bytes).ok()?;
+            resolve_floating_point_literal_type(text)
+        }
+        "string_literal" | "text_block" => Some(TypeName::new("java/lang/String")),
+        "binary_expression" => resolve_binary_expression_type(
+            node,
+            bytes,
+            locals,
+            enclosing_internal,
+            resolver,
+            type_ctx,
+            view,
+        ),
+        _ => None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_binary_expression_type(
+    node: Node,
+    bytes: &[u8],
+    locals: &[LocalVar],
+    enclosing_internal: Option<&Arc<str>>,
+    resolver: &TypeResolver,
+    type_ctx: &SourceTypeCtx,
+    view: &IndexView,
+) -> Option<TypeName> {
+    let op = binary_operator(node, bytes)?;
+    let left = node.child_by_field_name("left")?;
+    let right = node.child_by_field_name("right")?;
+    let left_type = resolve_ast_node_type(
+        left,
+        bytes,
+        locals,
+        enclosing_internal,
+        resolver,
+        type_ctx,
+        view,
+    )?;
+    let right_type = resolve_ast_node_type(
+        right,
+        bytes,
+        locals,
+        enclosing_internal,
+        resolver,
+        type_ctx,
+        view,
+    )?;
+
+    match op.as_str() {
+        "+" => {
+            if is_string_type(&left_type) || is_string_type(&right_type) {
+                Some(TypeName::new("java/lang/String"))
+            } else {
+                numeric_binary_result_type(&left_type, &right_type)
+            }
+        }
+        "-" | "*" | "/" | "%" => numeric_binary_result_type(&left_type, &right_type),
+        _ => None,
+    }
+}
+
+fn binary_operator<'a>(node: Node<'a>, bytes: &[u8]) -> Option<String> {
+    if let Some(op) = node.child_by_field_name("operator") {
+        return op.utf8_text(bytes).ok().map(|s| s.trim().to_string());
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if matches!(
+            child.kind(),
+            "+" | "-" | "*" | "/" | "%" | "<<" | ">>" | ">>>"
+        ) {
+            return Some(child.kind().to_string());
+        }
+    }
+    None
+}
+
+fn resolve_integer_literal_type(text: &str) -> Option<TypeName> {
+    let sanitized: String = text.trim().chars().filter(|c| *c != '_').collect();
+    if sanitized.is_empty() {
+        return None;
+    }
+    if let Some(without_suffix) = sanitized
+        .strip_suffix('l')
+        .or_else(|| sanitized.strip_suffix('L'))
+        && !without_suffix.is_empty()
+    {
+        return Some(TypeName::new("long"));
+    }
+    Some(TypeName::new("int"))
+}
+
+fn resolve_floating_point_literal_type(text: &str) -> Option<TypeName> {
+    let sanitized: String = text.trim().chars().filter(|c| *c != '_').collect();
+    if sanitized.is_empty() {
+        return None;
+    }
+    if sanitized.ends_with('f') || sanitized.ends_with('F') {
+        return Some(TypeName::new("float"));
+    }
+    Some(TypeName::new("double"))
+}
+
+fn numeric_binary_result_type(left: &TypeName, right: &TypeName) -> Option<TypeName> {
+    if !is_numeric_primitive(left) || !is_numeric_primitive(right) {
+        return None;
+    }
+
+    if is_type(left, "double") || is_type(right, "double") {
+        return Some(TypeName::new("double"));
+    }
+    if is_type(left, "float") || is_type(right, "float") {
+        return Some(TypeName::new("float"));
+    }
+    if is_type(left, "long") || is_type(right, "long") {
+        return Some(TypeName::new("long"));
+    }
+    Some(TypeName::new("int"))
+}
+
+fn is_string_type(ty: &TypeName) -> bool {
+    matches!(ty.erased_internal(), "java/lang/String")
+}
+
+fn is_type(ty: &TypeName, name: &str) -> bool {
+    ty.erased_internal() == name
+}
+
+fn is_numeric_primitive(ty: &TypeName) -> bool {
+    matches!(
+        ty.erased_internal(),
+        "byte" | "short" | "char" | "int" | "long" | "float" | "double"
+    )
 }
 
 pub(crate) fn resolve_var_init_expr(
