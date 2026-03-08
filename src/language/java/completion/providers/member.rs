@@ -212,6 +212,7 @@ impl CompletionProvider for MemberProvider {
         };
 
         let class_internal = resolved.to_internal_with_generics();
+        let class_internal_for_substitution = resolved.to_internal_with_generics_for_substitution();
         let base_class_internal = resolved.erased_internal();
 
         tracing::debug!(
@@ -301,7 +302,12 @@ impl CompletionProvider for MemberProvider {
                     )
                     .with_detail({
                         let detail =
-                            render::method_detail(&class_internal, class_meta, method, &resolver);
+                            render::method_detail(
+                                &class_internal_for_substitution,
+                                class_meta,
+                                method,
+                                &resolver,
+                            );
                         if trace_add {
                             tracing::debug!(
                                 method_name = %method.name,
@@ -345,7 +351,7 @@ impl CompletionProvider for MemberProvider {
                         self.name(),
                     )
                     .with_detail(render::field_detail(
-                        &class_internal,
+                        &class_internal_for_substitution,
                         class_meta,
                         field,
                         &resolver,
@@ -648,7 +654,9 @@ mod tests {
     use crate::language::java::type_ctx::SourceTypeCtx;
     use crate::semantic::LocalVar;
     use crate::semantic::context::{CurrentClassMember, CursorLocation, SemanticContext};
-    use crate::semantic::types::{parse_return_type_from_descriptor, type_name::TypeName};
+    use crate::semantic::types::{
+        generics::substitute_type, parse_return_type_from_descriptor, type_name::TypeName,
+    };
 
     fn init_test_tracing() {
         let _ = fmt()
@@ -1370,6 +1378,139 @@ mod tests {
         assert!(
             !results.iter().any(|c| c.label.as_ref() == "legacyOnly"),
             "legacy receiver_type should not override semantic owner"
+        );
+    }
+
+    #[test]
+    fn test_snapshot_add_detail_wildcard_receiver_provenance() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("java/util")),
+                name: Arc::from("List"),
+                internal_name: Arc::from("java/util/List"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![MethodSummary {
+                    name: Arc::from("add"),
+                    params: MethodParams::from([("Ljava/lang/Object;", "e")]),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    generic_signature: Some(Arc::from("(TE;)Z")),
+                    return_type: Some(Arc::from("Z")),
+                }],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: Some(Arc::from("<E:Ljava/lang/Object;>Ljava/lang/Object;")),
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: None,
+                name: Arc::from("Box"),
+                internal_name: Arc::from("Box"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: Some(Arc::from("<T:Ljava/lang/Object;>Ljava/lang/Object;")),
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("Number"),
+                internal_name: Arc::from("java/lang/Number"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+
+        let receiver_semantic = TypeName::with_args(
+            "java/util/List",
+            vec![TypeName::with_args(
+                "Box",
+                vec![TypeName::with_args("+", vec![TypeName::new("java/lang/Number")])],
+            )],
+        );
+        let receiver_class_internal = receiver_semantic.to_internal_with_generics_for_substitution();
+
+        let ctx = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: Some(receiver_semantic.clone()),
+                receiver_type: Some(Arc::from("java/util/List")),
+                member_prefix: "add".to_string(),
+                receiver_expr: "nums".to_string(),
+                arguments: None,
+            },
+            "add",
+            vec![LocalVar {
+                name: Arc::from("nums"),
+                type_internal: receiver_semantic.clone(),
+                init_expr: None,
+            }],
+            Some(Arc::from("Demo")),
+            Some(Arc::from("Demo")),
+            None,
+            vec!["java.util.*".into()],
+        );
+
+        let results = MemberProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
+        let add = results
+            .iter()
+            .find(|c| c.label.as_ref() == "add")
+            .expect("expected add candidate");
+        let detail = add.detail.clone().unwrap_or_default();
+        assert!(
+            detail.contains("Box<? extends"),
+            "detail should preserve wildcard bound structure, got: {}",
+            detail
+        );
+        let list_meta = idx
+            .view(root_scope())
+            .get_class("java/util/List")
+            .expect("List class should exist");
+        let add_meta = list_meta
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "add")
+            .expect("add method should exist");
+        let param_token = add_meta
+            .generic_signature
+            .as_deref()
+            .and_then(|sig| sig.find('(').zip(sig.find(')')).map(|(s, e)| &sig[s + 1..e]))
+            .unwrap_or("?");
+        let substituted_param = substitute_type(
+            &receiver_class_internal,
+            list_meta.generic_signature.as_deref(),
+            param_token,
+        )
+        .map(|t| t.to_internal_with_generics())
+        .unwrap_or_else(|| "None".to_string());
+
+        insta::assert_snapshot!(
+            "member_add_wildcard_detail_provenance",
+            format!(
+                "receiver_semantic={}\nreceiver_class_internal={}\nmethod_desc={}\nmethod_generic_signature={:?}\nparam_token={}\nsubstituted_param={}\nadd_detail={}\n",
+                receiver_semantic.to_internal_with_generics(),
+                receiver_class_internal,
+                add_meta.desc(),
+                add_meta.generic_signature,
+                param_token,
+                substituted_param,
+                detail
+            )
         );
     }
 }

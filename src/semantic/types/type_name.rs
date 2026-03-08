@@ -106,6 +106,91 @@ impl TypeName {
         s
     }
 
+    /// Internal style with generics for substitution/rendering paths.
+    /// Unlike `to_internal_with_generics`, this keeps non-slash class-like names
+    /// as object signatures in generic arguments (e.g. `LBox;`), while retaining
+    /// likely type variables (e.g. `TR;`).
+    pub fn to_internal_with_generics_for_substitution(&self) -> String {
+        fn is_likely_type_var(name: &str) -> bool {
+            let mut chars = name.chars();
+            let Some(first) = chars.next() else {
+                return false;
+            };
+            if !first.is_ascii_uppercase() {
+                return false;
+            }
+            if name.len() == 1 {
+                return true;
+            }
+            chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+                && matches!(first, 'E' | 'K' | 'R' | 'T' | 'U' | 'V' | 'W' | 'X' | 'Y' | 'Z')
+        }
+
+        fn to_jvm_sig_for_substitution(ty: &TypeName) -> String {
+            let mut sig = match ty.base_internal.as_ref() {
+                "byte" => "B".to_string(),
+                "char" => "C".to_string(),
+                "double" => "D".to_string(),
+                "float" => "F".to_string(),
+                "int" => "I".to_string(),
+                "long" => "J".to_string(),
+                "short" => "S".to_string(),
+                "boolean" => "Z".to_string(),
+                "void" => "V".to_string(),
+                "*" => "*".to_string(),
+                "+" | "-" => {
+                    if let Some(inner) = ty.args.first() {
+                        format!("{}{}", ty.base_internal, to_jvm_sig_for_substitution(inner))
+                    } else {
+                        ty.base_internal.to_string()
+                    }
+                }
+                base if base.contains('/') => {
+                    if ty.args.is_empty() {
+                        format!("L{};", base)
+                    } else {
+                        let arg_sigs: Vec<String> = ty
+                            .args
+                            .iter()
+                            .map(to_jvm_sig_for_substitution)
+                            .collect();
+                        format!("L{}<{}>;", base, arg_sigs.join(""))
+                    }
+                }
+                other if is_likely_type_var(other) => format!("T{};", other),
+                other => {
+                    if ty.args.is_empty() {
+                        format!("L{};", other)
+                    } else {
+                        let arg_sigs: Vec<String> = ty
+                            .args
+                            .iter()
+                            .map(to_jvm_sig_for_substitution)
+                            .collect();
+                        format!("L{}<{}>;", other, arg_sigs.join(""))
+                    }
+                }
+            };
+
+            if ty.array_dims > 0 {
+                sig = format!("{}{}", "[".repeat(ty.array_dims), sig);
+            }
+            sig
+        }
+
+        let base = self.base_internal.as_ref();
+        let mut s = if self.args.is_empty() {
+            base.to_string()
+        } else {
+            let arg_sigs: Vec<String> = self.args.iter().map(to_jvm_sig_for_substitution).collect();
+            format!("{}<{}>", base, arg_sigs.join(""))
+        };
+        if self.array_dims > 0 {
+            s.push_str(&"[]".repeat(self.array_dims));
+        }
+        s
+    }
+
     /// JVM signature, e.g. "Ljava/util/List<Ljava/lang/String;>;" or "[I".
     pub fn to_jvm_signature(&self) -> String {
         let mut sig = match self.base_internal.as_ref() {

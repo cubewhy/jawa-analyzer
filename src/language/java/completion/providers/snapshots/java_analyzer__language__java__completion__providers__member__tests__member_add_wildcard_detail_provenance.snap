@@ -1,0 +1,11 @@
+---
+source: src/language/java/completion/providers/member.rs
+expression: "format!(\"receiver_semantic={}\\nreceiver_class_internal={}\\nmethod_desc={}\\nmethod_generic_signature={:?}\\nparam_token={}\\nsubstituted_param={}\\nadd_detail={}\\n\",\nreceiver_semantic.to_internal_with_generics(), receiver_class_internal,\nadd_meta.desc(), add_meta.generic_signature, param_token, substituted_param,\ndetail)"
+---
+receiver_semantic=java/util/List<TBox;>
+receiver_class_internal=java/util/List<LBox<+Ljava/lang/Number;>;>
+method_desc=(Ljava/lang/Object;)Z
+method_generic_signature=Some("(TE;)Z")
+param_token=TE;
+substituted_param=Box<+Ljava/lang/Number;>
+add_detail=List — boolean add(Box<? extends java.lang.Number> e)
