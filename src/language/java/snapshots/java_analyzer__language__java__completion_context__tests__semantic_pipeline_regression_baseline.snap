@@ -17,6 +17,6 @@ expected_sam=Some(("apply", 1, Some(TypeName { base_internal: "java/lang/Object"
 functional_compat=Some((Partial, Some("java/lang/String"), Some("java/lang/String")))
 
 case5_nums_add_argument_context:
-expected_type=Some(("Box", MethodArgument { arg_index: 0 }, Exact))
+expected_type=Some(("Box<+Ljava/lang/Number;>", MethodArgument { arg_index: 0 }, Partial))
 receiver_type=Some("java/util/List<TBox;>")
 receiver_semantic=None

@@ -711,6 +711,48 @@ impl<'idx> TypeResolver<'idx> {
         current_type
     }
 
+    pub fn resolve_selected_param_type_from_generic_signature(
+        &self,
+        receiver_internal: &str,
+        selected: &MethodSummary,
+        arg_index: usize,
+    ) -> Option<(TypeName, bool)> {
+        let sig = selected.generic_signature.as_deref()?;
+        let (params, _) = parse_method_signature_types(sig)?;
+        let mut param = params.get(arg_index)?.clone();
+
+        let (receiver_owner, receiver_args) = split_internal_name(receiver_internal);
+        if !receiver_args.is_empty()
+            && let Some(class_sig) =
+                self.find_declaring_class_generic_signature(receiver_owner, selected)
+        {
+            let class_params = parse_class_type_parameters(class_sig.as_ref());
+            if !class_params.is_empty() {
+                param = param.substitute(&class_params, &receiver_args);
+            }
+        }
+
+        let exact = is_concrete_jvm_type(&param);
+        Some((param.to_type_name(), exact))
+    }
+
+    fn find_declaring_class_generic_signature(
+        &self,
+        receiver_owner: &str,
+        selected: &MethodSummary,
+    ) -> Option<Arc<str>> {
+        for class in self.view.mro(receiver_owner) {
+            let matched = class
+                .methods
+                .iter()
+                .any(|m| m.name.as_ref() == selected.name.as_ref() && m.desc() == selected.desc());
+            if matched {
+                return class.generic_signature.clone();
+            }
+        }
+        None
+    }
+
     pub fn score_params(&self, descriptor: &str, arg_types: &[TypeName]) -> i32 {
         let param_descs = split_param_descriptors(descriptor);
 

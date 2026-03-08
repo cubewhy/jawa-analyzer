@@ -707,11 +707,30 @@ fn resolve_expected_type_from_method_argument(
         Some(s) => s,
         None => return (None, Some(receiver)),
     };
-    let Some(param) = selected.params.items.get(hint.arg_index) else {
+    if selected.params.items.get(hint.arg_index).is_none() {
         return (None, Some(receiver));
-    };
-    let expected =
-        descriptor_to_type_name(&param.descriptor).map(|ty| (ty, ExpectedTypeConfidence::Exact));
+    }
+    let receiver_internal = receiver.to_internal_with_generics();
+    let expected = resolver
+        .resolve_selected_param_type_from_generic_signature(&receiver_internal, selected, hint.arg_index)
+        .map(|(ty, exact)| {
+            (
+                ty,
+                if exact {
+                    ExpectedTypeConfidence::Exact
+                } else {
+                    ExpectedTypeConfidence::Partial
+                },
+            )
+        })
+        .or_else(|| {
+            selected
+                .params
+                .items
+                .get(hint.arg_index)
+                .and_then(|param| descriptor_to_type_name(&param.descriptor))
+                .map(|ty| (ty, ExpectedTypeConfidence::Exact))
+        });
     (expected, Some(receiver))
 }
 
@@ -2320,6 +2339,129 @@ mod tests {
                 .map(|c| c.status),
             None
         );
+    }
+
+    #[test]
+    fn test_method_argument_expected_type_uses_generic_signature_with_receiver_substitution_exact() {
+        let idx = WorkspaceIndex::new();
+        idx.add_jar_classes(
+            IndexScope {
+                module: ModuleId::ROOT,
+            },
+            vec![ClassMetadata {
+                package: None,
+                name: Arc::from("Holder"),
+                internal_name: Arc::from("Holder"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![MethodSummary {
+                    name: Arc::from("set"),
+                    params: MethodParams::from([("Ljava/lang/Object;", "v")]),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    generic_signature: Some(Arc::from("(TT;)V")),
+                    return_type: Some(Arc::from("V")),
+                }],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: None,
+                generic_signature: Some(Arc::from("<T:Ljava/lang/Object;>Ljava/lang/Object;")),
+                origin: ClassOrigin::Unknown,
+            }],
+        );
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        let view = idx.view(scope);
+        let name_table = view.build_name_table();
+        let type_ctx = Arc::new(SourceTypeCtx::new(None, vec![], Some(name_table)));
+        let mut ctx = SemanticContext::new(
+            CursorLocation::Expression {
+                prefix: "".to_string(),
+            },
+            "",
+            vec![LocalVar {
+                name: Arc::from("holder"),
+                type_internal: TypeName::with_args("Holder", vec![TypeName::new("java/lang/String")]),
+                init_expr: None,
+            }],
+            Some(Arc::from("Demo")),
+            Some(Arc::from("Demo")),
+            None,
+            vec![],
+        )
+        .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
+            expected_type_source: None,
+            method_call: Some(crate::semantic::context::FunctionalMethodCallHint {
+                receiver_expr: "holder".to_string(),
+                method_name: "set".to_string(),
+                arg_index: 0,
+                arg_texts: vec!["\"x\"".to_string()],
+            }),
+            expr_shape: None,
+        }))
+        .with_extension(type_ctx);
+
+        ContextEnricher::new(&view).enrich(&mut ctx);
+        let expected = ctx
+            .typed_expr_ctx
+            .as_ref()
+            .and_then(|t| t.expected_type.as_ref())
+            .expect("expected type should be present");
+        assert_eq!(expected.ty.erased_internal(), "java/lang/String");
+        assert_eq!(expected.confidence, ExpectedTypeConfidence::Exact);
+    }
+
+    #[test]
+    fn test_method_argument_expected_type_generic_wildcard_is_partial() {
+        let idx = make_index_with_list_add_box_for_expected_arg();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        let view = idx.view(scope);
+        let name_table = view.build_name_table();
+        let type_ctx = Arc::new(SourceTypeCtx::new(None, vec!["java.util.*".into()], Some(name_table)));
+        let mut ctx = SemanticContext::new(
+            CursorLocation::Expression {
+                prefix: "".to_string(),
+            },
+            "",
+            vec![LocalVar {
+                name: Arc::from("nums"),
+                type_internal: TypeName::with_args("java/util/List", vec![TypeName::new("Box")]),
+                init_expr: None,
+            }],
+            Some(Arc::from("Demo")),
+            Some(Arc::from("Demo")),
+            None,
+            vec!["java.util.*".into()],
+        )
+        .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
+            expected_type_source: None,
+            method_call: Some(crate::semantic::context::FunctionalMethodCallHint {
+                receiver_expr: "nums".to_string(),
+                method_name: "add".to_string(),
+                arg_index: 0,
+                arg_texts: vec!["new Box()".to_string()],
+            }),
+            expr_shape: None,
+        }))
+        .with_extension(type_ctx);
+
+        ContextEnricher::new(&view).enrich(&mut ctx);
+        let expected = ctx
+            .typed_expr_ctx
+            .as_ref()
+            .and_then(|t| t.expected_type.as_ref())
+            .expect("expected type should be present");
+        assert_eq!(expected.ty.erased_internal(), "Box");
+        assert!(
+            !expected.ty.args.is_empty(),
+            "wildcard generic structure should be preserved"
+        );
+        assert_eq!(expected.confidence, ExpectedTypeConfidence::Partial);
     }
 
     #[test]
