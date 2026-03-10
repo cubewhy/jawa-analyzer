@@ -154,7 +154,7 @@ impl CompletionEngine {
             candidates = candidates.len(),
             "completion provider stage total"
         );
-        let mut candidates = post_processor::process(candidates, &ctx.query);
+        let mut candidates = post_processor::process(candidates, &ctx.query, &ctx, index);
         if let Some(limit) = policy.final_result_limit
             && candidates.len() > limit
         {

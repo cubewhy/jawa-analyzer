@@ -1,8 +1,15 @@
 use crate::completion::{CandidateKind, CompletionCandidate, scorer::Scorer};
+use crate::index::IndexView;
+use crate::semantic::context::SemanticContext;
 
-pub fn process(mut candidates: Vec<CompletionCandidate>, query: &str) -> Vec<CompletionCandidate> {
+pub fn process(
+    mut candidates: Vec<CompletionCandidate>,
+    query: &str,
+    ctx: &SemanticContext,
+    index: &IndexView,
+) -> Vec<CompletionCandidate> {
     // Score
-    let scorer = Scorer::new(query);
+    let scorer = Scorer::with_expected_type(query, ctx, index);
     for c in &mut candidates {
         c.score += scorer.score(c);
     }

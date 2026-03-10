@@ -1,5 +1,12 @@
 use rust_asm::constants::ACC_PRIVATE;
 
+use crate::index::IndexView;
+use crate::semantic::context::SemanticContext;
+use crate::semantic::types::type_name::TypeName;
+use crate::semantic::types::{
+    ConversionKind, TypeResolver, parse_single_type_to_internal, singleton_descriptor_to_type,
+};
+
 #[derive(Debug, Clone, Copy)]
 pub struct AccessFilter {
     pub hide_private: bool,
@@ -63,14 +70,33 @@ impl AccessFilter {
     }
 }
 
-pub struct Scorer {
+pub struct Scorer<'idx> {
     query: String,
+    expected_type: Option<TypeName>,
+    resolver: Option<TypeResolver<'idx>>,
 }
 
-impl Scorer {
+impl<'idx> Scorer<'idx> {
     pub fn new(query: impl Into<String>) -> Self {
         Self {
             query: query.into(),
+            expected_type: None,
+            resolver: None,
+        }
+    }
+
+    pub fn with_expected_type(
+        query: impl Into<String>,
+        ctx: &SemanticContext,
+        index: &'idx IndexView,
+    ) -> Self {
+        Self {
+            query: query.into(),
+            expected_type: ctx
+                .typed_expr_ctx
+                .as_ref()
+                .and_then(|typed| typed.expected_type.as_ref().map(|e| e.ty.clone())),
+            resolver: Some(TypeResolver::new(index)),
         }
     }
 
@@ -78,6 +104,7 @@ impl Scorer {
         let mut score = 0.0f32;
         score += self.prefix_score(candidate.label.as_ref());
         score += self.kind_base_score(&candidate.kind);
+        score += self.compatibility_score(candidate);
         score
     }
 
@@ -127,6 +154,59 @@ impl Scorer {
             NameSuggestion => 1.0,
         }
     }
+
+    fn compatibility_score(&self, candidate: &super::candidate::CompletionCandidate) -> f32 {
+        let (Some(expected), Some(resolver)) = (&self.expected_type, &self.resolver) else {
+            return 0.0;
+        };
+        let Some(source_ty) = candidate_value_type(candidate) else {
+            return 0.0;
+        };
+        let compatibility = resolver.type_compatibility(&source_ty, expected);
+        match compatibility.kind {
+            ConversionKind::Identity => 180.0,
+            ConversionKind::WideningPrimitive => 140.0,
+            ConversionKind::UnboxingWideningPrimitive => 120.0,
+            ConversionKind::Unboxing | ConversionKind::Boxing => 110.0,
+            ConversionKind::BoxingWideningPrimitive => 90.0,
+            ConversionKind::ReferenceWidening => 70.0,
+            ConversionKind::NullToReference => 50.0,
+            ConversionKind::Unknown => 0.0,
+            ConversionKind::NarrowingPrimitive => -80.0,
+            ConversionKind::Incompatible => -120.0,
+        }
+    }
+}
+
+fn candidate_value_type(candidate: &super::candidate::CompletionCandidate) -> Option<TypeName> {
+    use super::candidate::CandidateKind;
+    match &candidate.kind {
+        CandidateKind::LocalVariable { type_descriptor } => descriptor_or_type(type_descriptor),
+        CandidateKind::Field { descriptor, .. } | CandidateKind::StaticField { descriptor, .. } => {
+            descriptor_or_type(descriptor)
+        }
+        CandidateKind::Method { descriptor, .. }
+        | CandidateKind::StaticMethod { descriptor, .. } => method_return_type(descriptor),
+        CandidateKind::Constructor { defining_class, .. } => {
+            Some(TypeName::new(defining_class.clone()))
+        }
+        CandidateKind::ClassName
+        | CandidateKind::Package
+        | CandidateKind::Snippet
+        | CandidateKind::Keyword
+        | CandidateKind::Annotation
+        | CandidateKind::NameSuggestion => None,
+    }
+}
+
+fn method_return_type(descriptor: &str) -> Option<TypeName> {
+    let idx = descriptor.find(')')?;
+    descriptor_or_type(&descriptor[idx + 1..])
+}
+
+fn descriptor_or_type(raw: &str) -> Option<TypeName> {
+    parse_single_type_to_internal(raw)
+        .or_else(|| singleton_descriptor_to_type(raw).map(TypeName::new))
 }
 
 fn is_subsequence(needle: &str, haystack: &str) -> bool {
@@ -171,9 +251,22 @@ mod tests {
 
     use super::*;
     use crate::completion::candidate::{CandidateKind, CompletionCandidate};
+    use crate::index::{IndexScope, ModuleId, WorkspaceIndex};
+    use crate::semantic::SemanticContext;
+    use crate::semantic::context::{
+        CursorLocation, ExpectedType, ExpectedTypeConfidence, ExpectedTypeSource,
+        TypedExpressionContext,
+    };
+    use crate::semantic::types::type_name::TypeName;
 
     fn make_candidate(label: &str, kind: CandidateKind) -> CompletionCandidate {
         CompletionCandidate::new(Arc::from(label), label.to_string(), kind, "test")
+    }
+
+    fn root_scope() -> IndexScope {
+        IndexScope {
+            module: ModuleId::ROOT,
+        }
     }
 
     #[test]
@@ -289,5 +382,76 @@ mod tests {
         );
         // "gV" matches the first letter of the camel case, deserves 60 points.
         assert!(scorer.score(&c) >= 60.0);
+    }
+
+    #[test]
+    fn test_expected_type_semantic_ranking_prefers_conversion_compatibility() {
+        let idx = WorkspaceIndex::new();
+        let view = idx.view(root_scope());
+        let ctx = SemanticContext::new(
+            CursorLocation::Expression {
+                prefix: "fo".to_string(),
+            },
+            "fo",
+            vec![],
+            None,
+            None,
+            None,
+            vec![],
+        )
+        .with_typed_expression_context(Some(TypedExpressionContext {
+            expected_type: Some(ExpectedType {
+                ty: TypeName::new("double"),
+                source: ExpectedTypeSource::VariableInitializer,
+                confidence: ExpectedTypeConfidence::Exact,
+            }),
+            receiver_type: None,
+            functional_compat: None,
+        }));
+
+        let scorer = Scorer::with_expected_type("fo", &ctx, &view);
+        let c_double = make_candidate(
+            "foo",
+            CandidateKind::Method {
+                descriptor: Arc::from("()D"),
+                defining_class: Arc::from("A"),
+            },
+        );
+        let c_int = make_candidate(
+            "fooInt",
+            CandidateKind::Method {
+                descriptor: Arc::from("()I"),
+                defining_class: Arc::from("A"),
+            },
+        );
+        let c_integer = make_candidate(
+            "fooInteger",
+            CandidateKind::Method {
+                descriptor: Arc::from("()Ljava/lang/Integer;"),
+                defining_class: Arc::from("A"),
+            },
+        );
+        let c_string = make_candidate(
+            "fooString",
+            CandidateKind::Method {
+                descriptor: Arc::from("()Ljava/lang/String;"),
+                defining_class: Arc::from("A"),
+            },
+        );
+
+        let s_double = scorer.score(&c_double);
+        let s_int = scorer.score(&c_int);
+        let s_integer = scorer.score(&c_integer);
+        let s_string = scorer.score(&c_string);
+
+        assert!(s_double > s_int, "exact should rank above widening");
+        assert!(
+            s_int > s_integer,
+            "widening primitive should rank above unboxing+widening"
+        );
+        assert!(
+            s_integer > s_string,
+            "compatible primitive-wrapper should rank above incompatible reference"
+        );
     }
 }

@@ -175,6 +175,8 @@ impl CursorLocation {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionalTargetHint {
     pub expected_type_source: Option<String>,
+    pub expected_type_context: Option<ExpectedTypeSource>,
+    pub assignment_lhs_expr: Option<String>,
     pub method_call: Option<FunctionalMethodCallHint>,
     pub expr_shape: Option<FunctionalExprShape>,
 }
@@ -231,7 +233,9 @@ pub struct FunctionalCompat {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExpectedTypeSource {
+    VariableInitializer,
     AssignmentRhs,
+    ReturnExpr,
     MethodArgument { arg_index: usize },
 }
 

@@ -9,6 +9,7 @@ use crate::semantic::types::{
     ChainSegment, TypeResolver, parse_single_type_to_internal, promoted_integral_result_type_name,
     promoted_numeric_result_type_name, promoted_shift_result_type_name,
     promoted_unary_integral_result_type_name, singleton_descriptor_to_type,
+    unboxed_primitive_type_name,
 };
 use tree_sitter::Node;
 
@@ -138,7 +139,31 @@ fn resolve_ast_node_type(
             let text = node.utf8_text(bytes).ok()?;
             resolve_floating_point_literal_type(text)
         }
+        "boolean_literal" => Some(TypeName::new("boolean")),
+        "character_literal" => Some(TypeName::new("char")),
+        "null_literal" => Some(TypeName::new("null")),
         "string_literal" | "text_block" => Some(TypeName::new("java/lang/String")),
+        "cast_expression" => {
+            resolve_cast_expression_type(node, bytes, enclosing_internal, type_ctx, view)
+        }
+        "assignment_expression" => resolve_assignment_expression_type(
+            node,
+            bytes,
+            locals,
+            enclosing_internal,
+            resolver,
+            type_ctx,
+            view,
+        ),
+        "ternary_expression" => resolve_ternary_expression_type(
+            node,
+            bytes,
+            locals,
+            enclosing_internal,
+            resolver,
+            type_ctx,
+            view,
+        ),
         "unary_expression" => resolve_unary_expression_type(
             node,
             bytes,
@@ -149,6 +174,21 @@ fn resolve_ast_node_type(
             view,
         ),
         "method_invocation" => {
+            let text = node.utf8_text(bytes).ok()?;
+            resolve_expression_via_existing_resolver(
+                text,
+                locals,
+                enclosing_internal,
+                resolver,
+                type_ctx,
+                view,
+            )
+        }
+        "object_creation_expression" | "explicit_constructor_invocation" => {
+            let text = node.utf8_text(bytes).ok()?;
+            resolve_var_init_expr(text, locals, enclosing_internal, resolver, type_ctx, view)
+        }
+        "field_access" => {
             let text = node.utf8_text(bytes).ok()?;
             resolve_expression_via_existing_resolver(
                 text,
@@ -212,6 +252,17 @@ fn resolve_unary_expression_type(
         view,
     )?;
     match op.as_str() {
+        "+" | "-" => {
+            let promoted = unary_numeric_result_type_name(operand_type.erased_internal())?;
+            Some(TypeName::new(promoted))
+        }
+        "!" => {
+            if operand_type.erased_internal() == "boolean" {
+                Some(TypeName::new("boolean"))
+            } else {
+                None
+            }
+        }
         "~" => {
             let promoted =
                 promoted_unary_integral_result_type_name(operand_type.erased_internal())?;
@@ -262,7 +313,12 @@ fn resolve_binary_expression_type(
             }
         }
         "-" | "*" | "/" | "%" => numeric_binary_result_type(&left_type, &right_type),
-        "&" | "|" | "^" => integral_binary_result_type(&left_type, &right_type),
+        "<" | "<=" | ">" | ">=" => {
+            numeric_binary_result_type(&left_type, &right_type).map(|_| TypeName::new("boolean"))
+        }
+        "==" | "!=" => equality_result_type(&left_type, &right_type),
+        "&&" | "||" => logical_result_type(&left_type, &right_type),
+        "&" | "|" | "^" => bitwise_result_type(&left_type, &right_type),
         "<<" | ">>" | ">>>" => shift_binary_result_type(&left_type, &right_type),
         _ => None,
     }
@@ -277,7 +333,24 @@ fn binary_operator<'a>(node: Node<'a>, bytes: &[u8]) -> Option<String> {
     for child in node.children(&mut cursor) {
         if matches!(
             child.kind(),
-            "+" | "-" | "*" | "/" | "%" | "&" | "|" | "^" | "<<" | ">>" | ">>>"
+            "+" | "-"
+                | "*"
+                | "/"
+                | "%"
+                | "<"
+                | "<="
+                | ">"
+                | ">="
+                | "=="
+                | "!="
+                | "&&"
+                | "||"
+                | "&"
+                | "|"
+                | "^"
+                | "<<"
+                | ">>"
+                | ">>>"
         ) {
             return Some(child.kind().to_string());
         }
@@ -291,8 +364,8 @@ fn unary_operator<'a>(node: Node<'a>, bytes: &[u8]) -> Option<String> {
     }
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        if child.kind() == "~" {
-            return Some("~".to_string());
+        if matches!(child.kind(), "~" | "+" | "-" | "!") {
+            return Some(child.kind().to_string());
         }
     }
     None
@@ -340,6 +413,182 @@ fn shift_binary_result_type(left: &TypeName, right: &TypeName) -> Option<TypeNam
     let promoted =
         promoted_shift_result_type_name(left.erased_internal(), right.erased_internal())?;
     Some(TypeName::new(promoted))
+}
+
+fn equality_result_type(left: &TypeName, right: &TypeName) -> Option<TypeName> {
+    if left.erased_internal() == "null" || right.erased_internal() == "null" {
+        if !left.is_primitive() || !right.is_primitive() {
+            return Some(TypeName::new("boolean"));
+        }
+        return None;
+    }
+
+    if left.erased_internal() == "boolean" && right.erased_internal() == "boolean" {
+        return Some(TypeName::new("boolean"));
+    }
+
+    if numeric_binary_result_type(left, right).is_some() {
+        return Some(TypeName::new("boolean"));
+    }
+
+    if !left.is_primitive() && !right.is_primitive() {
+        return Some(TypeName::new("boolean"));
+    }
+
+    None
+}
+
+fn logical_result_type(left: &TypeName, right: &TypeName) -> Option<TypeName> {
+    if left.erased_internal() == "boolean" && right.erased_internal() == "boolean" {
+        Some(TypeName::new("boolean"))
+    } else {
+        None
+    }
+}
+
+fn bitwise_result_type(left: &TypeName, right: &TypeName) -> Option<TypeName> {
+    if left.erased_internal() == "boolean" && right.erased_internal() == "boolean" {
+        return Some(TypeName::new("boolean"));
+    }
+    integral_binary_result_type(left, right)
+}
+
+fn unary_numeric_result_type_name(operand: &str) -> Option<&'static str> {
+    let operand = unboxed_primitive_type_name(operand)?;
+    match operand {
+        "byte" | "short" | "char" | "int" => Some("int"),
+        "long" => Some("long"),
+        "float" => Some("float"),
+        "double" => Some("double"),
+        _ => None,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_cast_expression_type(
+    node: Node,
+    bytes: &[u8],
+    enclosing_internal: Option<&Arc<str>>,
+    type_ctx: &SourceTypeCtx,
+    view: &IndexView,
+) -> Option<TypeName> {
+    let cast_type_node = node.child_by_field_name("type").or_else(|| {
+        let mut cursor = node.walk();
+        node.named_children(&mut cursor)
+            .find(|n| n.kind() != "parenthesized_expression")
+    })?;
+    let cast_text = cast_type_node.utf8_text(bytes).ok()?.trim();
+    resolve_source_type_name(cast_text, enclosing_internal, type_ctx, view)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_assignment_expression_type(
+    node: Node,
+    bytes: &[u8],
+    locals: &[LocalVar],
+    enclosing_internal: Option<&Arc<str>>,
+    resolver: &TypeResolver,
+    type_ctx: &SourceTypeCtx,
+    view: &IndexView,
+) -> Option<TypeName> {
+    let left = node.child_by_field_name("left")?;
+    resolve_ast_node_type(
+        left,
+        bytes,
+        locals,
+        enclosing_internal,
+        resolver,
+        type_ctx,
+        view,
+    )
+    .or_else(|| {
+        let right = node.child_by_field_name("right")?;
+        resolve_ast_node_type(
+            right,
+            bytes,
+            locals,
+            enclosing_internal,
+            resolver,
+            type_ctx,
+            view,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn resolve_ternary_expression_type(
+    node: Node,
+    bytes: &[u8],
+    locals: &[LocalVar],
+    enclosing_internal: Option<&Arc<str>>,
+    resolver: &TypeResolver,
+    type_ctx: &SourceTypeCtx,
+    view: &IndexView,
+) -> Option<TypeName> {
+    let consequence = node.child_by_field_name("consequence").or_else(|| {
+        let mut cursor = node.walk();
+        node.named_children(&mut cursor).nth(1)
+    })?;
+    let alternative = node.child_by_field_name("alternative").or_else(|| {
+        let mut cursor = node.walk();
+        node.named_children(&mut cursor).nth(2)
+    })?;
+    let left = resolve_ast_node_type(
+        consequence,
+        bytes,
+        locals,
+        enclosing_internal,
+        resolver,
+        type_ctx,
+        view,
+    )?;
+    let right = resolve_ast_node_type(
+        alternative,
+        bytes,
+        locals,
+        enclosing_internal,
+        resolver,
+        type_ctx,
+        view,
+    )?;
+    if left.erased_internal_with_arrays() == right.erased_internal_with_arrays() {
+        return Some(left);
+    }
+    if left.erased_internal() == "null" && !right.is_primitive() {
+        return Some(right);
+    }
+    if right.erased_internal() == "null" && !left.is_primitive() {
+        return Some(left);
+    }
+    if let Some(promoted) = numeric_binary_result_type(&left, &right) {
+        return Some(promoted);
+    }
+    if !left.is_primitive() && !right.is_primitive() {
+        return Some(left);
+    }
+    None
+}
+
+fn resolve_source_type_name(
+    type_name: &str,
+    enclosing_internal: Option<&Arc<str>>,
+    type_ctx: &SourceTypeCtx,
+    view: &IndexView,
+) -> Option<TypeName> {
+    let ty = type_name.trim();
+    if ty.is_empty() {
+        return None;
+    }
+    if matches!(
+        ty,
+        "byte" | "short" | "int" | "long" | "float" | "double" | "boolean" | "char" | "void"
+    ) {
+        return Some(TypeName::new(ty));
+    }
+    if let Some(relaxed) = type_ctx.resolve_type_name_relaxed(ty) {
+        return Some(relaxed.ty);
+    }
+    resolve_constructor_type_name(ty, enclosing_internal, type_ctx, view)
 }
 
 fn is_string_type(ty: &TypeName) -> bool {
@@ -601,4 +850,99 @@ pub(crate) fn evaluate_chain(
         }
     }
     current
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::index::{
+        ClassMetadata, ClassOrigin, IndexScope, IndexView, MethodParams, MethodSummary, ModuleId,
+        WorkspaceIndex,
+    };
+    use rust_asm::constants::ACC_PUBLIC;
+
+    fn root_scope() -> IndexScope {
+        IndexScope {
+            module: ModuleId::ROOT,
+        }
+    }
+
+    fn make_index() -> WorkspaceIndex {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![ClassMetadata {
+            package: Some(Arc::from("org/cubewhy")),
+            name: Arc::from("Main"),
+            internal_name: Arc::from("org/cubewhy/Main"),
+            super_name: None,
+            interfaces: vec![],
+            annotations: vec![],
+            methods: vec![MethodSummary {
+                name: Arc::from("getInt"),
+                params: MethodParams::empty(),
+                annotations: vec![],
+                access_flags: ACC_PUBLIC,
+                is_synthetic: false,
+                generic_signature: None,
+                return_type: Some(Arc::from("I")),
+            }],
+            fields: vec![],
+            access_flags: ACC_PUBLIC,
+            generic_signature: None,
+            inner_class_of: None,
+            origin: ClassOrigin::Unknown,
+        }]);
+        idx
+    }
+
+    fn make_type_ctx(view: &IndexView) -> SourceTypeCtx {
+        SourceTypeCtx::new(
+            Some(Arc::from("org/cubewhy")),
+            vec![],
+            Some(view.build_name_table()),
+        )
+    }
+
+    #[test]
+    fn test_var_init_expr_cast_and_numeric_promotion_infers_double() {
+        let idx = make_index();
+        let view = idx.view(root_scope());
+        let type_ctx = make_type_ctx(&view);
+        let resolver = TypeResolver::new(&view);
+
+        let ty = resolve_var_init_expr(
+            "(double) getInt() + 1 + 1 * 100",
+            &[],
+            Some(&Arc::from("org/cubewhy/Main")),
+            &resolver,
+            &type_ctx,
+            &view,
+        )
+        .expect("type");
+
+        assert_eq!(ty.erased_internal(), "double");
+    }
+
+    #[test]
+    fn test_assignment_expression_type_tracks_lhs() {
+        let idx = make_index();
+        let view = idx.view(root_scope());
+        let type_ctx = make_type_ctx(&view);
+        let resolver = TypeResolver::new(&view);
+        let locals = vec![LocalVar {
+            name: Arc::from("x"),
+            type_internal: TypeName::new("double"),
+            init_expr: None,
+        }];
+
+        let ty = resolve_expression_type(
+            "x = getInt()",
+            &locals,
+            Some(&Arc::from("org/cubewhy/Main")),
+            &resolver,
+            &type_ctx,
+            &view,
+        )
+        .expect("type");
+        assert_eq!(ty.erased_internal(), "double");
+    }
 }

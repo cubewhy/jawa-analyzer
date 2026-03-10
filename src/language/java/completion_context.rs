@@ -429,10 +429,32 @@ fn enrich_expected_type_context(
         .and_then(|src| resolve_source_type_hint(type_ctx, src))
         .map(|(ty, confidence)| ExpectedType {
             ty,
-            source: ExpectedTypeSource::AssignmentRhs,
+            source: hint
+                .expected_type_context
+                .clone()
+                .unwrap_or(ExpectedTypeSource::AssignmentRhs),
             confidence,
         });
     let mut receiver_type: Option<TypeName> = None;
+
+    if expected.is_none()
+        && let Some(lhs_expr) = hint.assignment_lhs_expr.as_deref()
+    {
+        let resolver = TypeResolver::new(view);
+        expected = expression_typing::resolve_expression_type(
+            lhs_expr,
+            &ctx.local_variables,
+            ctx.enclosing_internal_name.as_ref(),
+            &resolver,
+            type_ctx,
+            view,
+        )
+        .map(|ty| ExpectedType {
+            ty,
+            source: ExpectedTypeSource::AssignmentRhs,
+            confidence: ExpectedTypeConfidence::Exact,
+        });
+    }
 
     if expected.is_none()
         && let Some(call_hint) = hint.method_call.as_ref()
@@ -479,6 +501,16 @@ fn resolve_source_type_hint(
     type_ctx: &SourceTypeCtx,
     src: &str,
 ) -> Option<(TypeName, ExpectedTypeConfidence)> {
+    let primitive = match src.trim() {
+        "byte" | "short" | "int" | "long" | "float" | "double" | "boolean" | "char" | "void" => {
+            Some(TypeName::new(src.trim()))
+        }
+        _ => None,
+    };
+    if let Some(primitive) = primitive {
+        return Some((primitive, ExpectedTypeConfidence::Exact));
+    }
+
     type_ctx
         .resolve_type_name_relaxed(src)
         .map(|r| {
@@ -2826,6 +2858,8 @@ mod tests {
         )
         .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
             expected_type_source: Some("Function<String, Integer>".to_string()),
+            expected_type_context: None,
+            assignment_lhs_expr: None,
             method_call: None,
             expr_shape: None,
         }))
@@ -2895,6 +2929,8 @@ mod tests {
         )
         .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
             expected_type_source: None,
+            expected_type_context: None,
+            assignment_lhs_expr: None,
             method_call: Some(crate::semantic::context::FunctionalMethodCallHint {
                 receiver_expr: "stream".to_string(),
                 method_name: "map".to_string(),
@@ -2943,6 +2979,100 @@ mod tests {
                 .map(|c| c.status),
             None
         );
+    }
+
+    #[test]
+    fn test_enrich_context_resolves_expected_type_from_assignment_lhs_expression() {
+        let idx = make_index_with_random_class();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        let view = idx.view(scope);
+        let name_table = view.build_name_table();
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            Some(Arc::from("org/cubewhy/a")),
+            vec![],
+            Some(name_table),
+        ));
+
+        let mut ctx = SemanticContext::new(
+            CursorLocation::Expression {
+                prefix: "fo".to_string(),
+            },
+            "fo",
+            vec![LocalVar {
+                name: Arc::from("x"),
+                type_internal: TypeName::new("double"),
+                init_expr: None,
+            }],
+            Some(Arc::from("Main")),
+            Some(Arc::from("org/cubewhy/a/Main")),
+            Some(Arc::from("org/cubewhy/a")),
+            vec![],
+        )
+        .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
+            expected_type_source: None,
+            expected_type_context: Some(ExpectedTypeSource::AssignmentRhs),
+            assignment_lhs_expr: Some("x".to_string()),
+            method_call: None,
+            expr_shape: None,
+        }))
+        .with_extension(type_ctx);
+
+        ContextEnricher::new(&view).enrich(&mut ctx);
+
+        let expected = ctx
+            .typed_expr_ctx
+            .as_ref()
+            .and_then(|t| t.expected_type.as_ref())
+            .expect("expected type");
+        assert_eq!(expected.ty.erased_internal(), "double");
+        assert_eq!(expected.source, ExpectedTypeSource::AssignmentRhs);
+        assert_eq!(expected.confidence, ExpectedTypeConfidence::Exact);
+    }
+
+    #[test]
+    fn test_enrich_context_preserves_return_expected_type_source_kind() {
+        let idx = make_index_with_random_class();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        let view = idx.view(scope);
+        let name_table = view.build_name_table();
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            Some(Arc::from("org/cubewhy/a")),
+            vec![],
+            Some(name_table),
+        ));
+
+        let mut ctx = SemanticContext::new(
+            CursorLocation::Expression {
+                prefix: "fo".to_string(),
+            },
+            "fo",
+            vec![],
+            Some(Arc::from("Main")),
+            Some(Arc::from("org/cubewhy/a/Main")),
+            Some(Arc::from("org/cubewhy/a")),
+            vec![],
+        )
+        .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
+            expected_type_source: Some("int".to_string()),
+            expected_type_context: Some(ExpectedTypeSource::ReturnExpr),
+            assignment_lhs_expr: None,
+            method_call: None,
+            expr_shape: None,
+        }))
+        .with_extension(type_ctx);
+
+        ContextEnricher::new(&view).enrich(&mut ctx);
+        let expected = ctx
+            .typed_expr_ctx
+            .as_ref()
+            .and_then(|t| t.expected_type.as_ref())
+            .expect("expected type");
+        assert_eq!(expected.ty.erased_internal(), "int");
+        assert_eq!(expected.source, ExpectedTypeSource::ReturnExpr);
     }
 
     #[test]
@@ -3002,6 +3132,8 @@ mod tests {
         )
         .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
             expected_type_source: None,
+            expected_type_context: None,
+            assignment_lhs_expr: None,
             method_call: Some(crate::semantic::context::FunctionalMethodCallHint {
                 receiver_expr: "holder".to_string(),
                 method_name: "set".to_string(),
@@ -3061,6 +3193,8 @@ mod tests {
         )
         .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
             expected_type_source: None,
+            expected_type_context: None,
+            assignment_lhs_expr: None,
             method_call: Some(crate::semantic::context::FunctionalMethodCallHint {
                 receiver_expr: "nums".to_string(),
                 method_name: "add".to_string(),
@@ -3129,6 +3263,8 @@ mod tests {
         )
         .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
             expected_type_source: None,
+            expected_type_context: None,
+            assignment_lhs_expr: None,
             method_call: Some(crate::semantic::context::FunctionalMethodCallHint {
                 receiver_expr: "nums".to_string(),
                 method_name: "add".to_string(),
@@ -3263,6 +3399,8 @@ mod tests {
         )
         .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
             expected_type_source: None,
+            expected_type_context: None,
+            assignment_lhs_expr: None,
             method_call: Some(crate::semantic::context::FunctionalMethodCallHint {
                 receiver_expr: "nums".to_string(),
                 method_name: "add".to_string(),
@@ -3475,6 +3613,8 @@ mod tests {
             )
             .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
                 expected_type_source: None,
+                expected_type_context: None,
+                assignment_lhs_expr: None,
                 method_call: Some(crate::semantic::context::FunctionalMethodCallHint {
                     receiver_expr: "nums".to_string(),
                     method_name: "add".to_string(),
@@ -3712,6 +3852,8 @@ mod tests {
         )
         .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
             expected_type_source: None,
+            expected_type_context: None,
+            assignment_lhs_expr: None,
             method_call: Some(crate::semantic::context::FunctionalMethodCallHint {
                 receiver_expr: "nums".to_string(),
                 method_name: "add".to_string(),
@@ -3874,6 +4016,8 @@ mod tests {
         )
         .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
             expected_type_source: Some("String".to_string()),
+            expected_type_context: None,
+            assignment_lhs_expr: None,
             method_call: None,
             expr_shape: None,
         }))
@@ -3919,6 +4063,8 @@ mod tests {
         )
         .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
             expected_type_source: Some("Function<? super T, ? extends K>".to_string()),
+            expected_type_context: None,
+            assignment_lhs_expr: None,
             method_call: None,
             expr_shape: None,
         }))
@@ -3967,6 +4113,8 @@ mod tests {
         )
         .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
             expected_type_source: Some("ToIntFunction<String>".to_string()),
+            expected_type_context: None,
+            assignment_lhs_expr: None,
             method_call: None,
             expr_shape: Some(
                 crate::semantic::context::FunctionalExprShape::MethodReference {
@@ -4031,6 +4179,8 @@ mod tests {
         )
         .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
             expected_type_source: None,
+            expected_type_context: None,
+            assignment_lhs_expr: None,
             method_call: Some(crate::semantic::context::FunctionalMethodCallHint {
                 receiver_expr: "stream".to_string(),
                 method_name: "map".to_string(),
@@ -4086,6 +4236,8 @@ mod tests {
         )
         .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
             expected_type_source: Some("Function<Integer, Integer>".to_string()),
+            expected_type_context: None,
+            assignment_lhs_expr: None,
             method_call: None,
             expr_shape: Some(crate::semantic::context::FunctionalExprShape::Lambda {
                 param_count: 1,
@@ -4132,6 +4284,8 @@ mod tests {
         )
         .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
             expected_type_source: Some("Function<String, Integer>".to_string()),
+            expected_type_context: None,
+            assignment_lhs_expr: None,
             method_call: None,
             expr_shape: Some(crate::semantic::context::FunctionalExprShape::Lambda {
                 param_count: 2,
@@ -4241,6 +4395,8 @@ mod tests {
             )
             .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
                 expected_type_source: Some("Function<String, Integer>".to_string()),
+                expected_type_context: None,
+                assignment_lhs_expr: None,
                 method_call: None,
                 expr_shape: Some(
                     crate::semantic::context::FunctionalExprShape::MethodReference {
@@ -4325,6 +4481,8 @@ mod tests {
             )
             .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
                 expected_type_source: None,
+                expected_type_context: None,
+                assignment_lhs_expr: None,
                 method_call: Some(crate::semantic::context::FunctionalMethodCallHint {
                     receiver_expr: "stream".to_string(),
                     method_name: "map".to_string(),
@@ -4413,6 +4571,8 @@ mod tests {
             )
             .with_functional_target_hint(Some(crate::semantic::context::FunctionalTargetHint {
                 expected_type_source: None,
+                expected_type_context: None,
+                assignment_lhs_expr: None,
                 method_call: Some(crate::semantic::context::FunctionalMethodCallHint {
                     receiver_expr: "nums".to_string(),
                     method_name: "add".to_string(),

@@ -28,6 +28,27 @@ pub struct TypeResolver<'idx> {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConversionKind {
+    Identity,
+    WideningPrimitive,
+    NarrowingPrimitive,
+    Boxing,
+    Unboxing,
+    BoxingWideningPrimitive,
+    UnboxingWideningPrimitive,
+    ReferenceWidening,
+    NullToReference,
+    Unknown,
+    Incompatible,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TypeCompatibility {
+    pub kind: ConversionKind,
+    pub score: i32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OverloadInvocationMode {
     Fixed,
     Varargs,
@@ -1060,6 +1081,138 @@ impl<'idx> TypeResolver<'idx> {
         tracing::debug!("score: -1 (no match found)");
         -1
     }
+
+    pub fn type_compatibility(&self, source: &TypeName, target: &TypeName) -> TypeCompatibility {
+        let kind = self.classify_conversion(source, target);
+        let score = match kind {
+            ConversionKind::Identity => 120,
+            ConversionKind::WideningPrimitive => 95,
+            ConversionKind::UnboxingWideningPrimitive => 85,
+            ConversionKind::Unboxing | ConversionKind::Boxing => 80,
+            ConversionKind::BoxingWideningPrimitive => 75,
+            ConversionKind::ReferenceWidening => 70,
+            ConversionKind::NullToReference => 65,
+            ConversionKind::Unknown => 0,
+            ConversionKind::NarrowingPrimitive => -20,
+            ConversionKind::Incompatible => -100,
+        };
+        TypeCompatibility { kind, score }
+    }
+
+    pub fn classify_conversion(&self, source: &TypeName, target: &TypeName) -> ConversionKind {
+        let source_erased = source.erased_internal_with_arrays();
+        let target_erased = target.erased_internal_with_arrays();
+        if source_erased == target_erased {
+            return ConversionKind::Identity;
+        }
+        if source.erased_internal() == "unknown" || target.erased_internal() == "unknown" {
+            return ConversionKind::Unknown;
+        }
+
+        if source.erased_internal() == "null" {
+            return if is_reference_type_name(target) {
+                ConversionKind::NullToReference
+            } else {
+                ConversionKind::Incompatible
+            };
+        }
+
+        let source_prim = unboxed_primitive_type_name(source.erased_internal());
+        let target_prim = unboxed_primitive_type_name(target.erased_internal());
+
+        if let (Some(src), Some(dst)) = (source_prim, target_prim) {
+            if src == dst {
+                if source.is_primitive() && !target.is_primitive() {
+                    return ConversionKind::Boxing;
+                }
+                if !source.is_primitive() && target.is_primitive() {
+                    return ConversionKind::Unboxing;
+                }
+                return ConversionKind::Identity;
+            }
+            if is_widening_primitive(src, dst) {
+                if source.is_primitive() && target.is_primitive() {
+                    return ConversionKind::WideningPrimitive;
+                }
+                if source.is_primitive() && !target.is_primitive() {
+                    return ConversionKind::BoxingWideningPrimitive;
+                }
+                if !source.is_primitive() && target.is_primitive() {
+                    return ConversionKind::UnboxingWideningPrimitive;
+                }
+                return ConversionKind::Incompatible;
+            }
+            return ConversionKind::NarrowingPrimitive;
+        }
+
+        if are_boxing_compatible_type_names(source.erased_internal(), target.erased_internal()) {
+            if source.is_primitive() && !target.is_primitive() {
+                return ConversionKind::Boxing;
+            }
+            if !source.is_primitive() && target.is_primitive() {
+                return ConversionKind::Unboxing;
+            }
+            return ConversionKind::Identity;
+        }
+
+        if is_reference_widening(self.view, source, target) {
+            return ConversionKind::ReferenceWidening;
+        }
+
+        ConversionKind::Incompatible
+    }
+}
+
+fn is_reference_type_name(ty: &TypeName) -> bool {
+    if ty.is_primitive() {
+        return false;
+    }
+    ty.array_dims > 0
+        || ty.contains_slash()
+        || matches!(ty.erased_internal(), "*" | "+" | "-" | "capture")
+}
+
+fn is_reference_widening(view: &IndexView, source: &TypeName, target: &TypeName) -> bool {
+    if source.array_dims > 0 || target.array_dims > 0 {
+        return target.array_dims == source.array_dims
+            || (target.array_dims == 0 && target.erased_internal() == "java/lang/Object");
+    }
+    if source.is_primitive() || target.is_primitive() {
+        return false;
+    }
+    let src = source.erased_internal();
+    let dst = target.erased_internal();
+    if src == dst {
+        return true;
+    }
+    view.mro(src)
+        .iter()
+        .any(|c| c.internal_name.as_ref() == dst)
+}
+
+fn is_widening_primitive(source: &str, target: &str) -> bool {
+    matches!(
+        (source, target),
+        ("byte", "short")
+            | ("byte", "int")
+            | ("byte", "long")
+            | ("byte", "float")
+            | ("byte", "double")
+            | ("short", "int")
+            | ("short", "long")
+            | ("short", "float")
+            | ("short", "double")
+            | ("char", "int")
+            | ("char", "long")
+            | ("char", "float")
+            | ("char", "double")
+            | ("int", "long")
+            | ("int", "float")
+            | ("int", "double")
+            | ("long", "float")
+            | ("long", "double")
+            | ("float", "double")
+    )
 }
 
 fn normalize_call_arg_count(arg_count: i32, arg_types: &[TypeName]) -> usize {
@@ -3119,6 +3272,40 @@ mod tests {
         assert_eq!(
             promoted_unary_integral_result_type_name("java/lang/Integer"),
             Some("int")
+        );
+    }
+
+    #[test]
+    fn test_type_compatibility_identity_widening_unboxing_and_incompatible() {
+        let (view, _) = make_resolver();
+        let resolver = TypeResolver::new(&view);
+
+        assert_eq!(
+            resolver
+                .type_compatibility(&TypeName::new("double"), &TypeName::new("double"))
+                .kind,
+            ConversionKind::Identity
+        );
+        assert_eq!(
+            resolver
+                .type_compatibility(&TypeName::new("int"), &TypeName::new("double"))
+                .kind,
+            ConversionKind::WideningPrimitive
+        );
+        assert_eq!(
+            resolver
+                .type_compatibility(
+                    &TypeName::new("java/lang/Integer"),
+                    &TypeName::new("double")
+                )
+                .kind,
+            ConversionKind::UnboxingWideningPrimitive
+        );
+        assert_eq!(
+            resolver
+                .type_compatibility(&TypeName::new("java/lang/String"), &TypeName::new("double"))
+                .kind,
+            ConversionKind::Incompatible
         );
     }
 

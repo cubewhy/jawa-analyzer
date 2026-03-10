@@ -9,7 +9,8 @@ use crate::{
     language::java::{JavaContextExtractor, utils::strip_sentinel},
     semantic::CursorLocation,
     semantic::context::{
-        FunctionalExprShape, FunctionalMethodCallHint, FunctionalTargetHint, MethodRefQualifierKind,
+        ExpectedTypeSource, FunctionalExprShape, FunctionalMethodCallHint, FunctionalTargetHint,
+        MethodRefQualifierKind,
     },
 };
 
@@ -31,16 +32,22 @@ pub(crate) fn infer_functional_target_hint(
 ) -> Option<FunctionalTargetHint> {
     let node = cursor_node?;
 
-    let expected_type_source = infer_assignment_rhs_expected_type(ctx, node);
+    let (expected_type_source, mut expected_type_context) = infer_expected_type_source(ctx, node);
+    let assignment_lhs_expr = infer_assignment_rhs_lhs_expr(ctx, node);
+    if expected_type_context.is_none() && assignment_lhs_expr.is_some() {
+        expected_type_context = Some(ExpectedTypeSource::AssignmentRhs);
+    }
     let method_call = infer_method_argument_target_hint(ctx, node);
     let expr_shape = infer_functional_expr_shape(ctx, node);
 
-    if expected_type_source.is_none() && method_call.is_none() {
+    if expected_type_source.is_none() && assignment_lhs_expr.is_none() && method_call.is_none() {
         return None;
     }
 
     Some(FunctionalTargetHint {
         expected_type_source,
+        expected_type_context,
+        assignment_lhs_expr,
         method_call,
         expr_shape,
     })
@@ -963,6 +970,54 @@ fn infer_assignment_rhs_expected_type(ctx: &JavaContextExtractor, node: Node) ->
     Some(extract_type_from_decl(ctx, decl))
 }
 
+fn infer_return_expected_type(ctx: &JavaContextExtractor, node: Node) -> Option<String> {
+    let return_stmt = find_ancestor(node, "return_statement")?;
+    return_stmt.child_by_field_name("value")?;
+
+    let method_decl = find_ancestor(return_stmt, "method_declaration")?;
+    let mut walker = method_decl.walk();
+    for child in method_decl.named_children(&mut walker) {
+        if matches!(child.kind(), "modifiers" | "type_parameters") {
+            continue;
+        }
+        if child.kind() == "identifier" || child.kind() == "formal_parameters" {
+            break;
+        }
+        let ty = ctx.node_text(child).trim();
+        if !ty.is_empty() {
+            return Some(ty.to_string());
+        }
+    }
+    None
+}
+
+fn infer_assignment_rhs_lhs_expr(ctx: &JavaContextExtractor, node: Node) -> Option<String> {
+    let assign = find_ancestor(node, "assignment_expression")?;
+    let right = assign.child_by_field_name("right")?;
+    if !is_descendant_of(node, right) {
+        return None;
+    }
+    let left = assign.child_by_field_name("left")?;
+    let lhs = ctx.node_text(left).trim();
+    if lhs.is_empty() {
+        return None;
+    }
+    Some(lhs.to_string())
+}
+
+fn infer_expected_type_source(
+    ctx: &JavaContextExtractor,
+    node: Node,
+) -> (Option<String>, Option<ExpectedTypeSource>) {
+    if let Some(ty) = infer_assignment_rhs_expected_type(ctx, node) {
+        return (Some(ty), Some(ExpectedTypeSource::VariableInitializer));
+    }
+    if let Some(ty) = infer_return_expected_type(ctx, node) {
+        return (Some(ty), Some(ExpectedTypeSource::ReturnExpr));
+    }
+    (None, None)
+}
+
 fn infer_method_argument_target_hint(
     ctx: &JavaContextExtractor,
     node: Node,
@@ -1763,6 +1818,36 @@ class A {
                 is_constructor: false,
                 qualifier_kind: crate::semantic::context::MethodRefQualifierKind::Type,
             }) if qualifier_expr == "String" && member_name == "length"
+        ));
+        assert!(matches!(
+            hint.as_ref().and_then(|h| h.expected_type_context.clone()),
+            Some(crate::semantic::context::ExpectedTypeSource::VariableInitializer)
+        ));
+    }
+
+    #[test]
+    fn test_functional_target_hint_assignment_rhs_lhs_expr() {
+        let src = indoc::indoc! {r#"
+class A {
+    void f() {
+        int x = 0;
+        x = fo;
+    }
+}
+"#};
+        let marker = "fo";
+        let offset = src.rfind(marker).unwrap() + 1;
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+        let hint = super::infer_functional_target_hint(&ctx, cursor_node);
+
+        assert!(matches!(
+            hint.as_ref().and_then(|h| h.assignment_lhs_expr.as_deref()),
+            Some("x")
+        ));
+        assert!(matches!(
+            hint.as_ref().and_then(|h| h.expected_type_context.clone()),
+            Some(crate::semantic::context::ExpectedTypeSource::AssignmentRhs)
         ));
     }
 
