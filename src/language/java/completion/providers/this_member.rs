@@ -1,12 +1,12 @@
 use rust_asm::constants::ACC_STATIC;
 
+use crate::completion::fuzzy;
 use crate::index::{IndexScope, IndexView};
 use crate::semantic::context::{CursorLocation, SemanticContext};
 use crate::semantic::types::ContextualResolver;
 use crate::{
     completion::{
         candidate::{CandidateKind, CompletionCandidate},
-        fuzzy,
         provider::CompletionProvider,
     },
     language::java::render,
@@ -49,7 +49,7 @@ impl CompletionProvider for ThisMemberProvider {
             ctx.current_class_members.keys().collect::<Vec<_>>()
         );
 
-        // ── 1. 当前类 source members（含 private，不依赖 index）──────────────
+        // enclosing class members
         let scored = fuzzy::fuzzy_filter_sort(
             prefix,
             ctx.current_class_members
@@ -107,8 +107,6 @@ impl CompletionProvider for ThisMemberProvider {
             let source_names: std::collections::HashSet<Arc<str>> =
                 ctx.current_class_members.keys().map(Arc::clone).collect();
 
-            let prefix_lower = prefix.to_lowercase();
-
             let mro = index.mro(enclosing);
             let resolver = ContextualResolver::new(index, ctx);
 
@@ -142,12 +140,10 @@ impl CompletionProvider for ThisMemberProvider {
                     if source_names.contains(&method.name) {
                         continue;
                     }
-                    // 前缀过滤
-                    if !prefix_lower.is_empty()
-                        && !method.name.to_lowercase().contains(&prefix_lower)
-                    {
+
+                    let Some(match_score) = fuzzy::fuzzy_match(prefix, method.name.as_ref()) else {
                         continue;
-                    }
+                    };
                     let kind = if is_static {
                         CandidateKind::StaticMethod {
                             descriptor: method.desc(),
@@ -177,7 +173,7 @@ impl CompletionProvider for ThisMemberProvider {
                             method,
                             &resolver,
                         ))
-                        .with_score(50.0),
+                        .with_score(50.0 + match_score as f32 * 0.1),
                     );
                 }
 
@@ -196,11 +192,9 @@ impl CompletionProvider for ThisMemberProvider {
                     if source_names.contains(&field.name) {
                         continue;
                     }
-                    if !prefix_lower.is_empty()
-                        && !field.name.to_lowercase().contains(&prefix_lower)
-                    {
+                    let Some(match_score) = fuzzy::fuzzy_match(prefix, field.name.as_ref()) else {
                         continue;
-                    }
+                    };
                     let kind = if is_static {
                         CandidateKind::StaticField {
                             descriptor: Arc::clone(&field.descriptor),
@@ -225,7 +219,7 @@ impl CompletionProvider for ThisMemberProvider {
                             field,
                             &resolver,
                         ))
-                        .with_score(50.0),
+                        .with_score(50.0 + match_score as f32 * 0.1),
                     );
                 }
             }
@@ -334,6 +328,21 @@ mod tests {
         assert!(results.iter().any(|c| c.label.as_ref() == "fun"));
         assert!(results.iter().all(|c| c.label.as_ref() != "other"));
         assert!(results.iter().all(|c| c.label.as_ref() != "pri"));
+    }
+
+    #[test]
+    fn test_this_member_fuzzy_subsequence_match_source_member() {
+        let members = vec![make_member("veryLongMemberName", false, false, false)];
+        let idx = WorkspaceIndex::new();
+        let ctx = ctx_with_members("vlmn", members);
+        let results = ThisMemberProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
+        assert!(
+            results
+                .iter()
+                .any(|c| c.label.as_ref() == "veryLongMemberName"),
+            "fuzzy subsequence should match this-member source field: {:?}",
+            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -751,6 +760,72 @@ mod tests {
         assert!(
             results.iter().any(|c| c.label.as_ref() == "funcA"),
             "funcA inherited from BaseClass should be visible inside Main2 instance method, got: {:?}",
+            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_this_member_fuzzy_subsequence_match_inherited_member() {
+        use crate::index::{ClassMetadata, ClassOrigin};
+        use rust_asm::constants::ACC_PUBLIC;
+
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("BaseClass"),
+                internal_name: Arc::from("org/cubewhy/BaseClass"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![FieldSummary {
+                    name: Arc::from("veryLongMemberName"),
+                    descriptor: Arc::from("I"),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    generic_signature: None,
+                }],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("Main2"),
+                internal_name: Arc::from("org/cubewhy/Main2"),
+                super_name: Some("org/cubewhy/BaseClass".into()),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+
+        let ctx = SemanticContext::new(
+            CursorLocation::Expression {
+                prefix: "vlmn".to_string(),
+            },
+            "vlmn",
+            vec![],
+            Some(Arc::from("Main2")),
+            Some(Arc::from("org/cubewhy/Main2")),
+            Some(Arc::from("org/cubewhy")),
+            vec![],
+        );
+
+        let results = ThisMemberProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
+        assert!(
+            results
+                .iter()
+                .any(|c| c.label.as_ref() == "veryLongMemberName"),
+            "fuzzy subsequence should match inherited this-member field, got: {:?}",
             results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
         );
     }

@@ -3,13 +3,12 @@ use std::time::Instant;
 
 use crate::completion::provider::CompletionProvider;
 use crate::completion::scorer::AccessFilter;
-use crate::completion::{CandidateKind, CompletionCandidate};
+use crate::completion::{CandidateKind, CompletionCandidate, fuzzy};
 use crate::language::java::expression_typing;
 use crate::language::java::render;
 use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::semantic::context::{CursorLocation, SemanticContext};
 use crate::{
-    completion::fuzzy,
     index::{IndexScope, IndexView},
     semantic::types::{ContextualResolver, TypeResolver, type_name::TypeName},
 };
@@ -1565,6 +1564,67 @@ mod tests {
     fn test_member_prefix_match_unicode_fallback() {
         assert!(super::name_matches_member_prefix("测试Value", Some("测试")));
         assert!(!super::name_matches_member_prefix("测试Value", Some("abc")));
+    }
+
+    #[test]
+    fn test_member_provider_exact_prefix_regression() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![ClassMetadata {
+            package: Some(Arc::from("org/cubewhy")),
+            name: Arc::from("Sample"),
+            internal_name: Arc::from("org/cubewhy/Sample"),
+            super_name: None,
+            interfaces: vec![],
+            annotations: vec![],
+            methods: vec![
+                MethodSummary {
+                    name: Arc::from("size"),
+                    params: MethodParams::empty(),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    generic_signature: None,
+                    return_type: Some(Arc::from("I")),
+                },
+                MethodSummary {
+                    name: Arc::from("other"),
+                    params: MethodParams::empty(),
+                    annotations: vec![],
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    generic_signature: None,
+                    return_type: Some(Arc::from("I")),
+                },
+            ],
+            fields: vec![],
+            access_flags: ACC_PUBLIC,
+            generic_signature: None,
+            inner_class_of: None,
+            origin: ClassOrigin::Unknown,
+        }]);
+
+        let ctx = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: Some(TypeName::new("org/cubewhy/Sample")),
+                receiver_type: Some(Arc::from("org/cubewhy/Sample")),
+                member_prefix: "si".to_string(),
+                receiver_expr: "sample".to_string(),
+                arguments: None,
+            },
+            "si",
+            vec![],
+            None,
+            None,
+            None,
+            vec![],
+        );
+
+        let results = MemberProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
+        assert!(
+            results.iter().any(|c| c.label.as_ref() == "size"),
+            "exact prefix should still work for member provider: {:?}",
+            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+        );
     }
 
     #[test]

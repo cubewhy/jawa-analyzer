@@ -1,6 +1,6 @@
 use crate::{
     completion::{
-        CandidateKind, CompletionCandidate, candidate::ReplacementMode,
+        CandidateKind, CompletionCandidate, candidate::ReplacementMode, fuzzy,
         provider::CompletionProvider, scorer::AccessFilter,
     },
     index::{IndexScope, IndexView},
@@ -89,7 +89,6 @@ impl CompletionProvider for StaticMemberProvider {
             AccessFilter::member_completion()
         };
 
-        let prefix_lower = member_prefix.to_lowercase();
         let class_name = class_meta.internal_name.as_ref();
         let mut results = Vec::new();
 
@@ -105,9 +104,9 @@ impl CompletionProvider for StaticMemberProvider {
             if !filter.is_method_accessible(method.access_flags, method.is_synthetic) {
                 continue;
             }
-            if !prefix_lower.is_empty() && !method.name.to_lowercase().starts_with(&prefix_lower) {
+            let Some(match_score) = fuzzy::fuzzy_match(member_prefix, method.name.as_ref()) else {
                 continue;
-            }
+            };
             results.push(
                 CompletionCandidate::new(
                     Arc::clone(&method.name),
@@ -128,7 +127,8 @@ impl CompletionProvider for StaticMemberProvider {
                     &class_meta,
                     method,
                     &resolver,
-                )),
+                ))
+                .with_score(50.0 + match_score as f32 * 0.1),
             );
         }
 
@@ -141,9 +141,9 @@ impl CompletionProvider for StaticMemberProvider {
             if !filter.is_field_accessible(field.access_flags, field.is_synthetic) {
                 continue;
             }
-            if !prefix_lower.is_empty() && !field.name.to_lowercase().starts_with(&prefix_lower) {
+            let Some(match_score) = fuzzy::fuzzy_match(member_prefix, field.name.as_ref()) else {
                 continue;
-            }
+            };
             results.push(
                 CompletionCandidate::new(
                     Arc::clone(&field.name),
@@ -159,14 +159,15 @@ impl CompletionProvider for StaticMemberProvider {
                     &class_meta,
                     field,
                     &resolver,
-                )),
+                ))
+                .with_score(50.0 + match_score as f32 * 0.1),
             );
         }
 
         for inner in index.direct_inner_classes_of(class_meta.internal_name.as_ref()) {
-            if !prefix_lower.is_empty() && !inner.name.to_lowercase().contains(&prefix_lower) {
+            let Some(match_score) = fuzzy::fuzzy_match(member_prefix, inner.name.as_ref()) else {
                 continue;
-            }
+            };
             results.push(
                 CompletionCandidate::new(
                     Arc::clone(&inner.name),
@@ -177,7 +178,7 @@ impl CompletionProvider for StaticMemberProvider {
                 .with_replacement_mode(ReplacementMode::MemberSegment)
                 .with_filter_text(inner.name.to_string())
                 .with_detail(inner.source_name())
-                .with_score(62.0),
+                .with_score(62.0 + match_score as f32 * 0.1),
             );
         }
 
@@ -193,8 +194,6 @@ impl StaticMemberProvider {
         ctx: &SemanticContext,
         member_prefix: &str,
     ) -> Vec<CompletionCandidate> {
-        use crate::completion::fuzzy;
-
         let enclosing = ctx.enclosing_internal_name.as_deref().unwrap_or("");
 
         // Only static members for Cls.xxx access
@@ -828,7 +827,7 @@ mod tests {
     }
 
     #[test]
-    fn test_static_member_prefix_starts_with() {
+    fn test_static_member_fuzzy_match() {
         let idx = WorkspaceIndex::new();
         idx.add_classes(vec![ClassMetadata {
             package: Some(Arc::from("org/cubewhy/a")),
@@ -839,7 +838,7 @@ mod tests {
             annotations: vec![],
             methods: vec![
                 make_method("main", "()V", ACC_PUBLIC | ACC_STATIC, false),
-                make_method("notStartsWithma", "()V", ACC_PUBLIC | ACC_STATIC, false),
+                make_method("veryLongStaticName", "()V", ACC_PUBLIC | ACC_STATIC, false),
             ],
             fields: vec![],
             access_flags: ACC_PUBLIC,
@@ -866,7 +865,55 @@ mod tests {
         assert!(
             results
                 .iter()
-                .all(|c| c.label.as_ref() != "notStartsWithma")
+                .all(|c| c.label.as_ref() != "veryLongStaticName")
+        );
+    }
+
+    #[test]
+    fn test_static_member_fuzzy_subsequence_match() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![ClassMetadata {
+            package: Some(Arc::from("org/cubewhy/a")),
+            name: Arc::from("Util"),
+            internal_name: Arc::from("org/cubewhy/a/Util"),
+            super_name: None,
+            interfaces: vec![],
+            annotations: vec![],
+            methods: vec![],
+            fields: vec![FieldSummary {
+                name: Arc::from("veryLongStaticName"),
+                descriptor: Arc::from("I"),
+                annotations: vec![],
+                access_flags: ACC_PUBLIC | ACC_STATIC,
+                is_synthetic: false,
+                generic_signature: None,
+            }],
+            access_flags: ACC_PUBLIC,
+            generic_signature: None,
+            inner_class_of: None,
+            origin: ClassOrigin::Unknown,
+        }]);
+
+        let ctx = SemanticContext::new(
+            CursorLocation::StaticAccess {
+                class_internal_name: Arc::from("org/cubewhy/a/Util"),
+                member_prefix: "vlsn".to_string(),
+            },
+            "vlsn",
+            vec![],
+            None,
+            None,
+            None,
+            vec![],
+        );
+
+        let results = StaticMemberProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
+        assert!(
+            results
+                .iter()
+                .any(|c| c.label.as_ref() == "veryLongStaticName"),
+            "fuzzy subsequence should match static member, got: {:?}",
+            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
         );
     }
 
