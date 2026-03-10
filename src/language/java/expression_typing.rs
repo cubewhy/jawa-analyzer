@@ -4,6 +4,7 @@ use crate::completion::parser::parse_chain_from_expr;
 use crate::index::IndexView;
 use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::semantic::LocalVar;
+use crate::semantic::context::SamSignature;
 use crate::semantic::types::type_name::TypeName;
 use crate::semantic::types::{
     ChainSegment, TypeResolver, parse_single_type_to_internal, promoted_integral_result_type_name,
@@ -21,13 +22,43 @@ pub(crate) fn resolve_expression_type(
     type_ctx: &SourceTypeCtx,
     view: &IndexView,
 ) -> Option<TypeName> {
+    resolve_expression_type_with_target(
+        expr,
+        locals,
+        enclosing_internal,
+        resolver,
+        type_ctx,
+        view,
+        None,
+        None,
+    )
+}
+
+pub(crate) fn resolve_expression_type_with_target(
+    expr: &str,
+    locals: &[LocalVar],
+    enclosing_internal: Option<&Arc<str>>,
+    resolver: &TypeResolver,
+    type_ctx: &SourceTypeCtx,
+    view: &IndexView,
+    expected_functional_interface: Option<&TypeName>,
+    expected_sam: Option<&SamSignature>,
+) -> Option<TypeName> {
     let expr = expr.trim();
     if expr.is_empty() {
         return None;
     }
 
-    if let Some(ty) =
-        resolve_expression_type_ast(expr, locals, enclosing_internal, resolver, type_ctx, view)
+    if let Some(ty) = resolve_expression_type_ast(
+        expr,
+        locals,
+        enclosing_internal,
+        resolver,
+        type_ctx,
+        view,
+        expected_functional_interface,
+        expected_sam,
+    )
     {
         return Some(ty);
     }
@@ -57,6 +88,8 @@ fn resolve_expression_type_ast(
     resolver: &TypeResolver,
     type_ctx: &SourceTypeCtx,
     view: &IndexView,
+    expected_functional_interface: Option<&TypeName>,
+    expected_sam: Option<&SamSignature>,
 ) -> Option<TypeName> {
     let wrapped = format!("class __ExprTyping {{ Object __e() {{ return {expr}; }} }}");
     let mut parser = tree_sitter::Parser::new();
@@ -78,6 +111,8 @@ fn resolve_expression_type_ast(
         resolver,
         type_ctx,
         view,
+        expected_functional_interface,
+        expected_sam,
     )
 }
 
@@ -108,6 +143,8 @@ fn resolve_ast_node_type(
     resolver: &TypeResolver,
     type_ctx: &SourceTypeCtx,
     view: &IndexView,
+    expected_functional_interface: Option<&TypeName>,
+    expected_sam: Option<&SamSignature>,
 ) -> Option<TypeName> {
     match node.kind() {
         "parenthesized_expression" => {
@@ -122,6 +159,8 @@ fn resolve_ast_node_type(
                 resolver,
                 type_ctx,
                 view,
+                expected_functional_interface,
+                expected_sam,
             )
         }
         "identifier" => {
@@ -154,6 +193,8 @@ fn resolve_ast_node_type(
             resolver,
             type_ctx,
             view,
+            expected_functional_interface,
+            expected_sam,
         ),
         "ternary_expression" => resolve_ternary_expression_type(
             node,
@@ -163,6 +204,8 @@ fn resolve_ast_node_type(
             resolver,
             type_ctx,
             view,
+            expected_functional_interface,
+            expected_sam,
         ),
         "unary_expression" => resolve_unary_expression_type(
             node,
@@ -172,6 +215,8 @@ fn resolve_ast_node_type(
             resolver,
             type_ctx,
             view,
+            expected_functional_interface,
+            expected_sam,
         ),
         "method_invocation" => {
             let text = node.utf8_text(bytes).ok()?;
@@ -199,6 +244,9 @@ fn resolve_ast_node_type(
                 view,
             )
         }
+        "lambda_expression" => {
+            resolve_lambda_expression_type(node, expected_functional_interface, expected_sam)
+        }
         "binary_expression" => resolve_binary_expression_type(
             node,
             bytes,
@@ -207,9 +255,43 @@ fn resolve_ast_node_type(
             resolver,
             type_ctx,
             view,
+            expected_functional_interface,
+            expected_sam,
         ),
         _ => None,
     }
+}
+
+fn resolve_lambda_expression_type(
+    node: Node,
+    expected_functional_interface: Option<&TypeName>,
+    expected_sam: Option<&SamSignature>,
+) -> Option<TypeName> {
+    let expected_ty = expected_functional_interface?;
+    let sam = expected_sam?;
+    let params = node.child_by_field_name("parameters")?;
+    let param_count = match params.kind() {
+        "identifier" => 1,
+        "inferred_parameters" => {
+            let mut cursor = params.walk();
+            params
+                .named_children(&mut cursor)
+                .filter(|child| child.kind() == "identifier")
+                .count()
+        }
+        "formal_parameters" => {
+            let mut cursor = params.walk();
+            params
+                .named_children(&mut cursor)
+                .filter(|child| matches!(child.kind(), "formal_parameter" | "spread_parameter"))
+                .count()
+        }
+        _ => return None,
+    };
+    if param_count != sam.param_types.len() {
+        return None;
+    }
+    Some(expected_ty.clone())
 }
 
 fn resolve_expression_via_existing_resolver(
@@ -236,6 +318,8 @@ fn resolve_unary_expression_type(
     resolver: &TypeResolver,
     type_ctx: &SourceTypeCtx,
     view: &IndexView,
+    expected_functional_interface: Option<&TypeName>,
+    expected_sam: Option<&SamSignature>,
 ) -> Option<TypeName> {
     let op = unary_operator(node, bytes)?;
     let operand = node.child_by_field_name("operand").or_else(|| {
@@ -250,6 +334,8 @@ fn resolve_unary_expression_type(
         resolver,
         type_ctx,
         view,
+        expected_functional_interface,
+        expected_sam,
     )?;
     match op.as_str() {
         "+" | "-" => {
@@ -281,6 +367,8 @@ fn resolve_binary_expression_type(
     resolver: &TypeResolver,
     type_ctx: &SourceTypeCtx,
     view: &IndexView,
+    expected_functional_interface: Option<&TypeName>,
+    expected_sam: Option<&SamSignature>,
 ) -> Option<TypeName> {
     let op = binary_operator(node, bytes)?;
     let left = node.child_by_field_name("left")?;
@@ -293,6 +381,8 @@ fn resolve_binary_expression_type(
         resolver,
         type_ctx,
         view,
+        expected_functional_interface,
+        expected_sam,
     )?;
     let right_type = resolve_ast_node_type(
         right,
@@ -302,6 +392,8 @@ fn resolve_binary_expression_type(
         resolver,
         type_ctx,
         view,
+        expected_functional_interface,
+        expected_sam,
     )?;
 
     match op.as_str() {
@@ -490,6 +582,8 @@ fn resolve_assignment_expression_type(
     resolver: &TypeResolver,
     type_ctx: &SourceTypeCtx,
     view: &IndexView,
+    expected_functional_interface: Option<&TypeName>,
+    expected_sam: Option<&SamSignature>,
 ) -> Option<TypeName> {
     let left = node.child_by_field_name("left")?;
     resolve_ast_node_type(
@@ -500,6 +594,8 @@ fn resolve_assignment_expression_type(
         resolver,
         type_ctx,
         view,
+        expected_functional_interface,
+        expected_sam,
     )
     .or_else(|| {
         let right = node.child_by_field_name("right")?;
@@ -511,6 +607,8 @@ fn resolve_assignment_expression_type(
             resolver,
             type_ctx,
             view,
+            expected_functional_interface,
+            expected_sam,
         )
     })
 }
@@ -524,6 +622,8 @@ fn resolve_ternary_expression_type(
     resolver: &TypeResolver,
     type_ctx: &SourceTypeCtx,
     view: &IndexView,
+    expected_functional_interface: Option<&TypeName>,
+    expected_sam: Option<&SamSignature>,
 ) -> Option<TypeName> {
     let consequence = node.child_by_field_name("consequence").or_else(|| {
         let mut cursor = node.walk();
@@ -541,6 +641,8 @@ fn resolve_ternary_expression_type(
         resolver,
         type_ctx,
         view,
+        expected_functional_interface,
+        expected_sam,
     )?;
     let right = resolve_ast_node_type(
         alternative,
@@ -550,6 +652,8 @@ fn resolve_ternary_expression_type(
         resolver,
         type_ctx,
         view,
+        expected_functional_interface,
+        expected_sam,
     )?;
     if left.erased_internal_with_arrays() == right.erased_internal_with_arrays() {
         return Some(left);
@@ -859,6 +963,7 @@ mod tests {
         ClassMetadata, ClassOrigin, IndexScope, IndexView, MethodParams, MethodSummary, ModuleId,
         WorkspaceIndex,
     };
+    use crate::semantic::context::SamSignature;
     use rust_asm::constants::ACC_PUBLIC;
 
     fn root_scope() -> IndexScope {
@@ -900,6 +1005,51 @@ mod tests {
             vec![],
             Some(view.build_name_table()),
         )
+    }
+
+    fn function_type() -> TypeName {
+        TypeName::with_args(
+            "java/util/function/Function",
+            vec![TypeName::new("java/lang/String"), TypeName::new("java/lang/Integer")],
+        )
+    }
+
+    fn function_sam() -> SamSignature {
+        SamSignature {
+            method_name: Arc::from("apply"),
+            param_types: vec![TypeName::new("java/lang/String")],
+            return_type: Some(TypeName::new("java/lang/Integer")),
+        }
+    }
+
+    fn consumer_type() -> TypeName {
+        TypeName::with_args(
+            "java/util/function/Consumer",
+            vec![TypeName::new("java/lang/String")],
+        )
+    }
+
+    fn consumer_sam() -> SamSignature {
+        SamSignature {
+            method_name: Arc::from("accept"),
+            param_types: vec![TypeName::new("java/lang/String")],
+            return_type: Some(TypeName::new("void")),
+        }
+    }
+
+    fn supplier_type() -> TypeName {
+        TypeName::with_args(
+            "java/util/function/Supplier",
+            vec![TypeName::new("java/lang/String")],
+        )
+    }
+
+    fn supplier_sam() -> SamSignature {
+        SamSignature {
+            method_name: Arc::from("get"),
+            param_types: vec![],
+            return_type: Some(TypeName::new("java/lang/String")),
+        }
     }
 
     #[test]
@@ -944,5 +1094,113 @@ mod tests {
         )
         .expect("type");
         assert_eq!(ty.erased_internal(), "double");
+    }
+
+    #[test]
+    fn test_lambda_expression_type_uses_expected_functional_target_in_initializer_position() {
+        let idx = make_index();
+        let view = idx.view(root_scope());
+        let type_ctx = make_type_ctx(&view);
+        let resolver = TypeResolver::new(&view);
+        let expected = function_type();
+        let sam = function_sam();
+
+        let ty = resolve_expression_type_with_target(
+            "s -> s.length()",
+            &[],
+            Some(&Arc::from("org/cubewhy/Main")),
+            &resolver,
+            &type_ctx,
+            &view,
+            Some(&expected),
+            Some(&sam),
+        )
+        .expect("target-typed lambda");
+
+        assert_eq!(ty, expected);
+    }
+
+    #[test]
+    fn test_lambda_expression_type_uses_expected_functional_target_in_argument_position() {
+        let idx = make_index();
+        let view = idx.view(root_scope());
+        let type_ctx = make_type_ctx(&view);
+        let resolver = TypeResolver::new(&view);
+        let expected = function_type();
+        let sam = function_sam();
+
+        let ty = resolve_expression_type_with_target(
+            "s -> s.length()",
+            &[],
+            Some(&Arc::from("org/cubewhy/Main")),
+            &resolver,
+            &type_ctx,
+            &view,
+            Some(&expected),
+            Some(&sam),
+        )
+        .expect("argument-position lambda");
+
+        assert_eq!(ty, expected);
+    }
+
+    #[test]
+    fn test_block_bodied_lambda_expression_type_uses_expected_functional_target() {
+        let idx = make_index();
+        let view = idx.view(root_scope());
+        let type_ctx = make_type_ctx(&view);
+        let resolver = TypeResolver::new(&view);
+        let expected = consumer_type();
+        let sam = consumer_sam();
+
+        let ty = resolve_expression_type_with_target(
+            "value -> { System.out.println(value); }",
+            &[],
+            Some(&Arc::from("org/cubewhy/Main")),
+            &resolver,
+            &type_ctx,
+            &view,
+            Some(&expected),
+            Some(&sam),
+        )
+        .expect("block-bodied target-typed lambda");
+
+        assert_eq!(ty, expected);
+    }
+
+    #[test]
+    fn test_lambda_expression_type_uses_expected_functional_target_in_return_position() {
+        let idx = make_index();
+        let view = idx.view(root_scope());
+        let type_ctx = make_type_ctx(&view);
+        let resolver = TypeResolver::new(&view);
+        let expected = supplier_type();
+        let sam = supplier_sam();
+
+        let ty = resolve_expression_type_with_target(
+            "() -> \"x\"",
+            &[],
+            Some(&Arc::from("org/cubewhy/Main")),
+            &resolver,
+            &type_ctx,
+            &view,
+            Some(&expected),
+            Some(&sam),
+        )
+        .expect("return-position lambda");
+
+        assert_eq!(ty, expected);
+    }
+
+    #[test]
+    fn test_lambda_expression_type_without_target_stays_conservative() {
+        let idx = make_index();
+        let view = idx.view(root_scope());
+        let type_ctx = make_type_ctx(&view);
+        let resolver = TypeResolver::new(&view);
+
+        let ty = resolve_expression_type("s -> s.length()", &[], None, &resolver, &type_ctx, &view);
+
+        assert!(ty.is_none(), "lambda without target should stay unresolved");
     }
 }
