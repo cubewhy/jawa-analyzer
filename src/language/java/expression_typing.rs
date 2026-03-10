@@ -839,23 +839,45 @@ pub(crate) fn evaluate_chain(
                 let arg_types: Vec<TypeName> = seg
                     .arg_texts
                     .iter()
-                    .filter_map(|t| resolver.resolve(t.trim(), locals, enclosing_internal))
+                    .map(|t| {
+                        resolve_expression_type(
+                            t.trim(),
+                            locals,
+                            enclosing_internal,
+                            resolver,
+                            type_ctx,
+                            view,
+                        )
+                        .unwrap_or_else(|| TypeName::new("unknown"))
+                    })
                     .collect();
-                let arg_types_ref: &[TypeName] = if arg_types.len() == seg.arg_texts.len() {
-                    &arg_types
-                } else {
-                    &[]
-                };
                 current = resolver.resolve_method_return_with_callsite_and_qualifier_resolver(
                     recv_internal.as_ref(),
                     base_name,
                     seg.arg_count.unwrap_or(-1),
-                    arg_types_ref,
+                    &arg_types,
                     &seg.arg_texts,
                     locals,
                     enclosing_internal,
                     Some(&resolve_qualifier),
                 );
+                if current.is_none()
+                    && let (Some(enclosing), Some(method)) =
+                        (enclosing_internal, type_ctx.current_class_method(base_name))
+                {
+                    current =
+                        resolver.resolve_selected_method_return_with_callsite_and_qualifier_resolver(
+                            enclosing.as_ref(),
+                            method.as_ref(),
+                            enclosing.as_ref(),
+                            None,
+                            &arg_types,
+                            &seg.arg_texts,
+                            locals,
+                            enclosing_internal,
+                            Some(&resolve_qualifier),
+                        );
+                }
             } else {
                 current = resolver.resolve(base_name, locals, enclosing_internal);
                 if current.is_none() {
@@ -899,19 +921,24 @@ pub(crate) fn evaluate_chain(
                     let arg_types: Vec<TypeName> = seg
                         .arg_texts
                         .iter()
-                        .filter_map(|t| resolver.resolve(t.trim(), locals, enclosing_internal))
+                        .map(|t| {
+                            resolve_expression_type(
+                                t.trim(),
+                                locals,
+                                enclosing_internal,
+                                resolver,
+                                type_ctx,
+                                view,
+                            )
+                            .unwrap_or_else(|| TypeName::new("unknown"))
+                        })
                         .collect();
-                    let arg_types_ref: &[TypeName] = if arg_types.len() == seg.arg_texts.len() {
-                        &arg_types
-                    } else {
-                        &[]
-                    };
                     let receiver_internal = recv_full.to_internal_with_generics();
                     current = resolver.resolve_method_return_with_callsite_and_qualifier_resolver(
                         &receiver_internal,
                         base_name,
                         seg.arg_count.unwrap_or(-1),
-                        arg_types_ref,
+                        &arg_types,
                         &seg.arg_texts,
                         locals,
                         enclosing_internal,

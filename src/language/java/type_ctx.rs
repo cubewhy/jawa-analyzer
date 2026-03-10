@@ -1,12 +1,16 @@
 use std::sync::Arc;
 
+use crate::index::MethodSummary;
+
 /// Per-file type resolution context built from the file's own package + imports.
 /// Converts bare Java simple names → JVM internal names following JLS §7.5 priority.
+#[derive(Clone)]
 pub struct SourceTypeCtx {
     package: Option<Arc<str>>,
     /// Normalized import strings, e.g. `"java.util.List"` or `"java.util.*"`.
     imports: Vec<Arc<str>>,
     name_table: Option<Arc<crate::index::NameTable>>,
+    current_class_methods: std::collections::HashMap<Arc<str>, Arc<MethodSummary>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,7 +35,20 @@ impl SourceTypeCtx {
             package,
             imports,
             name_table,
+            current_class_methods: std::collections::HashMap::new(),
         }
+    }
+
+    pub fn with_current_class_methods(
+        mut self,
+        methods: std::collections::HashMap<Arc<str>, Arc<MethodSummary>>,
+    ) -> Self {
+        self.current_class_methods = methods;
+        self
+    }
+
+    pub fn current_class_method(&self, name: &str) -> Option<&Arc<MethodSummary>> {
+        self.current_class_methods.get(name)
     }
 
     /// Convert a Java source-level type expression to a JVM descriptor fragment.

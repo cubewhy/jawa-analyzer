@@ -912,6 +912,15 @@ mod tests {
                 annotations: vec![],
                 methods: vec![
                     MethodSummary {
+                        name: Arc::from("length"),
+                        params: MethodParams::empty(),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: None,
+                        return_type: Some(Arc::from("I")),
+                    },
+                    MethodSummary {
                         name: Arc::from("substring"),
                         params: MethodParams::from([("I", "beginIndex")]),
                         annotations: vec![],
@@ -928,6 +937,15 @@ mod tests {
                         is_synthetic: false,
                         generic_signature: None,
                         return_type: Some(Arc::from("Ljava/lang/CharSequence;")),
+                    },
+                    MethodSummary {
+                        name: Arc::from("trim"),
+                        params: MethodParams::empty(),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: None,
+                        return_type: Some(Arc::from("Ljava/lang/String;")),
                     },
                 ],
                 fields: vec![],
@@ -1184,6 +1202,30 @@ mod tests {
 
         let (mut ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
         crate::language::java::completion_context::ContextEnricher::new(&view).enrich(&mut ctx);
+        if ctx
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "s")
+            .is_some_and(|s| s.type_internal.erased_internal() != "java/lang/String")
+        {
+            panic!(
+                "expected_type={:?} expected_sam={:?} locals={:?} labels={:?}",
+                ctx.typed_expr_ctx
+                    .as_ref()
+                    .and_then(|t| t.expected_type.as_ref())
+                    .map(|e| e.ty.to_internal_with_generics()),
+                ctx.expected_sam.as_ref().map(|sam| sam
+                    .param_types
+                    .iter()
+                    .map(|t| t.to_internal_with_generics())
+                    .collect::<Vec<_>>()),
+                ctx.local_variables
+                    .iter()
+                    .map(|lv| format!("{}:{}", lv.name, lv.type_internal.to_internal_with_generics()))
+                    .collect::<Vec<_>>(),
+                labels
+            );
+        }
         let s = ctx
             .local_variables
             .iter()
@@ -1647,6 +1689,300 @@ mod tests {
             Some("java/lang/StringBuilder")
         );
         assert!(labels.iter().any(|l| l == "append"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_generic_method_lambda_target_typing_from_string_argument() {
+        let idx = make_lambda_scope_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            import java.util.function.Function;
+
+            class T {
+                static <T, R> R apply(Function<T, R> f, T x) {
+                    return f.apply(x);
+                }
+
+                static void main(String[] args) {
+                    Integer n = apply(s -> s.subs|, "hello");
+                }
+            }
+        "#};
+
+        let (mut ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
+        crate::language::java::completion_context::ContextEnricher::new(&view).enrich(&mut ctx);
+        let s = ctx
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "s")
+            .expect("expected inferred lambda param s");
+        assert_eq!(s.type_internal.erased_internal(), "java/lang/String");
+        assert!(labels.iter().any(|l| l == "substring"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_generic_method_lambda_target_typing_from_stringbuilder_argument() {
+        let idx = make_lambda_scope_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            import java.util.function.Function;
+
+            class T {
+                static <T, R> R apply(Function<T, R> f, T x) {
+                    return f.apply(x);
+                }
+
+                static void main(String[] args) {
+                    Integer n = apply(sb -> sb.appe|, new StringBuilder());
+                }
+            }
+        "#};
+
+        let (mut ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
+        crate::language::java::completion_context::ContextEnricher::new(&view).enrich(&mut ctx);
+        let sb = ctx
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "sb")
+            .expect("expected inferred lambda param sb");
+        assert_eq!(sb.type_internal.erased_internal(), "java/lang/StringBuilder");
+        assert!(labels.iter().any(|l| l == "append"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_generic_method_bifunction_lambda_target_typing_from_concrete_args() {
+        let idx = make_lambda_scope_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            import java.util.function.BiFunction;
+
+            class T {
+                static <A, B, R> R apply2(BiFunction<A, B, R> f, A a, B b) {
+                    return f.apply(a, b);
+                }
+
+                static void main(String[] args) {
+                    Integer n = apply2((s, i) -> s.subs|, "hello", 2);
+                }
+            }
+        "#};
+
+        let (mut ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
+        crate::language::java::completion_context::ContextEnricher::new(&view).enrich(&mut ctx);
+        let s = ctx
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "s")
+            .expect("expected inferred lambda param s");
+        let i = ctx
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "i")
+            .expect("expected inferred lambda param i");
+        assert_eq!(s.type_internal.erased_internal(), "java/lang/String");
+        assert!(
+            matches!(i.type_internal.erased_internal(), "int" | "java/lang/Integer"),
+            "unexpected inferred numeric type: {}",
+            i.type_internal.erased_internal()
+        );
+        assert!(labels.iter().any(|l| l == "substring"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_generic_method_block_bodied_lambda_target_typing_from_string_argument() {
+        let idx = make_lambda_scope_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            import java.util.function.Function;
+
+            class T {
+                static <T, R> R apply(Function<T, R> f, T x) {
+                    return f.apply(x);
+                }
+
+                static void main(String[] args) {
+                    Integer n = apply(s -> {
+                        return s.subs|;
+                    }, "hello");
+                }
+            }
+        "#};
+
+        let (mut ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
+        crate::language::java::completion_context::ContextEnricher::new(&view).enrich(&mut ctx);
+        let s = ctx
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "s")
+            .expect("expected inferred lambda param s");
+        assert_eq!(s.type_internal.erased_internal(), "java/lang/String");
+        assert!(labels.iter().any(|l| l == "substring"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_generic_method_lambda_target_typing_falls_back_when_inference_is_ambiguous() {
+        let idx = make_lambda_scope_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            import java.util.function.Function;
+
+            class T {
+                static <T, R> Function<T, R> id(Function<T, R> f) {
+                    return f;
+                }
+
+                static void main(String[] args) {
+                    Function<?, ?> n = id(s -> s.subs|);
+                }
+            }
+        "#};
+
+        let (mut ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
+        crate::language::java::completion_context::ContextEnricher::new(&view).enrich(&mut ctx);
+        let s = ctx
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "s")
+            .expect("expected lambda param s to remain name-visible");
+        assert_eq!(s.type_internal.erased_internal(), "unknown");
+        assert!(
+            !labels.iter().any(|l| l == "substring"),
+            "ambiguous generic inference should stay conservative: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn test_var_initializer_infers_generic_lambda_invocation_return_type() {
+        let idx = make_lambda_scope_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            import java.util.function.Function;
+
+            class T {
+                static <T, R> R apply(Function<T, R> f, T x) {
+                    return f.apply(x);
+                }
+
+                static void main(String[] args) {
+                    var n = apply(s -> s.length(), "hello");
+                    n|
+                }
+            }
+        "#};
+
+        let (mut ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
+        crate::language::java::completion_context::ContextEnricher::new(&view).enrich(&mut ctx);
+        let n = ctx
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "n")
+            .expect("expected local n");
+        assert_eq!(
+            n.type_internal.erased_internal(),
+            "java/lang/Integer",
+            "locals={:?}",
+            ctx.local_variables
+                .iter()
+                .map(|lv| format!("{}:{}", lv.name, lv.type_internal.to_internal_with_generics()))
+                .collect::<Vec<_>>()
+        );
+        assert!(labels.iter().any(|l| l == "n"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_var_initializer_infers_generic_lambda_object_return_type() {
+        let idx = make_lambda_scope_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            import java.util.function.Function;
+
+            class T {
+                static <T, R> R apply(Function<T, R> f, T x) {
+                    return f.apply(x);
+                }
+
+                static void main(String[] args) {
+                    var sb = apply(s -> new StringBuilder(s), "hello");
+                    sb|
+                }
+            }
+        "#};
+
+        let (mut ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
+        crate::language::java::completion_context::ContextEnricher::new(&view).enrich(&mut ctx);
+        let sb = ctx
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "sb")
+            .expect("expected local sb");
+        assert_eq!(sb.type_internal.erased_internal(), "java/lang/StringBuilder");
+        assert!(labels.iter().any(|l| l == "sb"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_var_initializer_infers_generic_bifunction_lambda_return_type() {
+        let idx = make_lambda_scope_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            import java.util.function.BiFunction;
+
+            class T {
+                static <A, B, R> R apply2(BiFunction<A, B, R> f, A a, B b) {
+                    return f.apply(a, b);
+                }
+
+                static void main(String[] args) {
+                    var n = apply2((s, i) -> s.substring(i).length(), "hello", 2);
+                    n|
+                }
+            }
+        "#};
+
+        let (mut ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
+        crate::language::java::completion_context::ContextEnricher::new(&view).enrich(&mut ctx);
+        let n = ctx
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "n")
+            .expect("expected local n");
+        assert_eq!(n.type_internal.erased_internal(), "java/lang/Integer");
+        assert!(labels.iter().any(|l| l == "n"), "{labels:?}");
+    }
+
+    #[test]
+    fn test_var_initializer_keeps_generic_lambda_return_type_conservative_when_unsupported() {
+        let idx = make_lambda_scope_index();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            import java.util.function.Function;
+
+            class T {
+                static <T, R> R apply(Function<T, R> f, T x) {
+                    return f.apply(x);
+                }
+
+                static void main(String[] args) {
+                    var n = apply(s -> {
+                        return s.length();
+                    }, "hello");
+                    n|
+                }
+            }
+        "#};
+
+        let (mut ctx, labels) = ctx_and_labels_from_marked_source(src, &view);
+        crate::language::java::completion_context::ContextEnricher::new(&view).enrich(&mut ctx);
+        let n = ctx
+            .local_variables
+            .iter()
+            .find(|lv| lv.name.as_ref() == "n")
+            .expect("expected local n");
+        assert!(
+            matches!(n.type_internal.erased_internal(), "var" | "R"),
+            "unsupported block-bodied return inference should stay conservative: {}",
+            n.type_internal.erased_internal()
+        );
+        assert!(labels.iter().any(|l| l == "n"), "{labels:?}");
     }
 
     #[test]

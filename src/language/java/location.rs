@@ -1170,14 +1170,17 @@ fn split_argument_texts(ctx: &JavaContextExtractor, arg_list: Node) -> Vec<Strin
 
 fn count_top_level_commas(s: &str) -> usize {
     let mut depth = 0i32;
+    let mut prev = None;
     let mut commas = 0usize;
     for c in s.chars() {
         match c {
             '(' | '<' | '[' | '{' => depth += 1,
-            ')' | '>' | ']' | '}' => depth -= 1,
+            '>' if prev == Some('-') => {}
+            ')' | '>' | ']' | '}' => depth = (depth - 1).max(0),
             ',' if depth == 0 => commas += 1,
             _ => {}
         }
+        prev = Some(c);
     }
     commas
 }
@@ -1186,10 +1189,12 @@ fn split_top_level_args(s: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut depth = 0i32;
     let mut start = 0usize;
+    let mut prev = None;
     for (i, c) in s.char_indices() {
         match c {
             '(' | '<' | '[' | '{' => depth += 1,
-            ')' | '>' | ']' | '}' => depth -= 1,
+            '>' if prev == Some('-') => {}
+            ')' | '>' | ']' | '}' => depth = (depth - 1).max(0),
             ',' if depth == 0 => {
                 let part = s[start..i].trim();
                 if !part.is_empty() {
@@ -1199,6 +1204,7 @@ fn split_top_level_args(s: &str) -> Vec<String> {
             }
             _ => {}
         }
+        prev = Some(c);
     }
     let tail = s[start..].trim();
     if !tail.is_empty() {
@@ -1212,7 +1218,10 @@ mod tests {
     use tree_sitter::Parser;
 
     use crate::{
-        language::java::{JavaContextExtractor, location::determine_location},
+        language::java::{
+            JavaContextExtractor,
+            location::{count_top_level_commas, determine_location, split_top_level_args},
+        },
         semantic::CursorLocation,
         semantic::context::FunctionalTargetHint,
     };
@@ -1239,6 +1248,7 @@ mod tests {
             func(func("1234", 5678));
         }
     }
+
     "#};
         // Cursor sits at the end of method-body `str`.
         let marker = "func() {\n        str";
@@ -1254,6 +1264,13 @@ mod tests {
             loc
         );
         assert_eq!(query, "str");
+    }
+
+    #[test]
+    fn test_split_top_level_args_keeps_lambda_arrow_from_hiding_commas() {
+        let args = split_top_level_args(r##"s -> s.subs, "hello""##);
+        assert_eq!(args, vec![r#"s -> s.subs"#, r#""hello""#]);
+        assert_eq!(count_top_level_commas(r##"s -> s.subs, "hello""##), 1);
     }
 
     #[test]

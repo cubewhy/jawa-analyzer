@@ -15,7 +15,7 @@ use crate::semantic::context::{
 use crate::semantic::types::symbol_resolver::SymbolResolver;
 use crate::semantic::types::type_name::TypeName;
 use crate::semantic::types::{
-    OverloadInvocationMode, TypeResolver, parse_single_type_to_internal,
+    OverloadInvocationMode, TypeResolver, is_concrete_type_name, parse_single_type_to_internal,
     singleton_descriptor_to_type,
 };
 use crate::semantic::{CursorLocation, SemanticContext};
@@ -71,6 +71,19 @@ impl<'a> ContextEnricher<'a> {
             }
         }
         {
+            let type_ctx_for_resolution = Arc::new(
+                (*type_ctx).clone().with_current_class_methods(
+                    ctx.current_class_members
+                        .iter()
+                        .filter_map(|(name, member)| match member {
+                            crate::semantic::context::CurrentClassMember::Method(method) => {
+                                Some((name.clone(), method.clone()))
+                            }
+                            _ => None,
+                        })
+                        .collect(),
+                ),
+            );
             // Canonicalize declared locals first so downstream var-RHS inference
             // resolves member chains against real internal owners.
             let sym = SymbolResolver::new(self.view);
@@ -103,7 +116,7 @@ impl<'a> ContextEnricher<'a> {
                     &ctx.local_variables,
                     ctx.enclosing_internal_name.as_ref(),
                     &resolver,
-                    &type_ctx,
+                    &type_ctx_for_resolution,
                     self.view,
                 ) {
                     ctx.local_variables[idx_in_vec].type_internal = resolved;
@@ -434,19 +447,36 @@ fn enrich_expected_type_context(
         return;
     };
 
-    let mut expected = hint
-        .expected_type_source
-        .as_deref()
-        .and_then(|src| resolve_source_type_hint(type_ctx, src))
-        .map(|(ty, confidence)| ExpectedType {
+    let mut expected: Option<ExpectedType> = None;
+    let mut receiver_type: Option<TypeName> = None;
+
+    if let Some(call_hint) = hint.method_call.as_ref() {
+        let (expected_from_arg, receiver) =
+            resolve_expected_type_from_method_argument(ctx, view, type_ctx, call_hint);
+        expected = expected_from_arg.map(|(ty, confidence)| ExpectedType {
             ty,
-            source: hint
-                .expected_type_context
-                .clone()
-                .unwrap_or(ExpectedTypeSource::AssignmentRhs),
+            source: ExpectedTypeSource::MethodArgument {
+                arg_index: call_hint.arg_index,
+            },
             confidence,
         });
-    let mut receiver_type: Option<TypeName> = None;
+        receiver_type = receiver;
+    }
+
+    if expected.is_none() {
+        expected = hint
+            .expected_type_source
+            .as_deref()
+            .and_then(|src| resolve_source_type_hint(type_ctx, src))
+            .map(|(ty, confidence)| ExpectedType {
+                ty,
+                source: hint
+                    .expected_type_context
+                    .clone()
+                    .unwrap_or(ExpectedTypeSource::AssignmentRhs),
+                confidence,
+            });
+    }
 
     if expected.is_none()
         && let Some(lhs_expr) = hint.assignment_lhs_expr.as_deref()
@@ -465,21 +495,6 @@ fn enrich_expected_type_context(
             source: ExpectedTypeSource::AssignmentRhs,
             confidence: ExpectedTypeConfidence::Exact,
         });
-    }
-
-    if expected.is_none()
-        && let Some(call_hint) = hint.method_call.as_ref()
-    {
-        let (expected_from_arg, receiver) =
-            resolve_expected_type_from_method_argument(ctx, view, type_ctx, call_hint);
-        expected = expected_from_arg.map(|(ty, confidence)| ExpectedType {
-            ty,
-            source: ExpectedTypeSource::MethodArgument {
-                arg_index: call_hint.arg_index,
-            },
-            confidence,
-        });
-        receiver_type = receiver;
     }
 
     let expected_ty = expected.as_ref().map(|e| e.ty.clone());
@@ -519,6 +534,9 @@ fn bind_active_lambda_param_types(ctx: &mut SemanticContext) {
     }
 
     for (name, ty) in ctx.active_lambda_param_names.iter().zip(sam.param_types.iter()) {
+        if !is_concrete_type_name(ty) {
+            continue;
+        }
         if let Some(local) = ctx
             .local_variables
             .iter_mut()
@@ -580,11 +598,18 @@ fn resolve_expected_type_from_method_argument(
     let receiver_owner = receiver.erased_internal();
 
     let (methods, _) = view.collect_inherited_members(receiver_owner);
-    let candidates: Vec<&MethodSummary> = methods
+    let mut candidates: Vec<&MethodSummary> = methods
         .iter()
         .filter(|m| m.name.as_ref() == hint.method_name)
         .map(|m| m.as_ref())
         .collect();
+    if ctx.enclosing_internal_name.as_deref() == Some(receiver_owner)
+        && let Some(crate::semantic::context::CurrentClassMember::Method(method)) =
+            ctx.current_class_members.get(hint.method_name.as_str())
+        && method.name.as_ref() == hint.method_name
+    {
+        candidates.push(method.as_ref());
+    }
     if candidates.is_empty() {
         return (None, Some(receiver));
     }
@@ -593,12 +618,14 @@ fn resolve_expected_type_from_method_argument(
         .arg_texts
         .iter()
         .map(|arg| {
-            resolver
-                .resolve(
-                    arg,
-                    &ctx.local_variables,
-                    ctx.enclosing_internal_name.as_ref(),
-                )
+            expression_typing::resolve_expression_type(
+                arg,
+                &ctx.local_variables,
+                ctx.enclosing_internal_name.as_ref(),
+                &resolver,
+                type_ctx,
+                view,
+            )
                 .unwrap_or_else(|| TypeName::new("unknown"))
         })
         .collect();
@@ -615,6 +642,29 @@ fn resolve_expected_type_from_method_argument(
         };
     let receiver_internal = receiver.to_internal_with_generics_for_substitution();
     let expected = resolver
+        .resolve_selected_param_type_with_callsite_inference(
+            &receiver_internal,
+            selected.method,
+            hint.arg_index,
+            selected.mode,
+            &arg_types,
+            &hint.arg_texts,
+            &ctx.local_variables,
+            ctx.enclosing_internal_name.as_ref(),
+            None,
+        )
+        .map(|(ty, exact)| {
+            (
+                ty,
+                if exact {
+                    ExpectedTypeConfidence::Exact
+                } else {
+                    ExpectedTypeConfidence::Partial
+                },
+            )
+        })
+        .or_else(|| {
+            resolver
         .resolve_selected_param_type_from_generic_signature(
             &receiver_internal,
             selected.method,
@@ -630,6 +680,7 @@ fn resolve_expected_type_from_method_argument(
                     ExpectedTypeConfidence::Partial
                 },
             )
+        })
         })
         .or_else(|| {
             resolve_selected_param_descriptor_for_call(
@@ -660,6 +711,12 @@ fn resolve_hint_receiver_type(
     resolver: &TypeResolver,
     expr: &str,
 ) -> Option<TypeName> {
+    if expr.trim() == "this" {
+        return ctx
+            .enclosing_internal_name
+            .as_ref()
+            .map(|name| TypeName::new(name.as_ref()));
+    }
     let resolved = expression_typing::resolve_expression_type(
         expr,
         &ctx.local_variables,

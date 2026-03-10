@@ -8,7 +8,7 @@ use crate::{
     index::{IndexView, MethodSummary},
     jvm::descriptor::{consume_one_descriptor_type, split_param_descriptors},
 };
-use rust_asm::constants::ACC_VARARGS;
+use rust_asm::constants::{ACC_ABSTRACT, ACC_STATIC, ACC_VARARGS};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
@@ -296,21 +296,10 @@ impl<'idx> TypeResolver<'idx> {
             }
 
             let selected = self.select_overload_match(&candidates, arg_count, arg_types)?;
-            let method = selected.method;
-            let sig = method
-                .generic_signature
-                .clone()
-                .unwrap_or_else(|| method.desc());
-
-            let (param_jvm_types, ret_jvm_type) = parse_method_signature_types(&sig)?;
-            let mut resolved_ret = ret_jvm_type.clone();
-
-            let method_bindings = self.infer_method_type_bindings_shallow(
-                method_name,
-                &sig,
-                &param_jvm_types,
-                &ret_jvm_type,
+            return self.resolve_selected_method_return_with_callsite_and_qualifier_resolver(
                 receiver_internal,
+                selected.method,
+                class.internal_name.as_ref(),
                 class.generic_signature.as_deref(),
                 arg_types,
                 arg_texts,
@@ -318,34 +307,67 @@ impl<'idx> TypeResolver<'idx> {
                 enclosing,
                 qualifier_resolver,
             );
-            if !method_bindings.is_empty() {
-                resolved_ret = substitute_type_vars(&resolved_ret, &method_bindings);
-            }
-
-            let ret_jvm_str = resolved_ret.to_signature_string();
-
-            if let Some(substituted) = substitute_type(
-                receiver_internal,
-                class.generic_signature.as_deref(),
-                &ret_jvm_str,
-            ) {
-                let substituted = self
-                    .canonicalize_type_in_owner_scope(substituted, class.internal_name.as_ref());
-                if substituted.erased_internal() == "void" {
-                    return None;
-                }
-                return Some(substituted);
-            }
-
-            if let JvmType::Primitive('V') = resolved_ret {
-                return None;
-            }
-            return Some(self.canonicalize_type_in_owner_scope(
-                resolved_ret.to_type_name(),
-                class.internal_name.as_ref(),
-            ));
         }
         None
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn resolve_selected_method_return_with_callsite_and_qualifier_resolver(
+        &self,
+        receiver_internal: &str,
+        method: &MethodSummary,
+        owner_internal: &str,
+        class_generic_signature: Option<&str>,
+        arg_types: &[TypeName],
+        arg_texts: &[String],
+        locals: &[LocalVar],
+        enclosing: Option<&Arc<str>>,
+        qualifier_resolver: Option<&dyn Fn(&str) -> Option<TypeName>>,
+    ) -> Option<TypeName> {
+        let sig = method
+            .generic_signature
+            .clone()
+            .unwrap_or_else(|| method.desc());
+
+        let (param_jvm_types, ret_jvm_type) = parse_method_signature_types(&sig)?;
+        let mut resolved_ret = ret_jvm_type.clone();
+
+        let method_bindings = self.infer_method_type_bindings_shallow(
+            method,
+            &sig,
+            &param_jvm_types,
+            &ret_jvm_type,
+            receiver_internal,
+            class_generic_signature,
+            arg_types,
+            arg_texts,
+            locals,
+            enclosing,
+            qualifier_resolver,
+        );
+        if !method_bindings.is_empty() {
+            resolved_ret = substitute_type_vars(&resolved_ret, &method_bindings);
+        }
+
+        let ret_jvm_str = resolved_ret.to_signature_string();
+
+        if let Some(substituted) =
+            substitute_type(receiver_internal, class_generic_signature, &ret_jvm_str)
+        {
+            let substituted = self.canonicalize_type_in_owner_scope(substituted, owner_internal);
+            if substituted.erased_internal() == "void" {
+                return None;
+            }
+            return Some(substituted);
+        }
+
+        if let JvmType::Primitive('V') = resolved_ret {
+            return None;
+        }
+        Some(self.canonicalize_type_in_owner_scope(
+            resolved_ret.to_type_name(),
+            owner_internal,
+        ))
     }
 
     fn canonicalize_type_in_owner_scope(&self, ty: TypeName, owner_internal: &str) -> TypeName {
@@ -423,7 +445,7 @@ impl<'idx> TypeResolver<'idx> {
 
     fn infer_method_type_bindings_shallow(
         &self,
-        method_name: &str,
+        selected: &MethodSummary,
         method_signature: &str,
         param_jvm_types: &[JvmType],
         ret_jvm_type: &JvmType,
@@ -446,12 +468,24 @@ impl<'idx> TypeResolver<'idx> {
             return HashMap::new();
         }
 
-        let mut bindings: HashMap<String, JvmType> = HashMap::new();
-        let mut conflicted = HashSet::new();
         let class_type_params = class_generic_signature
             .map(parse_class_type_parameters)
             .unwrap_or_default();
         let (_, receiver_type_args) = split_internal_name(receiver_internal);
+        let mut bindings = self.infer_method_type_bindings_from_non_lambda_args(
+            method_signature,
+            param_jvm_types,
+            receiver_internal,
+            selected,
+            usize::MAX,
+            OverloadInvocationMode::Fixed,
+            arg_types,
+            arg_texts,
+            locals,
+            enclosing,
+            qualifier_resolver,
+        );
+        let mut conflicted = HashSet::new();
 
         for (idx, param_ty) in param_jvm_types.iter().enumerate() {
             let param_ty_substituted =
@@ -460,6 +494,11 @@ impl<'idx> TypeResolver<'idx> {
                 } else {
                     param_ty.clone()
                 };
+            let param_ty_substituted = if !bindings.is_empty() {
+                substitute_type_vars(&param_ty_substituted, &bindings)
+            } else {
+                param_ty_substituted
+            };
             let arg_ty = arg_types.get(idx);
             if let JvmType::TypeVar(name) = &param_ty_substituted
                 && return_type_vars.contains(name)
@@ -473,7 +512,7 @@ impl<'idx> TypeResolver<'idx> {
             }
 
             self.bind_return_type_var_from_functional_param(
-                method_name,
+                selected.name.as_ref(),
                 idx,
                 &param_ty_substituted,
                 arg_texts.get(idx).map(|s| s.as_str()),
@@ -525,17 +564,20 @@ impl<'idx> TypeResolver<'idx> {
             return;
         };
 
-        let inferred = arg_ty.and_then(type_name_to_jvm_type).or_else(|| {
-            arg_text.and_then(|txt| {
-                self.infer_functional_arg_return_shallow(
-                    txt,
-                    locals,
-                    enclosing,
-                    qualifier_resolver,
-                    Some(param_ty),
-                )
-            })
-        });
+        let inferred = arg_ty
+            .filter(|ty| ty.erased_internal() != "unknown")
+            .and_then(type_name_to_jvm_type)
+            .or_else(|| {
+                arg_text.and_then(|txt| {
+                    self.infer_functional_arg_return_shallow(
+                        txt,
+                        locals,
+                        enclosing,
+                        qualifier_resolver,
+                        Some(param_ty),
+                    )
+                })
+            });
         if let Some(jvm) = inferred {
             bind_type_var(&ret_var, jvm, bindings, conflicted);
         }
@@ -583,11 +625,96 @@ impl<'idx> TypeResolver<'idx> {
         }
 
         if let Some(body) = parse_lambda_expression_body(text) {
-            let body_ty = self.resolve(body, locals, enclosing)?;
-            return type_name_to_jvm_type(&body_ty);
+            let lambda_locals = self
+                .build_lambda_param_locals_from_target(text, target_param_ty)
+                .unwrap_or_default();
+            let mut merged_locals = lambda_locals;
+            merged_locals.extend_from_slice(locals);
+            let chain = crate::completion::parser::parse_chain_from_expr(body);
+            let body_ty = self.resolve(body, &merged_locals, enclosing).or_else(|| {
+                if chain.is_empty() {
+                    None
+                } else {
+                    self.resolve_chain(&chain, &merged_locals, enclosing)
+                }
+            })?;
+            let body_ty = self.canonicalize_type_in_owner_scope(
+                body_ty,
+                enclosing.map(|e| e.as_ref()).unwrap_or(""),
+            );
+            let body_jvm = type_name_to_jvm_type(&body_ty)?;
+            return Some(box_primitive_jvm_type(body_jvm));
         }
 
         None
+    }
+
+    fn build_lambda_param_locals_from_target(
+        &self,
+        lambda_text: &str,
+        target_param_ty: Option<&JvmType>,
+    ) -> Option<Vec<LocalVar>> {
+        let target_param_ty = target_param_ty?;
+        let (param_names, _) = parse_lambda_text_parts(lambda_text)?;
+        let (sam_params, _) = self.extract_sam_signature_from_functional_jvm_type(target_param_ty)?;
+        if param_names.len() != sam_params.len() {
+            return None;
+        }
+        let mut out = Vec::with_capacity(param_names.len());
+        for (name, ty) in param_names.into_iter().zip(sam_params.into_iter()) {
+            out.push(LocalVar {
+                name: Arc::from(name),
+                type_internal: ty.to_type_name(),
+                init_expr: None,
+            });
+        }
+        Some(out)
+    }
+
+    fn extract_sam_signature_from_functional_jvm_type(
+        &self,
+        ty: &JvmType,
+    ) -> Option<(Vec<JvmType>, JvmType)> {
+        let ty_name = ty.to_type_name();
+        let owner = ty_name.erased_internal();
+        let class = self.view.get_class(owner)?;
+        let class_type_params = class
+            .generic_signature
+            .as_deref()
+            .map(parse_class_type_parameters)
+            .unwrap_or_default();
+        let type_args: Vec<JvmType> = ty_name
+            .args
+            .iter()
+            .map(type_name_to_jvm_type)
+            .collect::<Option<Vec<_>>>()?;
+        let (methods, _) = self.view.collect_inherited_members(owner);
+        let mut abstract_methods = methods.iter().filter(|m| {
+            let flags = m.access_flags;
+            (flags & ACC_ABSTRACT) != 0
+                && (flags & ACC_STATIC) == 0
+                && m.name.as_ref() != "equals"
+                && m.name.as_ref() != "hashCode"
+                && m.name.as_ref() != "toString"
+        });
+        let method = abstract_methods.next()?;
+        if abstract_methods.next().is_some() {
+            return None;
+        }
+        let fallback_desc = method.desc();
+        let sig = method
+            .generic_signature
+            .as_deref()
+            .unwrap_or(fallback_desc.as_ref());
+        let (mut params, mut ret) = parse_method_signature_types(sig)?;
+        if !class_type_params.is_empty() && class_type_params.len() == type_args.len() {
+            params = params
+                .into_iter()
+                .map(|p| p.substitute(&class_type_params, &type_args))
+                .collect();
+            ret = ret.substitute(&class_type_params, &type_args);
+        }
+        Some((params, ret))
     }
 
     fn specialize_constructor_owner_return(
@@ -866,6 +993,68 @@ impl<'idx> TypeResolver<'idx> {
         Some((param.to_type_name(), exact))
     }
 
+    #[allow(clippy::too_many_arguments)]
+    pub fn resolve_selected_param_type_with_callsite_inference(
+        &self,
+        receiver_internal: &str,
+        selected: &MethodSummary,
+        arg_index: usize,
+        mode: OverloadInvocationMode,
+        arg_types: &[TypeName],
+        arg_texts: &[String],
+        locals: &[LocalVar],
+        enclosing: Option<&Arc<str>>,
+        qualifier_resolver: Option<&dyn Fn(&str) -> Option<TypeName>>,
+    ) -> Option<(TypeName, bool)> {
+        let sig = selected.generic_signature.as_deref()?;
+        let (params, _) = parse_method_signature_types(sig)?;
+        let (mapped_index, vararg_element) =
+            map_argument_index_to_parameter(selected, arg_index, mode, params.len())?;
+        let method_bindings = self.infer_method_type_bindings_from_non_lambda_args(
+            sig,
+            &params,
+            receiver_internal,
+            selected,
+            arg_index,
+            mode,
+            arg_types,
+            arg_texts,
+            locals,
+            enclosing,
+            qualifier_resolver,
+        );
+
+        let mut param = params.get(mapped_index)?.clone();
+        if vararg_element {
+            let JvmType::Array(inner) = param else {
+                return None;
+            };
+            param = *inner;
+        }
+
+        let (receiver_owner, receiver_args) = split_internal_name(receiver_internal);
+        if !receiver_args.is_empty()
+            && let Some(class_sig) =
+                self.find_declaring_class_generic_signature(receiver_owner, selected)
+        {
+            let class_params = parse_class_type_parameters(class_sig.as_ref());
+            if !class_params.is_empty() {
+                param = param.substitute(&class_params, &receiver_args);
+            }
+        }
+
+        if !method_bindings.is_empty() {
+            param = substitute_type_vars(&param, &method_bindings);
+        }
+
+        if matches!(param, JvmType::TypeVar(_)) {
+            return None;
+        }
+
+        let exact = is_concrete_jvm_type(&param);
+        Some((param.to_type_name(), exact))
+    }
+
     pub fn resolve_selected_param_descriptor_for_call(
         &self,
         selected: &MethodSummary,
@@ -900,6 +1089,87 @@ impl<'idx> TypeResolver<'idx> {
             }
         }
         None
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn infer_method_type_bindings_from_non_lambda_args(
+        &self,
+        method_signature: &str,
+        param_jvm_types: &[JvmType],
+        receiver_internal: &str,
+        selected: &MethodSummary,
+        skip_arg_index: usize,
+        mode: OverloadInvocationMode,
+        arg_types: &[TypeName],
+        arg_texts: &[String],
+        _locals: &[LocalVar],
+        _enclosing: Option<&Arc<str>>,
+        _qualifier_resolver: Option<&dyn Fn(&str) -> Option<TypeName>>,
+    ) -> HashMap<String, JvmType> {
+        let method_type_params = parse_method_type_parameters(method_signature);
+        if method_type_params.is_empty() {
+            return HashMap::new();
+        }
+        let method_type_param_set: HashSet<String> = method_type_params.into_iter().collect();
+
+        let (class_type_params, receiver_args) = {
+            let (receiver_owner, receiver_args) = split_internal_name(receiver_internal);
+            self.find_declaring_class_generic_signature(receiver_owner, selected)
+                .map(|sig| (parse_class_type_parameters(sig.as_ref()), receiver_args))
+                .unwrap_or_else(|| (Vec::new(), Vec::new()))
+        };
+
+        let mut bindings: HashMap<String, JvmType> = HashMap::new();
+        let mut conflicted = HashSet::new();
+
+        for arg_idx in 0..arg_texts.len() {
+            if arg_idx == skip_arg_index {
+                continue;
+            }
+            let arg_text = arg_texts.get(arg_idx).map(|s| s.trim()).unwrap_or("");
+            if arg_text.contains("->") || arg_text.contains("::") {
+                continue;
+            }
+            let Some(arg_ty) = arg_types.get(arg_idx) else {
+                continue;
+            };
+            if arg_ty.erased_internal() == "unknown" {
+                continue;
+            }
+            let Some((mapped_index, vararg_element)) =
+                map_argument_index_to_parameter(selected, arg_idx, mode, param_jvm_types.len())
+            else {
+                continue;
+            };
+            let mut formal = match param_jvm_types.get(mapped_index) {
+                Some(p) => p.clone(),
+                None => continue,
+            };
+            if vararg_element {
+                let JvmType::Array(inner) = formal else {
+                    continue;
+                };
+                formal = *inner;
+            }
+            if !class_type_params.is_empty() && !receiver_args.is_empty() {
+                formal = formal.substitute(&class_type_params, &receiver_args);
+            }
+            let Some(actual) = type_name_to_jvm_type(arg_ty) else {
+                continue;
+            };
+            bind_method_type_vars(
+                &formal,
+                &actual,
+                &method_type_param_set,
+                &mut bindings,
+                &mut conflicted,
+            );
+        }
+
+        for key in conflicted {
+            bindings.remove(&key);
+        }
+        bindings
     }
 
     pub fn score_params(&self, descriptor: &str, arg_types: &[TypeName]) -> i32 {
@@ -1772,6 +2042,54 @@ fn bind_type_var(
     bindings.insert(name.to_string(), candidate);
 }
 
+fn bind_method_type_vars(
+    formal: &JvmType,
+    actual: &JvmType,
+    method_type_params: &HashSet<String>,
+    bindings: &mut HashMap<String, JvmType>,
+    conflicted: &mut HashSet<String>,
+) {
+    match formal {
+        JvmType::TypeVar(name) if method_type_params.contains(name) => {
+            bind_type_var(name, actual.clone(), bindings, conflicted);
+        }
+        JvmType::Array(formal_inner) => {
+            if let JvmType::Array(actual_inner) = actual {
+                bind_method_type_vars(
+                    formal_inner,
+                    actual_inner,
+                    method_type_params,
+                    bindings,
+                    conflicted,
+                );
+            }
+        }
+        JvmType::WildcardBound(_, formal_inner) => {
+            bind_method_type_vars(
+                formal_inner,
+                actual,
+                method_type_params,
+                bindings,
+                conflicted,
+            );
+        }
+        JvmType::Object(_, formal_args) => {
+            if let JvmType::Object(_, actual_args) = actual {
+                for (formal_arg, actual_arg) in formal_args.iter().zip(actual_args.iter()) {
+                    bind_method_type_vars(
+                        formal_arg,
+                        actual_arg,
+                        method_type_params,
+                        bindings,
+                        conflicted,
+                    );
+                }
+            }
+        }
+        JvmType::Primitive(_) | JvmType::Wildcard | JvmType::TypeVar(_) => {}
+    }
+}
+
 fn extract_functional_input_type(param_ty: &JvmType) -> Option<JvmType> {
     let JvmType::Object(_, type_args) = param_ty else {
         return None;
@@ -1793,10 +2111,28 @@ fn is_concrete_jvm_type(ty: &JvmType) -> bool {
     }
 }
 
+pub fn is_concrete_type_name(ty: &TypeName) -> bool {
+    type_name_to_jvm_type(ty).is_some_and(|parsed| is_concrete_jvm_type(&parsed))
+}
+
 fn type_name_to_jvm_type(ty: &TypeName) -> Option<JvmType> {
     let sig = ty.to_jvm_signature();
     let (parsed, rest) = JvmType::parse(&sig)?;
     if rest.is_empty() { Some(parsed) } else { None }
+}
+
+fn box_primitive_jvm_type(ty: JvmType) -> JvmType {
+    match ty {
+        JvmType::Primitive('B') => JvmType::Object("java/lang/Byte".to_string(), vec![]),
+        JvmType::Primitive('S') => JvmType::Object("java/lang/Short".to_string(), vec![]),
+        JvmType::Primitive('I') => JvmType::Object("java/lang/Integer".to_string(), vec![]),
+        JvmType::Primitive('J') => JvmType::Object("java/lang/Long".to_string(), vec![]),
+        JvmType::Primitive('F') => JvmType::Object("java/lang/Float".to_string(), vec![]),
+        JvmType::Primitive('D') => JvmType::Object("java/lang/Double".to_string(), vec![]),
+        JvmType::Primitive('C') => JvmType::Object("java/lang/Character".to_string(), vec![]),
+        JvmType::Primitive('Z') => JvmType::Object("java/lang/Boolean".to_string(), vec![]),
+        other => other,
+    }
 }
 
 fn parse_method_reference_text(text: &str) -> Option<(&str, &str, bool)> {
@@ -1817,6 +2153,40 @@ fn parse_lambda_expression_body(text: &str) -> Option<&str> {
         return None;
     }
     Some(body)
+}
+
+fn parse_lambda_text_parts(text: &str) -> Option<(Vec<String>, &str)> {
+    let idx = text.find("->")?;
+    let params_text = text[..idx].trim();
+    let body = text[idx + 2..].trim();
+    if body.is_empty() {
+        return None;
+    }
+    let params = if params_text.is_empty() {
+        return None;
+    } else if params_text == "()" {
+        Vec::new()
+    } else if params_text.starts_with('(') && params_text.ends_with(')') {
+        let inner = &params_text[1..params_text.len() - 1];
+        if inner.trim().is_empty() {
+            Vec::new()
+        } else {
+            inner
+                .split(',')
+                .filter_map(|part| {
+                    let trimmed = part.trim();
+                    if trimmed.is_empty() {
+                        None
+                    } else {
+                        trimmed.split_whitespace().last().map(str::to_string)
+                    }
+                })
+                .collect()
+        }
+    } else {
+        vec![params_text.to_string()]
+    };
+    Some((params, body))
 }
 
 fn is_likely_type_qualifier(qualifier: &str) -> bool {
@@ -2626,6 +2996,104 @@ mod tests {
     }
 
     #[test]
+    fn test_functional_lambda_return_inference_boxes_primitive_result() {
+        use crate::index::{ClassMetadata, ClassOrigin, MethodSummary};
+        use rust_asm::constants::{ACC_ABSTRACT, ACC_PUBLIC};
+
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("String"),
+                internal_name: Arc::from("java/lang/String"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![MethodSummary {
+                    name: Arc::from("length"),
+                    params: MethodParams::empty(),
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    annotations: vec![],
+                    generic_signature: None,
+                    return_type: Some(Arc::from("I")),
+                }],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: None,
+                generic_signature: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/util/function")),
+                name: Arc::from("Function"),
+                internal_name: Arc::from("java/util/function/Function"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![MethodSummary {
+                    name: Arc::from("apply"),
+                    params: MethodParams::from([("Ljava/lang/Object;", "t")]),
+                    access_flags: ACC_PUBLIC | ACC_ABSTRACT,
+                    is_synthetic: false,
+                    annotations: vec![],
+                    generic_signature: Some(Arc::from("(TT;)TR;")),
+                    return_type: Some(Arc::from("Ljava/lang/Object;")),
+                }],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: None,
+                generic_signature: Some(Arc::from(
+                    "<T:Ljava/lang/Object;R:Ljava/lang/Object;>Ljava/lang/Object;",
+                )),
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("StringBuilder"),
+                internal_name: Arc::from("java/lang/StringBuilder"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: None,
+                generic_signature: None,
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+        let view = idx.view(root_scope());
+        let resolver = TypeResolver::new(&view);
+        let target = JvmType::Object(
+            "java/util/function/Function".to_string(),
+            vec![
+                JvmType::Object("java/lang/String".to_string(), vec![]),
+                JvmType::TypeVar("R".to_string()),
+            ],
+        );
+
+        let inferred =
+            resolver.infer_functional_arg_return_shallow("s -> s.length()", &[], None, None, Some(&target));
+        assert_eq!(
+            inferred.map(|t| t.to_signature_string()),
+            Some("Ljava/lang/Integer;".to_string())
+        );
+        assert_eq!(
+            resolver
+                .infer_functional_arg_return_shallow(
+                    "s -> new StringBuilder(s)",
+                    &[],
+                    None,
+                    None,
+                    Some(&target)
+                )
+                .map(|t| t.to_signature_string()),
+            Some("Ljava/lang/StringBuilder;".to_string())
+        );
+    }
+
+    #[test]
     fn test_source_derived_map_signature_keeps_bindable_r_for_chain_resolution() {
         use crate::index::{ClassMetadata, ClassOrigin, MethodSummary};
         use crate::language::java::class_parser::parse_java_source;
@@ -2723,7 +3191,7 @@ mod tests {
         let inferred_direct =
             resolver.infer_functional_arg_return_shallow("List::size", &locals, None, None, None);
         let inferred_bindings = resolver.infer_method_type_bindings_shallow(
-            "map",
+            selected,
             &selected_sig,
             &param_jvm,
             &ret_jvm,
@@ -2858,7 +3326,7 @@ mod tests {
                 None,
             );
             let bindings = resolver.infer_method_type_bindings_shallow(
-                "map",
+                selected_map,
                 &map_sig,
                 &map_params,
                 &map_ret,
