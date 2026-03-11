@@ -16,6 +16,7 @@ use crate::language::LanguageRegistry;
 use crate::language::rope_utils::rope_line_col_to_offset;
 use crate::lsp::config::JavaAnalyzerConfig;
 use crate::lsp::handlers::goto_definition::handle_goto_definition;
+use crate::lsp::handlers::inlay_hints::handle_inlay_hints;
 use crate::lsp::handlers::semantic_tokens::handle_semantic_tokens;
 use crate::workspace::{Workspace, document::Document};
 
@@ -225,6 +226,15 @@ impl LanguageServer for Backend {
     async fn shutdown(&self) -> LspResult<()> {
         info!("LSP shutdown");
         Ok(())
+    }
+
+    async fn inlay_hint(&self, params: InlayHintParams) -> LspResult<Option<Vec<InlayHint>>> {
+        Ok(handle_inlay_hints(
+            Arc::clone(&self.workspace),
+            Arc::clone(&self.registry),
+            params,
+        )
+        .await)
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {

@@ -9,7 +9,7 @@ use crate::{
 use ropey::Rope;
 use smallvec::SmallVec;
 use tower_lsp::lsp_types::{
-    DocumentSymbol, SemanticToken, SemanticTokenModifier, SemanticTokenType,
+    DocumentSymbol, InlayHint, Range, SemanticToken, SemanticTokenModifier, SemanticTokenType,
 };
 use tree_sitter::{Node, Parser, Tree};
 
@@ -125,6 +125,22 @@ pub trait Language: Send + Sync + std::fmt::Debug {
         _node: tree_sitter::Node<'a>,
         _bytes: &'a [u8],
     ) -> Option<Vec<DocumentSymbol>> {
+        None
+    }
+
+    fn supports_inlay_hints(&self) -> bool {
+        false
+    }
+
+    fn collect_inlay_hints_with_tree(
+        &self,
+        _source: &str,
+        _rope: &Rope,
+        _root: Node,
+        _range: Range,
+        _env: &ParseEnv,
+        _index: &IndexView,
+    ) -> Option<Vec<InlayHint>> {
         None
     }
 }

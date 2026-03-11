@@ -3,6 +3,9 @@ use std::sync::Arc;
 
 use crate::index::IndexView;
 use crate::index::MethodSummary;
+use crate::language::java::editor_semantics::{
+    materialize_local_variable_types, resolve_method_argument_expected_type,
+};
 use crate::language::java::expression_typing;
 use crate::language::java::intrinsics::access::classify_intrinsic_access;
 use crate::language::java::location::normalize_top_level_generic_base;
@@ -74,71 +77,7 @@ impl<'a> ContextEnricher<'a> {
                 ctx.query = member_prefix;
             }
         }
-        {
-            let type_ctx_for_resolution = Arc::new(
-                (*type_ctx).clone().with_current_class_methods(
-                    ctx.current_class_members
-                        .iter()
-                        .filter_map(|(name, member)| match member {
-                            crate::semantic::context::CurrentClassMember::Method(method) => {
-                                Some((name.clone(), method.clone()))
-                            }
-                            _ => None,
-                        })
-                        .collect(),
-                ),
-            );
-            // Canonicalize declared locals first so downstream var-RHS inference
-            // resolves member chains against real internal owners.
-            let sym = SymbolResolver::new(self.view);
-            let new_types: Vec<TypeName> = ctx
-                .local_variables
-                .iter()
-                .map(|lv| expand_local_type_strict(&sym, ctx, &type_ctx, &lv.type_internal))
-                .collect();
-            for (lv, new_ty) in ctx.local_variables.iter_mut().zip(new_types) {
-                lv.type_internal = new_ty;
-            }
-
-            let resolver = TypeResolver::new(self.view);
-            let to_resolve: Vec<(usize, String)> = ctx
-                .local_variables
-                .iter()
-                .enumerate()
-                .filter_map(|(i, lv)| {
-                    if lv.type_internal.erased_internal() == "var" {
-                        lv.init_expr.as_deref().map(|e| (i, e.to_string()))
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-
-            for (idx_in_vec, init_expr) in to_resolve {
-                if let Some(resolved) = expression_typing::resolve_var_init_expr(
-                    &init_expr,
-                    &ctx.local_variables,
-                    ctx.enclosing_internal_name.as_ref(),
-                    &resolver,
-                    &type_ctx_for_resolution,
-                    self.view,
-                ) {
-                    ctx.local_variables[idx_in_vec].type_internal = resolved;
-                }
-            }
-
-            // Re-expand after var inference so newly inferred source-like forms
-            // are normalized before receiver-chain and completion stages.
-            let new_types: Vec<TypeName> = ctx
-                .local_variables
-                .iter()
-                .map(|lv| expand_local_type_strict(&sym, ctx, &type_ctx, &lv.type_internal))
-                .collect();
-
-            for (lv, new_ty) in ctx.local_variables.iter_mut().zip(new_types) {
-                lv.type_internal = new_ty;
-            }
-        }
+        materialize_local_variable_types(ctx, self.view, &type_ctx);
 
         enrich_expected_type_context(ctx, self.view, &type_ctx);
         bind_active_lambda_param_types(ctx);
@@ -372,75 +311,6 @@ fn build_typed_chain_receiver(receiver_ty: &TypeName) -> TypedChainReceiver {
     }
 }
 
-fn expand_local_type_strict(
-    sym: &SymbolResolver,
-    ctx: &SemanticContext,
-    type_ctx: &SourceTypeCtx,
-    ty: &TypeName,
-) -> TypeName {
-    // Leave primitive/unknown/var unchanged.
-    if matches!(
-        ty.erased_internal(),
-        "var"
-            | "unknown"
-            | "byte"
-            | "short"
-            | "int"
-            | "long"
-            | "float"
-            | "double"
-            | "boolean"
-            | "char"
-            | "void"
-    ) {
-        return ty.clone();
-    }
-
-    let base = ty.erased_internal();
-
-    if ty.args.is_empty() && base.contains('<') {
-        if let Some(mut resolved) = resolve_source_like_type_with_scope(ctx, type_ctx, sym, base) {
-            resolved.array_dims = ty.array_dims;
-            return resolved;
-        }
-
-        if let Some(mut resolved) = type_ctx.resolve_type_name_strict(base) {
-            resolved.array_dims = ty.array_dims;
-            return resolved;
-        }
-    }
-
-    let expanded_args: Vec<TypeName> = ty
-        .args
-        .iter()
-        .map(|a| expand_local_type_strict(sym, ctx, type_ctx, a))
-        .collect();
-
-    if ty.contains_slash() || sym.view.get_class(base).is_some() {
-        return TypeName {
-            base_internal: ty.base_internal.clone(),
-            args: expanded_args,
-            array_dims: ty.array_dims,
-        };
-    }
-
-    if let Some(mut resolved) = type_ctx.resolve_type_name_strict(base) {
-        resolved.args = expanded_args;
-        resolved.array_dims = ty.array_dims;
-        return resolved;
-    }
-
-    if let Some(internal) = sym.resolve_type_name(ctx, base) {
-        return TypeName {
-            base_internal: internal,
-            args: expanded_args,
-            array_dims: ty.array_dims,
-        };
-    }
-
-    ty.clone()
-}
-
 fn enrich_expected_type_context(
     ctx: &mut SemanticContext,
     view: &IndexView,
@@ -617,125 +487,13 @@ fn resolve_source_type_hint(
         })
 }
 
-fn resolve_expected_type_from_method_argument(
+pub(crate) fn resolve_expected_type_from_method_argument(
     ctx: &SemanticContext,
     view: &IndexView,
     type_ctx: &SourceTypeCtx,
     hint: &FunctionalMethodCallHint,
 ) -> (Option<(TypeName, ExpectedTypeConfidence)>, Option<TypeName>) {
-    let resolver = TypeResolver::new(view);
-    let receiver =
-        match resolve_hint_receiver_type(ctx, type_ctx, view, &resolver, &hint.receiver_expr) {
-            Some(r) => r,
-            None => return (None, None),
-        };
-    let receiver_owner = receiver.erased_internal();
-
-    let (methods, _) = view.collect_inherited_members(receiver_owner);
-    let mut candidates: Vec<&MethodSummary> = methods
-        .iter()
-        .filter(|m| m.name.as_ref() == hint.method_name)
-        .map(|m| m.as_ref())
-        .collect();
-    if ctx.enclosing_internal_name.as_deref() == Some(receiver_owner)
-        && let Some(crate::semantic::context::CurrentClassMember::Method(method)) =
-            ctx.current_class_members.get(hint.method_name.as_str())
-        && method.name.as_ref() == hint.method_name
-    {
-        candidates.push(method.as_ref());
-    }
-    if candidates.is_empty() {
-        return (None, Some(receiver));
-    }
-
-    let arg_types: Vec<TypeName> = hint
-        .arg_texts
-        .iter()
-        .map(|arg| {
-            expression_typing::resolve_expression_type(
-                arg,
-                &ctx.local_variables,
-                ctx.enclosing_internal_name.as_ref(),
-                &resolver,
-                type_ctx,
-                view,
-            )
-            .unwrap_or_else(|| TypeName::new("unknown"))
-        })
-        .collect();
-    let mut arg_types_for_selection = arg_types.clone();
-    if hint.arg_index < arg_types_for_selection.len() {
-        // Expected-type inference should not be blocked by the currently-edited argument text.
-        arg_types_for_selection[hint.arg_index] = TypeName::new("unknown");
-    }
-    let arg_count = hint.arg_texts.len() as i32;
-    let selected =
-        match resolver.select_overload_match(&candidates, arg_count, &arg_types_for_selection) {
-            Some(s) => s,
-            None => return (None, Some(receiver)),
-        };
-    let receiver_internal = receiver.to_internal_with_generics_for_substitution();
-    let expected = resolver
-        .resolve_selected_param_type_with_callsite_inference(
-            &receiver_internal,
-            selected.method,
-            hint.arg_index,
-            selected.mode,
-            &arg_types,
-            &hint.arg_texts,
-            &ctx.local_variables,
-            ctx.enclosing_internal_name.as_ref(),
-            None,
-        )
-        .map(|(ty, exact)| {
-            (
-                ty,
-                if exact {
-                    ExpectedTypeConfidence::Exact
-                } else {
-                    ExpectedTypeConfidence::Partial
-                },
-            )
-        })
-        .or_else(|| {
-            resolver
-                .resolve_selected_param_type_from_generic_signature(
-                    &receiver_internal,
-                    selected.method,
-                    hint.arg_index,
-                    selected.mode,
-                )
-                .map(|(ty, exact)| {
-                    (
-                        ty,
-                        if exact {
-                            ExpectedTypeConfidence::Exact
-                        } else {
-                            ExpectedTypeConfidence::Partial
-                        },
-                    )
-                })
-        })
-        .or_else(|| {
-            resolve_selected_param_descriptor_for_call(
-                &resolver,
-                selected.method,
-                hint.arg_index,
-                selected.mode,
-            )
-            .and_then(|desc| descriptor_to_type_name(&desc))
-            .map(|ty| (ty, ExpectedTypeConfidence::Exact))
-        });
-    (expected, Some(receiver))
-}
-
-fn resolve_selected_param_descriptor_for_call(
-    resolver: &TypeResolver,
-    selected: &MethodSummary,
-    arg_index: usize,
-    mode: OverloadInvocationMode,
-) -> Option<Arc<str>> {
-    resolver.resolve_selected_param_descriptor_for_call(selected, arg_index, mode)
+    resolve_method_argument_expected_type(ctx, view, type_ctx, hint)
 }
 
 fn resolve_hint_receiver_type(
@@ -825,7 +583,7 @@ fn resolve_type_name_with_scoped_inner_fallback(
     resolve_source_like_type_with_scope(ctx, type_ctx, &sym, src)
 }
 
-fn resolve_source_like_type_with_scope(
+pub(crate) fn resolve_source_like_type_with_scope(
     ctx: &SemanticContext,
     type_ctx: &SourceTypeCtx,
     sym: &SymbolResolver<'_>,

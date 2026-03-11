@@ -12,6 +12,7 @@ use crate::language::java::completion::providers::{
     statement_label::StatementLabelProvider, static_import_member::StaticImportMemberProvider,
     static_member::StaticMemberProvider, this_member::ThisMemberProvider,
 };
+use crate::language::java::inlay_hints::{JavaInlayHintKind, collect_java_inlay_hints};
 use crate::language::java::symbols::collect_java_symbols;
 use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::language::rope_utils::rope_line_col_to_offset;
@@ -20,15 +21,20 @@ use crate::language::{ClassifiedToken, ParseEnv};
 use crate::semantic::{CursorLocation, SemanticContext};
 use ropey::Rope;
 use smallvec::smallvec;
-use tower_lsp::lsp_types::{SemanticTokenModifier, SemanticTokenType};
+use tower_lsp::lsp_types::{
+    InlayHint, InlayHintKind, InlayHintLabel, Position, Range, SemanticTokenModifier,
+    SemanticTokenType,
+};
 use tree_sitter::{Node, Parser, Tree};
 
 pub mod class_parser;
 pub mod completion;
 pub mod completion_context;
+pub mod editor_semantics;
 pub mod expression_typing;
 pub mod flow;
 pub mod injection;
+pub mod inlay_hints;
 pub mod intrinsics;
 pub mod locals;
 pub mod location;
@@ -270,6 +276,49 @@ impl Language for JavaLanguage {
     ) -> Option<Vec<tower_lsp::lsp_types::DocumentSymbol>> {
         Some(collect_java_symbols(node, bytes))
     }
+
+    fn supports_inlay_hints(&self) -> bool {
+        true
+    }
+
+    fn collect_inlay_hints_with_tree(
+        &self,
+        source: &str,
+        rope: &Rope,
+        root: Node,
+        range: Range,
+        env: &ParseEnv,
+        index: &IndexView,
+    ) -> Option<Vec<InlayHint>> {
+        let byte_range = lsp_range_to_byte_range(rope, range, source.len())?;
+        let hints = collect_java_inlay_hints(
+            source,
+            rope,
+            root,
+            env.name_table.clone(),
+            index,
+            byte_range,
+        );
+
+        Some(
+            hints
+                .into_iter()
+                .map(|hint| InlayHint {
+                    position: byte_offset_to_position(rope, hint.offset),
+                    label: InlayHintLabel::String(hint.label),
+                    kind: Some(match hint.kind {
+                        JavaInlayHintKind::Type => InlayHintKind::TYPE,
+                        JavaInlayHintKind::Parameter => InlayHintKind::PARAMETER,
+                    }),
+                    text_edits: None,
+                    tooltip: None,
+                    padding_left: Some(matches!(hint.kind, JavaInlayHintKind::Type)),
+                    padding_right: Some(matches!(hint.kind, JavaInlayHintKind::Parameter)),
+                    data: None,
+                })
+                .collect(),
+        )
+    }
 }
 
 fn is_annotation_name(node: Node) -> bool {
@@ -278,6 +327,31 @@ fn is_annotation_name(node: Node) -> bool {
             && p.child_by_field_name("name")
                 .is_some_and(|name| name.id() == node.id())
     })
+}
+
+fn lsp_range_to_byte_range(
+    rope: &Rope,
+    range: Range,
+    len: usize,
+) -> Option<std::ops::Range<usize>> {
+    let start = rope_line_col_to_offset(rope, range.start.line, range.start.character)?;
+    let end = rope_line_col_to_offset(rope, range.end.line, range.end.character)?;
+    Some(start.min(len)..end.min(len))
+}
+
+fn byte_offset_to_position(rope: &Rope, offset: usize) -> Position {
+    let char_idx = rope.byte_to_char(offset.min(rope.len_bytes()));
+    let line_idx = rope.char_to_line(char_idx);
+    let line_char_start = rope.line_to_char(line_idx);
+    let character = rope
+        .slice(line_char_start..char_idx)
+        .chars()
+        .map(char::len_utf16)
+        .sum::<usize>() as u32;
+    Position {
+        line: line_idx as u32,
+        character,
+    }
 }
 
 pub struct JavaContextExtractor {
