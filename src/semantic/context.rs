@@ -330,6 +330,25 @@ pub struct TypedChainReceiver {
     pub receiver_mode: TypedChainReceiverMode,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JavaIntrinsicAccessKind {
+    ClassLiteral,
+    ArrayLength,
+    ObjectGetClass,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JavaAccessReceiverKind {
+    Type,
+    Expression,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct JavaIntrinsicAccess {
+    pub kind: JavaIntrinsicAccessKind,
+    pub receiver_kind: JavaAccessReceiverKind,
+}
+
 #[derive(Debug, Clone)]
 pub struct SemanticContext {
     pub location: CursorLocation,
@@ -357,6 +376,7 @@ pub struct SemanticContext {
     pub functional_target_hint: Option<FunctionalTargetHint>,
     pub typed_expr_ctx: Option<TypedExpressionContext>,
     pub typed_chain_receiver: Option<TypedChainReceiver>,
+    pub java_intrinsic_access: Option<JavaIntrinsicAccess>,
     pub expected_functional_interface: Option<TypeName>,
     pub expected_sam: Option<SamSignature>,
     /// Flow-sensitive local type overrides scoped to the current cursor region
@@ -406,6 +426,7 @@ impl SemanticContext {
             functional_target_hint: None,
             typed_expr_ctx: None,
             typed_chain_receiver: None,
+            java_intrinsic_access: None,
             expected_functional_interface: None,
             expected_sam: None,
             flow_type_overrides: HashMap::new(),

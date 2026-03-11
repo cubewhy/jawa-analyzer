@@ -6,11 +6,11 @@ use crate::index::{IndexScope, IndexView, NameTable};
 use crate::language::java::completion::providers::{
     annotation::AnnotationProvider, constructor::ConstructorProvider,
     expression::ExpressionProvider, import::ImportProvider, import_static::ImportStaticProvider,
-    keyword::KeywordProvider, local_var::LocalVarProvider, member::MemberProvider,
-    name_suggestion::NameSuggestionProvider, override_member::OverrideProvider,
-    package::PackageProvider, snippet::SnippetProvider, statement_label::StatementLabelProvider,
-    static_import_member::StaticImportMemberProvider, static_member::StaticMemberProvider,
-    this_member::ThisMemberProvider,
+    intrinsic_member::IntrinsicMemberProvider, keyword::KeywordProvider,
+    local_var::LocalVarProvider, member::MemberProvider, name_suggestion::NameSuggestionProvider,
+    override_member::OverrideProvider, package::PackageProvider, snippet::SnippetProvider,
+    statement_label::StatementLabelProvider, static_import_member::StaticImportMemberProvider,
+    static_member::StaticMemberProvider, this_member::ThisMemberProvider,
 };
 use crate::language::java::symbols::collect_java_symbols;
 use crate::language::java::type_ctx::SourceTypeCtx;
@@ -29,6 +29,7 @@ pub mod completion_context;
 pub mod expression_typing;
 pub mod flow;
 pub mod injection;
+pub mod intrinsics;
 pub mod locals;
 pub mod location;
 pub mod members;
@@ -41,10 +42,11 @@ pub mod utils;
 
 const SENTINEL: &str = "__KIRO__";
 
-static JAVA_COMPLETION_PROVIDERS: [&dyn CompletionProvider; 16] = [
+static JAVA_COMPLETION_PROVIDERS: [&dyn CompletionProvider; 17] = [
     &LocalVarProvider,
     &StatementLabelProvider,
     &ThisMemberProvider,
+    &IntrinsicMemberProvider,
     &MemberProvider,
     &StaticMemberProvider,
     &ConstructorProvider,

@@ -3,6 +3,7 @@ pub mod constructor;
 pub mod expression;
 pub mod import;
 pub mod import_static;
+pub mod intrinsic_member;
 pub mod keyword;
 pub mod local_var;
 pub mod member;

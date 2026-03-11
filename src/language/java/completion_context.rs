@@ -4,6 +4,7 @@ use std::sync::Arc;
 use crate::index::IndexView;
 use crate::index::MethodSummary;
 use crate::language::java::expression_typing;
+use crate::language::java::intrinsics::access::classify_intrinsic_access;
 use crate::language::java::location::normalize_top_level_generic_base;
 use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::semantic::context::{
@@ -35,6 +36,7 @@ impl<'a> ContextEnricher<'a> {
 
     pub fn enrich(&self, ctx: &mut SemanticContext) {
         ctx.typed_chain_receiver = None;
+        ctx.java_intrinsic_access = None;
         let type_ctx = match ctx.extension_arc::<SourceTypeCtx>() {
             Some(ctx) => ctx,
             None => {
@@ -248,6 +250,8 @@ impl<'a> ContextEnricher<'a> {
             ctx.location = location;
             ctx.query = query;
         }
+
+        ctx.java_intrinsic_access = classify_intrinsic_access(ctx, self.view, &type_ctx);
 
         // If the receiver text is a known package, reinterpret this as import completion.
         let import_location: Option<(CursorLocation, String)> =
@@ -2996,6 +3000,89 @@ mod tests {
             ctx.location
         );
         assert_eq!(ctx.query, "toString");
+    }
+
+    #[test]
+    fn test_enrich_context_classifies_intrinsic_access_kinds() {
+        use crate::semantic::context::JavaIntrinsicAccessKind;
+
+        let idx = make_index_with_random_class();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        let view = idx.view(scope);
+        let name_table = view.build_name_table();
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            Some(Arc::from("org/cubewhy/a")),
+            vec!["java.lang.*".into(), "org.cubewhy.*".into()],
+            Some(name_table),
+        ));
+
+        let mut class_ctx = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: None,
+                receiver_type: None,
+                member_prefix: "cl".to_string(),
+                receiver_expr: "int".to_string(),
+                arguments: None,
+            },
+            "cl",
+            vec![],
+            Some(Arc::from("Main")),
+            Some(Arc::from("org/cubewhy/a/Main")),
+            Some(Arc::from("org/cubewhy/a")),
+            vec!["java.lang.*".into()],
+        )
+        .with_extension(type_ctx.clone());
+        ContextEnricher::new(&view).enrich(&mut class_ctx);
+        assert_eq!(
+            class_ctx.java_intrinsic_access.as_ref().map(|a| a.kind),
+            Some(JavaIntrinsicAccessKind::ClassLiteral)
+        );
+
+        let mut length_ctx = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: Some(TypeName::new("java/lang/String").with_array_dims(1)),
+                receiver_type: Some(Arc::from("java/lang/String")),
+                member_prefix: "length".to_string(),
+                receiver_expr: "arr".to_string(),
+                arguments: None,
+            },
+            "length",
+            vec![],
+            Some(Arc::from("Main")),
+            Some(Arc::from("org/cubewhy/a/Main")),
+            Some(Arc::from("org/cubewhy/a")),
+            vec!["java.lang.*".into()],
+        )
+        .with_extension(type_ctx.clone());
+        ContextEnricher::new(&view).enrich(&mut length_ctx);
+        assert_eq!(
+            length_ctx.java_intrinsic_access.as_ref().map(|a| a.kind),
+            Some(JavaIntrinsicAccessKind::ArrayLength)
+        );
+
+        let mut get_class_ctx = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: Some(TypeName::new("java/lang/String")),
+                receiver_type: Some(Arc::from("java/lang/String")),
+                member_prefix: "getClass".to_string(),
+                receiver_expr: "obj".to_string(),
+                arguments: Some("()".to_string()),
+            },
+            "getClass",
+            vec![],
+            Some(Arc::from("Main")),
+            Some(Arc::from("org/cubewhy/a/Main")),
+            Some(Arc::from("org/cubewhy/a")),
+            vec!["java.lang.*".into()],
+        )
+        .with_extension(type_ctx);
+        ContextEnricher::new(&view).enrich(&mut get_class_ctx);
+        assert_eq!(
+            get_class_ctx.java_intrinsic_access.as_ref().map(|a| a.kind),
+            Some(JavaIntrinsicAccessKind::ObjectGetClass)
+        );
     }
 
     #[test]

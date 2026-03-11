@@ -210,6 +210,18 @@ fn determine_location_impl(
             None => break,
         }
     }
+    if let Some((receiver_expr, member_prefix)) = detect_trailing_dot_member_access(ctx) {
+        return (
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: None,
+                receiver_type: None,
+                member_prefix: member_prefix.clone(),
+                receiver_expr,
+                arguments: None,
+            },
+            member_prefix,
+        );
+    }
     (CursorLocation::Unknown, String::new())
 }
 
@@ -1338,6 +1350,18 @@ fn detect_trailing_dot_member_access(ctx: &JavaContextExtractor) -> Option<(Stri
     let before = strip_sentinel(ctx.byte_slice(0, ctx.offset));
     let trimmed = before.trim_end();
     if !trimmed.ends_with('.') {
+        return None;
+    }
+    let statement = trimmed
+        .rsplit([';', '{', '}'])
+        .next()
+        .unwrap_or(trimmed)
+        .trim_start();
+    if statement
+        .split_whitespace()
+        .next()
+        .is_some_and(|kw| matches!(kw, "import" | "package"))
+    {
         return None;
     }
     let tail = trimmed
