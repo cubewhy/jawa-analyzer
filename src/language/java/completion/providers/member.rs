@@ -96,112 +96,31 @@ impl CompletionProvider for MemberProvider {
                     };
 
                     for method in &class_meta.methods {
-                        if method.name.as_ref() == "<init>" || method.name.as_ref() == "<clinit>" {
-                            continue;
-                        }
-                        if !filter.is_method_accessible(method.access_flags, method.is_synthetic) {
-                            continue;
-                        }
-                        // The current class itself: source members are already included, skipping to avoid duplication.
-                        if i == 0 && source_names.contains(&method.name) {
-                            continue;
-                        }
-                        if !name_matches_member_prefix(
-                            method.name.as_ref(),
+                        self.push_this_branch_method_candidate(
+                            &mut results,
+                            ctx,
+                            class_meta,
+                            method,
+                            &resolver,
+                            &filter,
                             prefix_lower.as_deref(),
-                        ) {
-                            continue;
-                        }
-
-                        let is_static = method.access_flags & ACC_STATIC != 0;
-                        if is_static {
-                            continue;
-                        }
-
-                        let kind = CandidateKind::Method {
-                            descriptor: method.desc(),
-                            defining_class: Arc::clone(&class_meta.internal_name),
-                        };
-                        let detail = if i == 0 {
-                            render::method_detail(
-                                ctx.enclosing_internal_name.as_deref().unwrap_or(""),
-                                class_meta,
-                                method,
-                                &resolver,
-                            )
-                        } else {
-                            format!("inherited from {}", class_meta.name)
-                        };
-                        results.push(
-                            CompletionCandidate::new(
-                                Arc::clone(&method.name),
-                                method.name.to_string(),
-                                kind,
-                                self.name(),
-                            )
-                            .with_callable_insert(
-                                method.name.as_ref(),
-                                &method.params.param_names(),
-                                has_paren_after_cursor,
-                            )
-                            .with_detail(detail)
-                            .with_score(if i == 0 {
-                                60.0
-                            } else {
-                                55.0
-                            }),
+                            &source_names,
+                            i == 0,
+                            has_paren_after_cursor,
                         );
                     }
 
                     for field in &class_meta.fields {
-                        let filter = if i == 0 {
-                            AccessFilter::same_class()
-                        } else {
-                            AccessFilter::member_completion()
-                        };
-                        if !filter.is_field_accessible(field.access_flags, field.is_synthetic) {
-                            continue;
-                        }
-                        if i == 0 && source_names.contains(&field.name) {
-                            continue;
-                        }
-                        if !name_matches_member_prefix(field.name.as_ref(), prefix_lower.as_deref())
-                        {
-                            continue;
-                        }
-
-                        let is_static = field.access_flags & ACC_STATIC != 0;
-                        if is_static {
-                            continue;
-                        }
-
-                        let kind = CandidateKind::Field {
-                            descriptor: Arc::clone(&field.descriptor),
-                            defining_class: Arc::clone(&class_meta.internal_name),
-                        };
-                        let detail = if i == 0 {
-                            render::field_detail(
-                                ctx.enclosing_internal_name.as_deref().unwrap_or(""),
-                                class_meta,
-                                field,
-                                &resolver,
-                            )
-                        } else {
-                            format!("inherited from {}", class_meta.name)
-                        };
-                        results.push(
-                            CompletionCandidate::new(
-                                Arc::clone(&field.name),
-                                field.name.to_string(),
-                                kind,
-                                self.name(),
-                            )
-                            .with_detail(detail)
-                            .with_score(if i == 0 {
-                                60.0
-                            } else {
-                                55.0
-                            }),
+                        self.push_this_branch_field_candidate(
+                            &mut results,
+                            ctx,
+                            class_meta,
+                            field,
+                            &resolver,
+                            &filter,
+                            prefix_lower.as_deref(),
+                            &source_names,
+                            i == 0,
                         );
                     }
                 }
@@ -296,141 +215,40 @@ impl CompletionProvider for MemberProvider {
 
         for class_meta in &mro {
             for method in &class_meta.methods {
-                // skip <init>, <clinit>
-                if method.name.as_ref() == "<init>" || method.name.as_ref() == "<clinit>" {
-                    continue;
-                }
-                // shadowing: subclass method hides superclass method with same name+descriptor
-                let key = (Arc::clone(&method.name), Arc::clone(&method.desc()));
-                if !seen_methods.insert(key) {
-                    continue;
-                }
-                if !filter.is_method_accessible(method.access_flags, method.is_synthetic) {
-                    continue;
-                }
-                if !name_matches_member_prefix(method.name.as_ref(), prefix_lower.as_deref()) {
-                    continue;
-                }
-                let trace_add = trace_arraylist
-                    && method.name.as_ref() == "add"
-                    && tracing::enabled!(tracing::Level::DEBUG);
-                if trace_add {
-                    tracing::debug!(
-                        receiver_expr,
-                        member_prefix,
-                        class_internal,
-                        base_class_internal,
-                        class_meta_internal = %class_meta.internal_name,
-                        class_meta_origin = ?class_meta.origin,
-                        class_meta_generic_signature = ?class_meta.generic_signature,
-                        method_name = %method.name,
-                        method_desc = %method.desc(),
-                        method_generic_signature = ?method.generic_signature,
-                        method_return_type = ?method.return_type,
-                        param_descriptors = ?method.params.items.iter().map(|p| p.descriptor.as_ref()).collect::<Vec<_>>(),
-                        param_names = ?method.params.items.iter().map(|p| p.name.as_ref()).collect::<Vec<_>>(),
-                        "member_provider: add overload candidate before detail rendering"
-                    );
-                }
-                let is_static = method.access_flags & ACC_STATIC != 0;
-                if is_static {
-                    continue;
-                }
-                let kind = CandidateKind::Method {
-                    descriptor: method.desc(),
-                    defining_class: Arc::from(class_internal.as_str()),
-                };
-                let mut candidate = CompletionCandidate::new(
-                    Arc::clone(&method.name),
-                    method.name.to_string(),
-                    kind,
-                    self.name(),
-                )
-                .with_callable_insert(
-                    method.name.as_ref(),
-                    &method.params.param_names(),
+                self.push_member_method_candidate(
+                    &mut results,
+                    index,
+                    class_meta,
+                    method,
+                    &resolver,
+                    &filter,
+                    prefix_lower.as_deref(),
+                    &mut seen_methods,
+                    class_internal.as_str(),
+                    &class_internal_for_substitution,
                     has_paren_after_cursor,
-                )
-                .with_detail({
-                    let detail = render::method_detail(
-                        &class_internal_for_substitution,
-                        class_meta,
-                        method,
-                        &resolver,
-                    );
-                    if trace_add {
-                        tracing::debug!(
-                            method_name = %method.name,
-                            method_desc = %method.desc(),
-                            detail,
-                            "member_provider: add overload candidate after detail rendering"
-                        );
-                    }
-                    detail
-                });
-                if !is_static
-                    && let Some(plan) = flow_receiver_cast_plan.as_ref()
-                    && needs_cast_for_method(
-                        index,
-                        &plan.declared_type,
-                        method.name.as_ref(),
-                        method.desc().as_ref(),
-                    )
-                {
-                    candidate = candidate.with_member_access_cast_rewrite(
-                        plan.receiver_expr.clone(),
-                        plan.cast_type.clone(),
-                    );
-                }
-                results.push(candidate);
+                    flow_receiver_cast_plan.as_ref(),
+                    trace_arraylist,
+                    receiver_expr,
+                    member_prefix,
+                    base_class_internal,
+                );
             }
 
             for field in &class_meta.fields {
-                if !seen_fields.insert(Arc::clone(&field.name)) {
-                    continue;
-                }
-                if !filter.is_field_accessible(field.access_flags, field.is_synthetic) {
-                    continue;
-                }
-                if !name_matches_member_prefix(field.name.as_ref(), prefix_lower.as_deref()) {
-                    continue;
-                }
-                let is_static = field.access_flags & ACC_STATIC != 0;
-                if is_static {
-                    continue;
-                }
-
-                let kind = CandidateKind::Field {
-                    descriptor: Arc::clone(&field.descriptor),
-                    defining_class: Arc::from(class_internal.as_str()),
-                };
-                let mut candidate = CompletionCandidate::new(
-                    Arc::clone(&field.name),
-                    field.name.to_string(),
-                    kind,
-                    self.name(),
-                )
-                .with_detail(render::field_detail(
-                    &class_internal_for_substitution,
+                self.push_member_field_candidate(
+                    &mut results,
+                    index,
                     class_meta,
                     field,
                     &resolver,
-                ));
-                if !is_static
-                    && let Some(plan) = flow_receiver_cast_plan.as_ref()
-                    && needs_cast_for_field(
-                        index,
-                        &plan.declared_type,
-                        field.name.as_ref(),
-                        field.descriptor.as_ref(),
-                    )
-                {
-                    candidate = candidate.with_member_access_cast_rewrite(
-                        plan.receiver_expr.clone(),
-                        plan.cast_type.clone(),
-                    );
-                }
-                results.push(candidate);
+                    &filter,
+                    prefix_lower.as_deref(),
+                    &mut seen_fields,
+                    class_internal.as_str(),
+                    &class_internal_for_substitution,
+                    flow_receiver_cast_plan.as_ref(),
+                );
             }
         }
         if let (Some(t_collect), Some(t_total)) = (t_collect, t_total) {
@@ -547,6 +365,287 @@ fn name_matches_member_prefix(name: &str, prefix_lower: Option<&str>) -> bool {
 }
 
 impl MemberProvider {
+    fn push_this_branch_method_candidate(
+        &self,
+        results: &mut Vec<CompletionCandidate>,
+        ctx: &SemanticContext,
+        class_meta: &crate::index::ClassMetadata,
+        method: &crate::index::MethodSummary,
+        resolver: &ContextualResolver<'_>,
+        filter: &AccessFilter,
+        prefix_lower: Option<&str>,
+        source_names: &std::collections::HashSet<Arc<str>>,
+        same_class: bool,
+        has_paren_after_cursor: bool,
+    ) {
+        if method.name.as_ref() == "<init>" || method.name.as_ref() == "<clinit>" {
+            return;
+        }
+        if !filter.is_method_accessible(method.access_flags, method.is_synthetic) {
+            return;
+        }
+        if same_class && source_names.contains(&method.name) {
+            return;
+        }
+        if !name_matches_member_prefix(method.name.as_ref(), prefix_lower) {
+            return;
+        }
+        if method.access_flags & ACC_STATIC != 0 {
+            return;
+        }
+
+        let detail = if same_class {
+            render::method_detail(
+                ctx.enclosing_internal_name.as_deref().unwrap_or(""),
+                class_meta,
+                method,
+                resolver,
+            )
+        } else {
+            inherited_member_detail(class_meta)
+        };
+
+        results.push(
+            CompletionCandidate::new(
+                Arc::clone(&method.name),
+                method.name.to_string(),
+                CandidateKind::Method {
+                    descriptor: method.desc(),
+                    defining_class: Arc::clone(&class_meta.internal_name),
+                },
+                self.name(),
+            )
+            .with_callable_insert(
+                method.name.as_ref(),
+                &method.params.param_names(),
+                has_paren_after_cursor,
+            )
+            .with_detail(detail)
+            .with_score(if same_class { 60.0 } else { 55.0 }),
+        );
+    }
+
+    fn push_this_branch_field_candidate(
+        &self,
+        results: &mut Vec<CompletionCandidate>,
+        ctx: &SemanticContext,
+        class_meta: &crate::index::ClassMetadata,
+        field: &crate::index::FieldSummary,
+        resolver: &ContextualResolver<'_>,
+        filter: &AccessFilter,
+        prefix_lower: Option<&str>,
+        source_names: &std::collections::HashSet<Arc<str>>,
+        same_class: bool,
+    ) {
+        if !filter.is_field_accessible(field.access_flags, field.is_synthetic) {
+            return;
+        }
+        if same_class && source_names.contains(&field.name) {
+            return;
+        }
+        if !name_matches_member_prefix(field.name.as_ref(), prefix_lower) {
+            return;
+        }
+        if field.access_flags & ACC_STATIC != 0 {
+            return;
+        }
+
+        let detail = if same_class {
+            render::field_detail(
+                ctx.enclosing_internal_name.as_deref().unwrap_or(""),
+                class_meta,
+                field,
+                resolver,
+            )
+        } else {
+            inherited_member_detail(class_meta)
+        };
+
+        results.push(
+            CompletionCandidate::new(
+                Arc::clone(&field.name),
+                field.name.to_string(),
+                CandidateKind::Field {
+                    descriptor: Arc::clone(&field.descriptor),
+                    defining_class: Arc::clone(&class_meta.internal_name),
+                },
+                self.name(),
+            )
+            .with_detail(detail)
+            .with_score(if same_class { 60.0 } else { 55.0 }),
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push_member_method_candidate(
+        &self,
+        results: &mut Vec<CompletionCandidate>,
+        index: &IndexView,
+        class_meta: &crate::index::ClassMetadata,
+        method: &crate::index::MethodSummary,
+        resolver: &ContextualResolver<'_>,
+        filter: &AccessFilter,
+        prefix_lower: Option<&str>,
+        seen_methods: &mut std::collections::HashSet<(Arc<str>, Arc<str>)>,
+        class_internal: &str,
+        class_internal_for_substitution: &str,
+        has_paren_after_cursor: bool,
+        flow_receiver_cast_plan: Option<&FlowReceiverCastPlan>,
+        trace_arraylist: bool,
+        receiver_expr: &str,
+        member_prefix: &str,
+        base_class_internal: &str,
+    ) {
+        if method.name.as_ref() == "<init>" || method.name.as_ref() == "<clinit>" {
+            return;
+        }
+        let key = (Arc::clone(&method.name), Arc::clone(&method.desc()));
+        if !seen_methods.insert(key) {
+            return;
+        }
+        if !filter.is_method_accessible(method.access_flags, method.is_synthetic) {
+            return;
+        }
+        if !name_matches_member_prefix(method.name.as_ref(), prefix_lower) {
+            return;
+        }
+
+        let trace_add = trace_arraylist
+            && method.name.as_ref() == "add"
+            && tracing::enabled!(tracing::Level::DEBUG);
+        if trace_add {
+            tracing::debug!(
+                receiver_expr,
+                member_prefix,
+                class_internal,
+                base_class_internal,
+                class_meta_internal = %class_meta.internal_name,
+                class_meta_origin = ?class_meta.origin,
+                class_meta_generic_signature = ?class_meta.generic_signature,
+                method_name = %method.name,
+                method_desc = %method.desc(),
+                method_generic_signature = ?method.generic_signature,
+                method_return_type = ?method.return_type,
+                param_descriptors = ?method.params.items.iter().map(|p| p.descriptor.as_ref()).collect::<Vec<_>>(),
+                param_names = ?method.params.items.iter().map(|p| p.name.as_ref()).collect::<Vec<_>>(),
+                "member_provider: add overload candidate before detail rendering"
+            );
+        }
+
+        if method.access_flags & ACC_STATIC != 0 {
+            return;
+        }
+
+        let mut candidate = CompletionCandidate::new(
+            Arc::clone(&method.name),
+            method.name.to_string(),
+            CandidateKind::Method {
+                descriptor: method.desc(),
+                defining_class: Arc::from(class_internal),
+            },
+            self.name(),
+        )
+        .with_callable_insert(
+            method.name.as_ref(),
+            &method.params.param_names(),
+            has_paren_after_cursor,
+        )
+        .with_detail({
+            let detail = render::method_detail(
+                class_internal_for_substitution,
+                class_meta,
+                method,
+                resolver,
+            );
+            if trace_add {
+                tracing::debug!(
+                    method_name = %method.name,
+                    method_desc = %method.desc(),
+                    detail,
+                    "member_provider: add overload candidate after detail rendering"
+                );
+            }
+            detail
+        });
+
+        if let Some(plan) = flow_receiver_cast_plan
+            && needs_cast_for_method(
+                index,
+                &plan.declared_type,
+                method.name.as_ref(),
+                method.desc().as_ref(),
+            )
+        {
+            candidate = candidate.with_member_access_cast_rewrite(
+                plan.receiver_expr.clone(),
+                plan.cast_type.clone(),
+            );
+        }
+
+        results.push(candidate);
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn push_member_field_candidate(
+        &self,
+        results: &mut Vec<CompletionCandidate>,
+        index: &IndexView,
+        class_meta: &crate::index::ClassMetadata,
+        field: &crate::index::FieldSummary,
+        resolver: &ContextualResolver<'_>,
+        filter: &AccessFilter,
+        prefix_lower: Option<&str>,
+        seen_fields: &mut std::collections::HashSet<Arc<str>>,
+        class_internal: &str,
+        class_internal_for_substitution: &str,
+        flow_receiver_cast_plan: Option<&FlowReceiverCastPlan>,
+    ) {
+        if !seen_fields.insert(Arc::clone(&field.name)) {
+            return;
+        }
+        if !filter.is_field_accessible(field.access_flags, field.is_synthetic) {
+            return;
+        }
+        if !name_matches_member_prefix(field.name.as_ref(), prefix_lower) {
+            return;
+        }
+        if field.access_flags & ACC_STATIC != 0 {
+            return;
+        }
+
+        let mut candidate = CompletionCandidate::new(
+            Arc::clone(&field.name),
+            field.name.to_string(),
+            CandidateKind::Field {
+                descriptor: Arc::clone(&field.descriptor),
+                defining_class: Arc::from(class_internal),
+            },
+            self.name(),
+        )
+        .with_detail(render::field_detail(
+            class_internal_for_substitution,
+            class_meta,
+            field,
+            resolver,
+        ));
+
+        if let Some(plan) = flow_receiver_cast_plan
+            && needs_cast_for_field(
+                index,
+                &plan.declared_type,
+                field.name.as_ref(),
+                field.descriptor.as_ref(),
+            )
+        {
+            candidate = candidate.with_member_access_cast_rewrite(
+                plan.receiver_expr.clone(),
+                plan.cast_type.clone(),
+            );
+        }
+
+        results.push(candidate);
+    }
+
     fn provide_from_source_members(
         &self,
         ctx: &SemanticContext,
@@ -606,6 +705,10 @@ impl MemberProvider {
             })
             .collect()
     }
+}
+
+fn inherited_member_detail(class_meta: &crate::index::ClassMetadata) -> String {
+    format!("inherited from {}", class_meta.name)
 }
 
 /// Parses the receiver expression into an inner class name
@@ -1958,5 +2061,135 @@ mod tests {
             .collect();
         assert!(labels.contains(&"x"), "labels={labels:?}");
         assert!(labels.contains(&"y"), "labels={labels:?}");
+    }
+
+    #[test]
+    fn test_enum_constants_do_not_leak_into_instance_member_completion() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(crate::language::java::class_parser::parse_java_source(
+            "enum Color { RED, GREEN }",
+            ClassOrigin::Unknown,
+            None,
+        ));
+
+        let ctx = ctx_with_type("Color", "");
+        let labels: Vec<String> = MemberProvider
+            .provide(root_scope(), &ctx, &idx.view(root_scope()))
+            .into_iter()
+            .map(|candidate| candidate.label.to_string())
+            .collect();
+
+        assert!(
+            !labels
+                .iter()
+                .any(|label| label == "RED" || label == "GREEN"),
+            "enum constants are static and must not appear in instance member completion: {labels:?}"
+        );
+    }
+
+    #[test]
+    fn test_this_branch_deduplicates_source_and_index_members() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![ClassMetadata {
+            package: Some(Arc::from("org/cubewhy")),
+            name: Arc::from("Main"),
+            internal_name: Arc::from("org/cubewhy/Main"),
+            super_name: None,
+            interfaces: vec![],
+            annotations: vec![],
+            methods: vec![make_method("work", "()V", ACC_PUBLIC, false)],
+            fields: vec![make_field("value", "I", ACC_PUBLIC, false)],
+            access_flags: ACC_PUBLIC,
+            generic_signature: None,
+            inner_class_of: None,
+            origin: ClassOrigin::Unknown,
+        }]);
+
+        let ctx = ctx_this("Main", "org/cubewhy/Main", "org/cubewhy", "").with_class_members(vec![
+            m("work", ACC_PUBLIC, false),
+            f("value", ACC_PUBLIC, false),
+        ]);
+
+        let results = MemberProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
+        assert_eq!(
+            results
+                .iter()
+                .filter(|candidate| candidate.label.as_ref() == "work")
+                .count(),
+            1
+        );
+        assert_eq!(
+            results
+                .iter()
+                .filter(|candidate| candidate.label.as_ref() == "value")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn test_inherited_duplicates_are_suppressed_for_member_completion() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("Base"),
+                internal_name: Arc::from("org/cubewhy/Base"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![make_method("work", "()V", ACC_PUBLIC, false)],
+                fields: vec![make_field("value", "I", ACC_PUBLIC, false)],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/cubewhy")),
+                name: Arc::from("Child"),
+                internal_name: Arc::from("org/cubewhy/Child"),
+                super_name: Some(Arc::from("org/cubewhy/Base")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![make_method("work", "()V", ACC_PUBLIC, false)],
+                fields: vec![make_field("value", "I", ACC_PUBLIC, false)],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("Object"),
+                internal_name: Arc::from("java/lang/Object"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+
+        let ctx = ctx_with_type("org/cubewhy/Child", "");
+        let results = MemberProvider.provide(root_scope(), &ctx, &idx.view(root_scope()));
+        assert_eq!(
+            results
+                .iter()
+                .filter(|candidate| candidate.label.as_ref() == "work")
+                .count(),
+            1
+        );
+        assert_eq!(
+            results
+                .iter()
+                .filter(|candidate| candidate.label.as_ref() == "value")
+                .count(),
+            1
+        );
     }
 }
