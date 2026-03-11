@@ -1383,7 +1383,7 @@ mod tests {
             interfaces: vec![],
             annotations: vec![],
             methods: vec![
-                make_method("pri", "()V", ACC_PRIVATE | ACC_STATIC, false),
+                make_method("pri", "()V", ACC_PRIVATE, false),
                 make_method("func", "()V", ACC_PUBLIC, false),
             ],
             fields: vec![make_field("secret", "I", ACC_PRIVATE, false)],

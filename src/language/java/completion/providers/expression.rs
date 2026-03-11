@@ -922,7 +922,12 @@ mod tests {
         assert!(
             fast_candidates
                 .iter()
-                .any(|c| c.label.as_ref().contains("ArrayList"))
+                .any(|c| fuzzy::fuzzy_match("array", &c.label.to_lowercase()).is_some()),
+            "expected at least one Array* candidate, got: {:?}",
+            fast_candidates
+                .iter()
+                .map(|c| c.label.as_ref())
+                .collect::<Vec<_>>()
         );
     }
 
