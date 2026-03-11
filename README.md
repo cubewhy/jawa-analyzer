@@ -8,6 +8,9 @@ Extreme fast Java LSP, built in Rust
 - Code completion
 - Symbols List (Outline)
 - Goto definition
+- Inlay hints
+  - Inferred type on `var`
+  - Parameter names
 - Decompiler support (Vineflower, cfr)
 - Treesitter based syntax highlight (semantic_tokens handler)
 - Java 8 to 25 support
