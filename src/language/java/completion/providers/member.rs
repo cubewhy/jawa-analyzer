@@ -112,18 +112,15 @@ impl CompletionProvider for MemberProvider {
                         ) {
                             continue;
                         }
-                        use rust_asm::constants::ACC_STATIC;
+
                         let is_static = method.access_flags & ACC_STATIC != 0;
-                        let kind = if is_static {
-                            CandidateKind::StaticMethod {
-                                descriptor: method.desc(),
-                                defining_class: Arc::clone(&class_meta.internal_name),
-                            }
-                        } else {
-                            CandidateKind::Method {
-                                descriptor: method.desc(),
-                                defining_class: Arc::clone(&class_meta.internal_name),
-                            }
+                        if is_static {
+                            continue;
+                        }
+
+                        let kind = CandidateKind::Method {
+                            descriptor: method.desc(),
+                            defining_class: Arc::clone(&class_meta.internal_name),
                         };
                         let detail = if i == 0 {
                             render::method_detail(
@@ -174,16 +171,13 @@ impl CompletionProvider for MemberProvider {
                         }
 
                         let is_static = field.access_flags & ACC_STATIC != 0;
-                        let kind = if is_static {
-                            CandidateKind::StaticField {
-                                descriptor: Arc::clone(&field.descriptor),
-                                defining_class: Arc::clone(&class_meta.internal_name),
-                            }
-                        } else {
-                            CandidateKind::Field {
-                                descriptor: Arc::clone(&field.descriptor),
-                                defining_class: Arc::clone(&class_meta.internal_name),
-                            }
+                        if is_static {
+                            continue;
+                        }
+
+                        let kind = CandidateKind::Field {
+                            descriptor: Arc::clone(&field.descriptor),
+                            defining_class: Arc::clone(&class_meta.internal_name),
                         };
                         let detail = if i == 0 {
                             render::field_detail(
@@ -339,16 +333,12 @@ impl CompletionProvider for MemberProvider {
                     );
                 }
                 let is_static = method.access_flags & ACC_STATIC != 0;
-                let kind = if is_static {
-                    CandidateKind::StaticMethod {
-                        descriptor: method.desc(),
-                        defining_class: Arc::from(class_internal.as_str()),
-                    }
-                } else {
-                    CandidateKind::Method {
-                        descriptor: method.desc(),
-                        defining_class: Arc::from(class_internal.as_str()),
-                    }
+                if is_static {
+                    continue;
+                }
+                let kind = CandidateKind::Method {
+                    descriptor: method.desc(),
+                    defining_class: Arc::from(class_internal.as_str()),
                 };
                 let mut candidate = CompletionCandidate::new(
                     Arc::clone(&method.name),
@@ -406,16 +396,13 @@ impl CompletionProvider for MemberProvider {
                     continue;
                 }
                 let is_static = field.access_flags & ACC_STATIC != 0;
-                let kind = if is_static {
-                    CandidateKind::StaticField {
-                        descriptor: Arc::clone(&field.descriptor),
-                        defining_class: Arc::from(class_internal.as_str()),
-                    }
-                } else {
-                    CandidateKind::Field {
-                        descriptor: Arc::clone(&field.descriptor),
-                        defining_class: Arc::from(class_internal.as_str()),
-                    }
+                if is_static {
+                    continue;
+                }
+
+                let kind = CandidateKind::Field {
+                    descriptor: Arc::clone(&field.descriptor),
+                    defining_class: Arc::from(class_internal.as_str()),
                 };
                 let mut candidate = CompletionCandidate::new(
                     Arc::clone(&field.name),
