@@ -30,7 +30,3 @@ pub struct DetectedBuildTool {
     pub root: PathBuf,
     pub watch_interest: BuildWatchInterest,
 }
-
-pub trait BuildToolDetector: Send + Sync {
-    fn detect(&self, root: &Path) -> Option<DetectedBuildTool>;
-}

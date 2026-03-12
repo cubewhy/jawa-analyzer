@@ -4,14 +4,10 @@ pub mod model;
 pub mod progress;
 pub mod reload;
 pub mod status;
+pub mod tool;
 
-pub use detection::{
-    BuildToolDetector, BuildWatchInterest, DetectedBuildTool, DetectedBuildToolKind,
-};
-pub use gradle::{
-    GradleImportRequest, GradleImporter, GradleVersion, GradleVersionProbe,
-    GradleWorkspaceNormalizer,
-};
+pub use detection::{BuildWatchInterest, DetectedBuildTool, DetectedBuildToolKind};
+pub use gradle::{GradleIntegration, GradleVersion};
 pub use model::{
     JavaPackageInference, JavaToolchainInfo, ModelFidelity, ModelFreshness, SourceRootId,
     WorkspaceModelProvenance, WorkspaceModelSnapshot, WorkspaceModule, WorkspaceRoot,
@@ -19,3 +15,7 @@ pub use model::{
 };
 pub use reload::{BuildIntegrationService, ReloadReason};
 pub use status::{BuildCapability, BuildIntegrationStatus, BuildReloadState};
+pub use tool::{
+    BuildToolImportRequest, BuildToolIntegration, BuildToolLabels, BuildToolRegistry,
+    ResolvedBuildTool,
+};

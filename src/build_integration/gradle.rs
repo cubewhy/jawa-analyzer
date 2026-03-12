@@ -13,13 +13,13 @@ use tokio::process::Command;
 
 use crate::index::{ClasspathId, ModuleId};
 
-use super::detection::{
-    BuildToolDetector, BuildWatchInterest, DetectedBuildTool, DetectedBuildToolKind,
-};
+use super::detection::{BuildWatchInterest, DetectedBuildTool, DetectedBuildToolKind};
 use super::model::{
     JavaToolchainInfo, ModelFidelity, ModelFreshness, SourceRootId, WorkspaceModelProvenance,
     WorkspaceModelSnapshot, WorkspaceModule, WorkspaceRoot, WorkspaceRootKind, WorkspaceSourceRoot,
 };
+use super::progress::ImportProgress;
+use super::tool::{BuildToolImportRequest, BuildToolIntegration, BuildToolLabels};
 
 const GRADLE_MODEL_BEGIN: &str = "JAVA_ANALYZER_MODEL_BEGIN";
 const GRADLE_MODEL_END: &str = "JAVA_ANALYZER_MODEL_END";
@@ -152,7 +152,20 @@ impl GradleVersionProbe {
 #[derive(Debug, Clone)]
 pub struct GradleDetector;
 
-impl BuildToolDetector for GradleDetector {
+impl GradleDetector {
+    fn watch_interest(&self) -> BuildWatchInterest {
+        BuildWatchInterest {
+            file_names: vec![
+                "build.gradle",
+                "build.gradle.kts",
+                "settings.gradle",
+                "settings.gradle.kts",
+                "gradle.properties",
+                "libs.versions.toml",
+            ],
+        }
+    }
+
     fn detect(&self, root: &Path) -> Option<DetectedBuildTool> {
         let markers = [
             "settings.gradle",
@@ -164,16 +177,7 @@ impl BuildToolDetector for GradleDetector {
             Some(DetectedBuildTool {
                 kind: DetectedBuildToolKind::Gradle,
                 root: root.to_path_buf(),
-                watch_interest: BuildWatchInterest {
-                    file_names: vec![
-                        "build.gradle",
-                        "build.gradle.kts",
-                        "settings.gradle",
-                        "settings.gradle.kts",
-                        "gradle.properties",
-                        "libs.versions.toml",
-                    ],
-                },
+                watch_interest: self.watch_interest(),
             })
         } else {
             None
@@ -439,6 +443,94 @@ impl GradleWorkspaceNormalizer {
             freshness: ModelFreshness::Fresh,
             fidelity,
         })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct GradleIntegration {
+    detector: GradleDetector,
+    version_probe: GradleVersionProbe,
+    importer: GradleImporter,
+    normalizer: GradleWorkspaceNormalizer,
+}
+
+impl Default for GradleIntegration {
+    fn default() -> Self {
+        Self {
+            detector: GradleDetector,
+            version_probe: GradleVersionProbe,
+            importer: GradleImporter,
+            normalizer: GradleWorkspaceNormalizer,
+        }
+    }
+}
+
+#[async_trait]
+impl BuildToolIntegration for GradleIntegration {
+    fn detect(&self, root: &Path) -> Option<DetectedBuildTool> {
+        self.detector.detect(root)
+    }
+
+    fn watch_interest(&self) -> BuildWatchInterest {
+        self.detector.watch_interest()
+    }
+
+    fn labels(&self) -> BuildToolLabels {
+        BuildToolLabels {
+            importing_workspace: "Importing Gradle workspace",
+        }
+    }
+
+    async fn import_workspace(
+        &self,
+        request: BuildToolImportRequest,
+    ) -> Result<WorkspaceModelSnapshot> {
+        let labels = self.labels();
+        let progress = ImportProgress::begin(
+            request.client.clone(),
+            format!("java-analyzer/build-import/{}", request.generation),
+            labels.importing_workspace,
+            "Detecting build state",
+        )
+        .await?;
+
+        let outcome = async {
+            progress.report("Probing Gradle version").await;
+            let version = self
+                .version_probe
+                .probe(&request.root, request.java_home.as_deref())
+                .await?;
+            let strategy = GradleExportStrategy::select(&version)
+                .context(format!("Gradle {} is not supported", version.raw))?;
+            progress
+                .report(&format!(
+                    "Running Gradle import with Gradle {} ({})",
+                    version.raw,
+                    strategy.kind.as_str()
+                ))
+                .await;
+            let imported = self
+                .importer
+                .import_workspace(GradleImportRequest {
+                    root: request.root,
+                    generation: request.generation,
+                    version,
+                    strategy,
+                    java_home: request.java_home,
+                })
+                .await?;
+            progress.report("Normalizing workspace model").await;
+            self.normalizer.normalize(imported, request.generation)
+        }
+        .await;
+
+        if outcome.is_ok() {
+            progress.finish("Gradle import complete").await;
+        } else {
+            progress.finish("Gradle import failed").await;
+        }
+
+        outcome
     }
 }
 
