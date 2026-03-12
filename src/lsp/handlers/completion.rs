@@ -62,16 +62,6 @@ pub async fn handle_completion(
         visible_classpath_len = visible_classpath.len(),
         "completion using analysis context"
     );
-    tracing::info!(
-        uri = %uri,
-        module = scope.module.0,
-        classpath = ?analysis.classpath,
-        visible_classpath = ?visible_classpath
-            .iter()
-            .map(|jar| jar.as_ref().to_string())
-            .collect::<Vec<_>>(),
-        "completion analysis classpath dump"
-    );
 
     let env = ParseEnv {
         name_table: Some(view.build_name_table()),
