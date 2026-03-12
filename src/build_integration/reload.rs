@@ -41,7 +41,12 @@ pub struct BuildIntegrationService {
 }
 
 impl BuildIntegrationService {
-    pub fn new(root: PathBuf, workspace: Arc<Workspace>, client: Client) -> Self {
+    pub fn new(
+        root: PathBuf,
+        workspace: Arc<Workspace>,
+        client: Client,
+        java_home: Option<PathBuf>,
+    ) -> Self {
         let (tx, rx) = mpsc::unbounded_channel();
         let status = Arc::new(RwLock::new(BuildIntegrationStatus::default()));
         let watch_interest = Arc::new(RwLock::new(None));
@@ -50,6 +55,7 @@ impl BuildIntegrationService {
             root.clone(),
             workspace,
             client,
+            java_home,
             rx,
             Arc::clone(&status),
             Arc::clone(&watch_interest),
@@ -96,6 +102,7 @@ async fn run_reload_loop(
     root: PathBuf,
     workspace: Arc<Workspace>,
     client: Client,
+    java_home: Option<PathBuf>,
     mut rx: mpsc::UnboundedReceiver<ReloadCommand>,
     status: Arc<RwLock<BuildIntegrationStatus>>,
     watch_interest: Arc<RwLock<Option<BuildWatchInterest>>>,
@@ -174,6 +181,7 @@ async fn run_reload_loop(
                 let version_probe = Arc::clone(&version_probe);
                 let normalizer = Arc::clone(&normalizer);
                 let root = root.clone();
+                let java_home = java_home.clone();
                 let progress_client = client.clone();
                 let status_for_task = Arc::clone(&status);
 
@@ -200,7 +208,7 @@ async fn run_reload_loop(
                     .await?;
                     let outcome = async {
                         progress.report("Probing Gradle version").await;
-                        let version = version_probe.probe(&root).await?;
+                        let version = version_probe.probe(&root, java_home.as_deref()).await?;
                         {
                             let mut guard = status_for_task.write().await;
                             guard.tool_version = Some(version.raw.clone());
@@ -219,6 +227,7 @@ async fn run_reload_loop(
                                 generation,
                                 version,
                                 strategy,
+                                java_home,
                             })
                             .await?;
                         progress.report("Normalizing workspace model").await;

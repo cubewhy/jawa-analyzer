@@ -99,22 +99,29 @@ impl GradleExportStrategy {
 pub struct GradleVersionProbe;
 
 impl GradleVersionProbe {
-    pub async fn probe(&self, root: &Path) -> Result<GradleVersion> {
+    pub async fn probe(&self, root: &Path, java_home: Option<&Path>) -> Result<GradleVersion> {
         let executable = gradle_executable(root);
-        let output = Command::new(&executable)
+        tracing::debug!(
+            workspace = %root.display(),
+            executable = %executable.to_string_lossy(),
+            configured_java_home = java_home.map(|path| path.display().to_string()),
+            java_home_injected = java_home.is_some(),
+            "launching Gradle version probe"
+        );
+        let mut command = Command::new(&executable);
+        command
             .current_dir(root)
             .arg("--version")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to execute Gradle version probe via {}",
-                    executable.to_string_lossy()
-                )
-            })?;
+            .stderr(Stdio::piped());
+        configure_gradle_java_env(&mut command, java_home)?;
+        let output = command.output().await.with_context(|| {
+            format!(
+                "failed to execute Gradle version probe via {}",
+                executable.to_string_lossy()
+            )
+        })?;
 
         if !output.status.success() {
             bail!(
@@ -180,6 +187,7 @@ pub struct GradleImportRequest {
     pub generation: u64,
     pub version: GradleVersion,
     pub strategy: GradleExportStrategy,
+    pub java_home: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -213,10 +221,13 @@ impl WorkspaceImporter for GradleImporter {
             gradle_version = %request.version.raw,
             strategy = %request.strategy.kind.as_str(),
             script_path = %script_file.path().display(),
+            configured_java_home = request.java_home.as_ref().map(|path| path.display().to_string()),
+            java_home_injected = request.java_home.is_some(),
             "running Gradle workspace import"
         );
 
-        let output = Command::new(&executable)
+        let mut command = Command::new(&executable);
+        command
             .current_dir(&request.root)
             .env(
                 "JAVA_ANALYZER_GRADLE_DEBUG",
@@ -234,15 +245,14 @@ impl WorkspaceImporter for GradleImporter {
             .arg("javaAnalyzerExportModel")
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to execute Gradle importer via {}",
-                    executable.to_string_lossy()
-                )
-            })?;
+            .stderr(Stdio::piped());
+        configure_gradle_java_env(&mut command, request.java_home.as_deref())?;
+        let output = command.output().await.with_context(|| {
+            format!(
+                "failed to execute Gradle importer via {}",
+                executable.to_string_lossy()
+            )
+        })?;
 
         if !output.status.success() {
             bail!(
@@ -459,6 +469,29 @@ fn gradle_executable(root: &Path) -> OsString {
     }
 }
 
+fn configure_gradle_java_env(command: &mut Command, java_home: Option<&Path>) -> Result<()> {
+    let Some(java_home) = java_home else {
+        return Ok(());
+    };
+
+    command.env("JAVA_HOME", java_home);
+    command.env("PATH", prepend_java_bin_to_path(java_home)?);
+
+    Ok(())
+}
+
+fn prepend_java_bin_to_path(java_home: &Path) -> Result<OsString> {
+    let jdk_bin = java_home.join("bin");
+    let existing_path = std::env::var_os("PATH");
+    let path_entries = std::iter::once(jdk_bin).chain(
+        existing_path
+            .as_deref()
+            .into_iter()
+            .flat_map(std::env::split_paths),
+    );
+    std::env::join_paths(path_entries).context("failed to construct PATH for Gradle process")
+}
+
 fn extract_model_json(stdout: &str) -> Result<String> {
     let Some(begin) = stdout.find(GRADLE_MODEL_BEGIN) else {
         bail!("Gradle importer did not emit model start marker");
@@ -570,5 +603,15 @@ mod tests {
     fn selects_legacy_strategy_for_old_gradle() {
         let strategy = GradleExportStrategy::select(&GradleVersion::parse("4.14.1")).unwrap();
         assert_eq!(strategy.kind, GradleExportStrategyKind::Legacy);
+    }
+
+    #[test]
+    fn configures_gradle_java_env_with_java_home_and_path() {
+        let java_home = Path::new("/tmp/test-jdk");
+        let merged_path = prepend_java_bin_to_path(java_home).unwrap();
+        assert_eq!(
+            std::env::split_paths(&merged_path).next(),
+            Some(java_home.join("bin"))
+        );
     }
 }

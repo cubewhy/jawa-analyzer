@@ -54,8 +54,9 @@ impl Backend {
         let client = self.client.clone();
 
         let config = self.config.read().await;
+        let jdk_path = config.jdk_path.clone();
 
-        if let Some(jdk_path) = config.jdk_path.clone() {
+        if let Some(jdk_path) = jdk_path.clone() {
             // JDK
             with_progress(
                 &client,
@@ -91,7 +92,8 @@ impl Backend {
         drop(config);
 
         // build tools
-        let service = BuildIntegrationService::new(root, Arc::clone(&workspace), client.clone());
+        let service =
+            BuildIntegrationService::new(root, Arc::clone(&workspace), client.clone(), jdk_path);
         service.schedule_reload(ReloadReason::Initialize);
         self.build_services.write().await.push(service);
     }
