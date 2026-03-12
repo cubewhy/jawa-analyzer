@@ -21,7 +21,7 @@ Extreme fast Java LSP, built in Rust
 - Is this a real LSP?
   YES
 - Is this production ready?
-  Not yet. The LSP doesn't support any build tools yet.
+  Probably yes, but not everything in JLS implemented perfectly yet.
 
 ## License
 
