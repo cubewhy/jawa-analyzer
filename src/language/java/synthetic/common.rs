@@ -4,12 +4,17 @@ use tree_sitter::Node;
 use crate::{
     index::{FieldSummary, MethodSummary},
     language::java::{
-        JavaContextExtractor, members::extract_class_members_from_body, type_ctx::SourceTypeCtx,
+        JavaContextExtractor,
+        members::extract_class_members_from_body,
+        synthetic::rules::{enum_rule, record_rule},
+        type_ctx::SourceTypeCtx,
     },
     semantic::context::CurrentClassMember,
 };
 
-use super::{enum_rule::EnumRule, record_rule::RecordRule};
+use super::rules::{enum_rule::EnumRule, record_rule::RecordRule};
+
+const SYNTHETIC_RULES: [&dyn SyntheticMemberRule; 2] = [&RecordRule, &EnumRule];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyntheticOrigin {
@@ -71,8 +76,7 @@ pub fn synthesize_for_type(
         type_ctx,
     };
     let mut out = SyntheticMemberSet::default();
-    let rules: [&dyn SyntheticMemberRule; 2] = [&RecordRule, &EnumRule];
-    for rule in rules {
+    for rule in SYNTHETIC_RULES {
         rule.synthesize(&input, &mut out, explicit_methods, explicit_fields);
     }
     out
@@ -172,14 +176,12 @@ pub fn resolve_synthetic_definition<'a>(
         }
         match definition.origin {
             SyntheticOrigin::RecordComponentAccessor { component_name } => {
-                super::record_rule::find_record_component_node(ctx, decl, component_name.as_ref())
+                record_rule::find_record_component_node(ctx, decl, component_name.as_ref())
             }
-            SyntheticOrigin::RecordCanonicalConstructor => {
-                super::record_rule::record_parameter_node(decl)
-                    .or_else(|| decl.child_by_field_name("name"))
-            }
+            SyntheticOrigin::RecordCanonicalConstructor => record_rule::record_parameter_node(decl)
+                .or_else(|| decl.child_by_field_name("name")),
             SyntheticOrigin::EnumConstant { constant_name } => {
-                super::enum_rule::find_enum_constant_node(ctx, decl, constant_name.as_ref())
+                enum_rule::find_enum_constant_node(ctx, decl, constant_name.as_ref())
             }
         }
     })

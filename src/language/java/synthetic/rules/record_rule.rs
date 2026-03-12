@@ -7,7 +7,7 @@ use crate::{
     language::java::{JavaContextExtractor, type_ctx::SourceTypeCtx},
 };
 
-use super::common::{
+use super::super::common::{
     SyntheticDefinition, SyntheticDefinitionKind, SyntheticInput, SyntheticMemberRule,
     SyntheticMemberSet, SyntheticOrigin,
 };
