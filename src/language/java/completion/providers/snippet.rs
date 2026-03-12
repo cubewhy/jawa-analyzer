@@ -48,6 +48,10 @@ fn no_package_declared(ctx: &SemanticContext) -> bool {
     ctx.enclosing_package.is_none()
 }
 
+fn should_show_package_snippet(ctx: &SemanticContext) -> bool {
+    no_package_declared(ctx) && ctx.effective_package() != Some("")
+}
+
 /// All snippet rules, sorted by priority
 fn all_rules() -> &'static [SnippetRule] {
     &[
@@ -56,18 +60,11 @@ fn all_rules() -> &'static [SnippetRule] {
             aliases: &[],
             detail: "package declaration",
             score: 30.0,
-            build: |ctx| {
-                let pkg = ctx
-                    .effective_package()
-                    .map(|p| p.replace('/', "."))
-                    .unwrap_or_default();
-                if pkg.is_empty() {
-                    "package ${1:com.example};".to_string()
-                } else {
-                    format!("package {};", pkg)
-                }
+            build: |ctx| match ctx.effective_package() {
+                Some(pkg) if !pkg.is_empty() => format!("package {};", pkg.replace('/', ".")),
+                _ => "package ${1:com.example};".to_string(),
             },
-            should_show: no_package_declared,
+            should_show: should_show_package_snippet,
         },
         SnippetRule {
             label: "class",
@@ -320,6 +317,14 @@ mod tests {
             "{}",
             pkg.insert_text
         );
+    }
+
+    #[test]
+    fn test_package_snippet_hidden_for_default_package_root() {
+        let idx = WorkspaceIndex::new();
+        let c = ctx("pack", None, None, Some(""));
+        let results = SnippetProvider.provide(root_scope(), &c, &idx.view(root_scope()));
+        assert!(results.iter().all(|r| r.label.as_ref() != "package"));
     }
 
     #[test]

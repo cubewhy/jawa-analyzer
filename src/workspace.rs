@@ -53,6 +53,59 @@ impl Workspace {
             .scope()
     }
 
+    pub fn infer_java_package_for_uri(
+        &self,
+        uri: &Url,
+        source_root: Option<SourceRootId>,
+    ) -> Option<Arc<str>> {
+        let Ok(path) = uri.to_file_path() else {
+            tracing::debug!(
+                uri = %uri,
+                requested_source_root = ?source_root.map(|id| id.0),
+                fallback_used = true,
+                "java package inference skipped: URI is not a file path"
+            );
+            return None;
+        };
+
+        let Some(model) = self.model.read().clone() else {
+            tracing::debug!(
+                uri = %uri,
+                path = %path.display(),
+                requested_source_root = ?source_root.map(|id| id.0),
+                fallback_used = true,
+                "java package inference skipped: no managed workspace model"
+            );
+            return None;
+        };
+
+        match model.infer_java_package_for_file(&path, source_root) {
+            Some(inference) => {
+                tracing::debug!(
+                    uri = %uri,
+                    path = %path.display(),
+                    resolved_source_root_id = inference.source_root_id.0,
+                    resolved_source_root = %inference.source_root_path.display(),
+                    relative_dir = %inference.relative_dir.display(),
+                    inferred_package = %inference.package,
+                    fallback_used = false,
+                    "java package inference resolved from workspace source root"
+                );
+                Some(Arc::from(inference.package))
+            }
+            None => {
+                tracing::debug!(
+                    uri = %uri,
+                    path = %path.display(),
+                    requested_source_root = ?source_root.map(|id| id.0),
+                    fallback_used = true,
+                    "java package inference fell back"
+                );
+                None
+            }
+        }
+    }
+
     pub fn analysis_context_for_uri(&self, uri: &Url) -> AnalysisContext {
         let ctx = self.resolve_analysis_context_for_path(uri.to_file_path().ok().as_deref());
         tracing::debug!(
@@ -424,5 +477,49 @@ mod tests {
         assert_eq!(ctx.classpath, ClasspathId::Test);
         assert_eq!(ctx.source_root, Some(SourceRootId(12)));
         assert_eq!(ctx.root_kind, Some(WorkspaceRootKind::Tests));
+    }
+
+    #[test]
+    fn infer_java_package_for_uri_uses_managed_source_root() {
+        let workspace = Workspace::new();
+        *workspace.model.write() = Some(WorkspaceModelSnapshot {
+            generation: 1,
+            root: WorkspaceRoot {
+                path: PathBuf::from("/workspace"),
+            },
+            name: "demo".into(),
+            modules: vec![WorkspaceModule {
+                id: ModuleId(1),
+                name: "app".into(),
+                directory: PathBuf::from("/workspace/app"),
+                roots: vec![WorkspaceSourceRoot {
+                    id: SourceRootId(11),
+                    path: PathBuf::from("/workspace/app/src/main/java"),
+                    kind: WorkspaceRootKind::Sources,
+                    classpath: ClasspathId::Main,
+                }],
+                compile_classpath: vec![],
+                test_classpath: vec![],
+                dependency_modules: vec![],
+                java: JavaToolchainInfo {
+                    language_version: None,
+                },
+            }],
+            provenance: WorkspaceModelProvenance {
+                tool: DetectedBuildToolKind::Gradle,
+                tool_version: Some("9.2.0".into()),
+                imported_at: SystemTime::UNIX_EPOCH,
+            },
+            freshness: ModelFreshness::Fresh,
+            fidelity: ModelFidelity::Full,
+        });
+
+        let uri = Url::parse("file:///workspace/app/src/main/java/org/example/foo/Bar.java")
+            .expect("valid uri");
+        let inferred = workspace
+            .infer_java_package_for_uri(&uri, Some(SourceRootId(11)))
+            .expect("package");
+
+        assert_eq!(inferred.as_ref(), "org.example.foo");
     }
 }

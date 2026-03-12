@@ -13,8 +13,9 @@ pub use gradle::{
     GradleWorkspaceNormalizer,
 };
 pub use model::{
-    JavaToolchainInfo, ModelFidelity, ModelFreshness, SourceRootId, WorkspaceModelProvenance,
-    WorkspaceModelSnapshot, WorkspaceModule, WorkspaceRoot, WorkspaceRootKind, WorkspaceSourceRoot,
+    JavaPackageInference, JavaToolchainInfo, ModelFidelity, ModelFreshness, SourceRootId,
+    WorkspaceModelProvenance, WorkspaceModelSnapshot, WorkspaceModule, WorkspaceRoot,
+    WorkspaceRootKind, WorkspaceSourceRoot,
 };
 pub use reload::{BuildIntegrationService, ReloadReason};
 pub use status::{BuildCapability, BuildIntegrationStatus, BuildReloadState};

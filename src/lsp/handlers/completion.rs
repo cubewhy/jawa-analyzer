@@ -47,6 +47,7 @@ pub async fn handle_completion(
     })?;
 
     let analysis = workspace.analysis_context_for_uri(uri);
+    let inferred_package = workspace.infer_java_package_for_uri(uri, analysis.source_root);
     let scope = analysis.scope();
     let index = workspace.index.read().await;
     let view =
@@ -93,6 +94,11 @@ pub async fn handle_completion(
 
         Some((ctx, doc.text.clone()))
     })??;
+    let ctx = if let Some(pkg) = inferred_package {
+        ctx.with_inferred_package(pkg)
+    } else {
+        ctx
+    };
 
     tracing::debug!(location = ?ctx.location, query = %ctx.query, "parsed context");
 
