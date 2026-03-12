@@ -14,6 +14,7 @@ Extreme fast Java LSP, built in Rust
 - Decompiler support (Vineflower, cfr)
 - Treesitter based syntax highlight (semantic_tokens handler)
 - Java 8 to 25 support
+- Gradle 4.0 to 9.x support
 
 ## FAQ
 
