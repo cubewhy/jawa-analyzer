@@ -23,6 +23,15 @@ impl From<Vec<CompletionCandidate>> for ProviderCompletionResult {
     }
 }
 
+impl ProviderCompletionResult {
+    pub fn incomplete(self) -> Self {
+        Self {
+            candidates: self.candidates,
+            is_incomplete: true,
+        }
+    }
+}
+
 pub trait CompletionProvider: Send + Sync {
     fn name(&self) -> &'static str;
 
