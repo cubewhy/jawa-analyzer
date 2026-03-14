@@ -136,6 +136,15 @@ fn determine_location_impl(
                     return r;
                 }
             }
+            "dimensions" => {
+                // Inside `[` and `]` of array creation -> Expression
+                return (
+                    CursorLocation::Expression {
+                        prefix: String::new(),
+                    },
+                    String::new(),
+                );
+            }
             "ERROR" => {
                 return error::handle_error(ctx, current, node, trigger_char);
             }
