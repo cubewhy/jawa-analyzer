@@ -11,6 +11,7 @@ use std::sync::{Arc, OnceLock};
 use serde::{Deserialize, Serialize};
 use zip::ZipArchive;
 
+use crate::jvm::constant_pool::{cp_utf8, cp_utf8_desc_to_internal, parse_const_value};
 use crate::jvm::descriptor::consume_one_descriptor_type;
 use crate::semantic::types::{SymbolProvider, parse_return_type_from_descriptor};
 
@@ -44,6 +45,7 @@ pub struct ClassMetadata {
     pub methods: Vec<MethodSummary>,
     pub fields: Vec<FieldSummary>,
     pub access_flags: u16,
+    /// The Signature attribute
     pub generic_signature: Option<Arc<str>>,
     pub inner_class_of: Option<Arc<str>>,
     pub origin: ClassOrigin,
@@ -291,6 +293,7 @@ pub struct MethodSummary {
     pub annotations: Vec<AnnotationSummary>,
     pub access_flags: u16,
     pub is_synthetic: bool,
+    /// The Signature attribute
     pub generic_signature: Option<Arc<str>>,
     /// Method return type (Jvm internal name), None if the return type is void (V)
     pub return_type: Option<Arc<str>>,
@@ -333,6 +336,7 @@ pub struct FieldSummary {
     /// Field-level annotations
     pub annotations: Vec<AnnotationSummary>,
     pub is_synthetic: bool,
+    /// The Signature attribute
     pub generic_signature: Option<Arc<str>>,
 }
 
@@ -417,85 +421,6 @@ fn parse_element_value(
             AnnotationValue::Array(items.iter().map(|i| parse_element_value(i, cp)).collect())
         }
     }
-}
-
-fn parse_const_value(tag: u8, idx: u16, cp: &[CpInfo]) -> AnnotationValue {
-    match tag {
-        b'B' => cp_int(cp, idx)
-            .map(|v| AnnotationValue::Byte(v as i8))
-            .unwrap_or(AnnotationValue::Unknown),
-        b'C' => cp_int(cp, idx)
-            .map(|v| AnnotationValue::Char(v as u16))
-            .unwrap_or(AnnotationValue::Unknown),
-        b'D' => cp_double(cp, idx)
-            .map(AnnotationValue::Double)
-            .unwrap_or(AnnotationValue::Unknown),
-        b'F' => cp_float(cp, idx)
-            .map(AnnotationValue::Float)
-            .unwrap_or(AnnotationValue::Unknown),
-        b'I' => cp_int(cp, idx)
-            .map(AnnotationValue::Int)
-            .unwrap_or(AnnotationValue::Unknown),
-        b'J' => cp_long(cp, idx)
-            .map(AnnotationValue::Long)
-            .unwrap_or(AnnotationValue::Unknown),
-        b'S' => cp_int(cp, idx)
-            .map(|v| AnnotationValue::Short(v as i16))
-            .unwrap_or(AnnotationValue::Unknown),
-        b'Z' => cp_int(cp, idx)
-            .map(|v| AnnotationValue::Boolean(v != 0))
-            .unwrap_or(AnnotationValue::Unknown),
-        b's' => cp_utf8(cp, idx)
-            .map(|s| AnnotationValue::String(Arc::from(s)))
-            .unwrap_or(AnnotationValue::Unknown),
-        _ => AnnotationValue::Unknown,
-    }
-}
-
-fn cp_utf8(cp: &[CpInfo], idx: u16) -> Option<&str> {
-    match cp.get(idx as usize)? {
-        CpInfo::Utf8(s) => Some(s.as_str()),
-        _ => None,
-    }
-}
-
-fn cp_int(cp: &[CpInfo], idx: u16) -> Option<i32> {
-    match cp.get(idx as usize)? {
-        CpInfo::Integer(v) => Some(*v),
-        _ => None,
-    }
-}
-
-fn cp_long(cp: &[CpInfo], idx: u16) -> Option<i64> {
-    match cp.get(idx as usize)? {
-        CpInfo::Long(v) => Some(*v),
-        _ => None,
-    }
-}
-
-fn cp_float(cp: &[CpInfo], idx: u16) -> Option<f32> {
-    match cp.get(idx as usize)? {
-        CpInfo::Float(v) => Some(*v),
-        _ => None,
-    }
-}
-
-fn cp_double(cp: &[CpInfo], idx: u16) -> Option<f64> {
-    match cp.get(idx as usize)? {
-        CpInfo::Double(v) => Some(*v),
-        _ => None,
-    }
-}
-
-fn cp_utf8_desc_to_internal(cp: &[CpInfo], idx: u16) -> Option<String> {
-    let s = match cp.get(idx as usize)? {
-        CpInfo::Utf8(u) => u.as_str(),
-        _ => return None,
-    };
-    // Expect "Lpkg/Name;" or "[L..;"
-    let s = s.trim();
-    let s = s.strip_prefix('L')?.strip_suffix(';')?;
-    Some(s.to_string())
 }
 
 fn build_method_params_from_attrs(
