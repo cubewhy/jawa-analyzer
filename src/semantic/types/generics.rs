@@ -74,7 +74,10 @@ impl JvmType {
             JvmType::Object(name, args) => {
                 let new_args = args
                     .iter()
-                    .map(|a| a.substitute(type_params, type_args))
+                    .map(|a| {
+                        let substituted = a.substitute(type_params, type_args);
+                        box_jvm_primitive(&substituted)
+                    })
                     .collect();
                 JvmType::Object(name.clone(), new_args)
             }
@@ -356,6 +359,26 @@ fn java_primitive_char_to_name(c: char) -> &'static str {
     }
 }
 
+pub fn box_jvm_primitive(ty: &JvmType) -> JvmType {
+    match ty {
+        JvmType::Primitive(c) => {
+            let boxed = match c {
+                'I' => "java/lang/Integer",
+                'J' => "java/lang/Long",
+                'D' => "java/lang/Double",
+                'F' => "java/lang/Float",
+                'Z' => "java/lang/Boolean",
+                'B' => "java/lang/Byte",
+                'S' => "java/lang/Short",
+                'C' => "java/lang/Character",
+                _ => return ty.clone(),
+            };
+            JvmType::Object(boxed.to_string(), vec![])
+        }
+        _ => ty.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::semantic::types::generics::JvmType;
@@ -372,14 +395,56 @@ mod tests {
     #[test]
     fn test_type_var_display() {
         let ty = JvmType::TypeVar("E".to_string());
+
+        // Ensure that the raw JVM format "TE;" is not output.
         assert_eq!(ty.to_internal_name_string(), "E");
-        // 确保不输出原始 JVM 格式 "TE;"
     }
 
     #[test]
     fn test_array_of_type_var_display() {
-        // toArray(T[]) 的情形
+        // toArray(T[])
         let ty = JvmType::Array(Box::new(JvmType::TypeVar("T".to_string())));
         assert_eq!(ty.to_internal_name_string(), "T[]");
+    }
+
+    #[test]
+    fn test_substitute_primitive_in_generic_arg_position_boxes_to_wrapper() {
+        // Stream<R> where R = int -> Stream<Integer>
+        let stream_ty = JvmType::Object(
+            "java/util/stream/Stream".to_string(),
+            vec![JvmType::TypeVar("R".to_string())],
+        );
+        let substituted = stream_ty.substitute(&["R".to_string()], &[JvmType::Primitive('I')]);
+        assert_eq!(
+            substituted,
+            JvmType::Object(
+                "java/util/stream/Stream".to_string(),
+                vec![JvmType::Object("java/lang/Integer".to_string(), vec![])],
+            )
+        );
+    }
+
+    #[test]
+    fn test_substitute_primitive_at_top_level_does_not_box() {
+        // TypeVar T = int (at top level, not in Object args) stays int
+        let ty = JvmType::TypeVar("T".to_string());
+        let substituted = ty.substitute(&["T".to_string()], &[JvmType::Primitive('I')]);
+        assert_eq!(substituted, JvmType::Primitive('I'));
+    }
+
+    #[test]
+    fn test_substitute_double_in_list_generic_arg_boxes_to_double_wrapper() {
+        let list_ty = JvmType::Object(
+            "java/util/List".to_string(),
+            vec![JvmType::TypeVar("E".to_string())],
+        );
+        let substituted = list_ty.substitute(&["E".to_string()], &[JvmType::Primitive('D')]);
+        assert_eq!(
+            substituted,
+            JvmType::Object(
+                "java/util/List".to_string(),
+                vec![JvmType::Object("java/lang/Double".to_string(), vec![])],
+            )
+        );
     }
 }

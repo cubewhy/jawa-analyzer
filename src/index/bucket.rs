@@ -454,7 +454,7 @@ impl BucketIndex {
                 };
             }
             _ => {
-                tracing::error!("Unknown class source found for class {}", class.name);
+                // tracing::error!("Unknown class source found for class {}", class.name);
             }
         }
     }

@@ -624,7 +624,7 @@ impl<'idx> TypeResolver<'idx> {
                 let owner =
                     self.resolve_owner_from_text_with_context(qualifier, qualifier_resolver)?;
                 let ret = self.resolve_method_reference_return_on_owner(&owner, member)?;
-                return Some(ret);
+                return Some(box_primitive_jvm_type(ret));
             }
 
             let owner_ty = self.resolve(qualifier, locals, enclosing)?;
@@ -634,7 +634,7 @@ impl<'idx> TypeResolver<'idx> {
                 self.resolve_owner_from_text(owner_ty.erased_internal())?
             };
             let ret = self.resolve_method_reference_return_on_owner(&owner, member)?;
-            return Some(ret);
+            return Some(box_primitive_jvm_type(ret));
         }
 
         if let Some(body) = parse_lambda_expression_body(text) {
@@ -2861,8 +2861,8 @@ mod tests {
         let result = resolver.resolve_chain(&chain, &locals, None);
         assert_eq!(
             result.as_ref().map(|t| t.erased_internal()),
-            Some("int"),
-            "List::size should bind map<R> to int"
+            Some("java/lang/Integer"),
+            "List::size should bind map<R> to integer"
         );
     }
 
@@ -3153,7 +3153,7 @@ mod tests {
 
         assert_eq!(
             result.as_ref().map(|t| t.erased_internal()),
-            Some("int"),
+            Some("java/lang/Integer"),
             "source-derived generic_signature for map should preserve bindable R"
         );
     }
@@ -4012,5 +4012,340 @@ mod tests {
         let resolve = |s: &str| s.to_string();
         let got = java_source_type_to_jvm_generic("E", &resolve, &params);
         assert_eq!(got, "TE;");
+    }
+
+    #[test]
+    fn test_method_reference_primitive_return_is_boxed_for_generic_binding() {
+        // List::size returns int, but when used as Function<List, R>, R should be Integer
+        use crate::index::{ClassMetadata, ClassOrigin, MethodSummary};
+        use rust_asm::constants::ACC_PUBLIC;
+
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![ClassMetadata {
+            package: Some(Arc::from("java/util")),
+            name: Arc::from("List"),
+            internal_name: Arc::from("java/util/List"),
+            super_name: None,
+            interfaces: vec![],
+            annotations: vec![],
+            methods: vec![MethodSummary {
+                name: Arc::from("size"),
+                params: MethodParams::empty(),
+                access_flags: ACC_PUBLIC,
+                is_synthetic: false,
+                annotations: vec![],
+                generic_signature: None,
+                return_type: Some(Arc::from("I")),
+            }],
+            fields: vec![],
+            access_flags: ACC_PUBLIC,
+            inner_class_of: None,
+            generic_signature: Some(Arc::from("<E:Ljava/lang/Object;>Ljava/lang/Object;")),
+            origin: ClassOrigin::Unknown,
+        }]);
+        let view = idx.view(root_scope());
+        let resolver = TypeResolver::new(&view);
+
+        // Function<List, ? extends R> - the covariant R slot
+        let target_param = JvmType::Object(
+            "java/util/function/Function".to_string(),
+            vec![
+                JvmType::WildcardBound(
+                    '-',
+                    Box::new(JvmType::Object("java/util/List".to_string(), vec![])),
+                ),
+                JvmType::WildcardBound('+', Box::new(JvmType::TypeVar("R".to_string()))),
+            ],
+        );
+
+        let inferred = resolver.infer_functional_arg_return_shallow(
+            "List::size",
+            EvalContext::default(),
+            Some(&target_param),
+        );
+
+        assert_eq!(
+            inferred.map(|t| t.to_signature_string()),
+            Some("Ljava/lang/Integer;".to_string()),
+            "List::size (returns int) should be boxed to Integer when used in generic position"
+        );
+    }
+
+    #[test]
+    fn test_stream_map_list_size_chain_resolves_to_list_integer() {
+        use crate::index::{ClassMetadata, ClassOrigin, MethodSummary};
+        use rust_asm::constants::ACC_PUBLIC;
+
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+        ClassMetadata {
+            package: Some(Arc::from("java/util")),
+            name: Arc::from("List"),
+            internal_name: Arc::from("java/util/List"),
+            super_name: None,
+            interfaces: vec![],
+            annotations: vec![],
+            methods: vec![
+                MethodSummary {
+                    name: Arc::from("size"),
+                    params: MethodParams::empty(),
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    annotations: vec![],
+                    generic_signature: None,
+                    return_type: Some(Arc::from("I")),
+                },
+                MethodSummary {
+                    name: Arc::from("stream"),
+                    params: MethodParams::empty(),
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    annotations: vec![],
+                    generic_signature: Some(Arc::from("()Ljava/util/stream/Stream<TE;>;")),
+                    return_type: Some(Arc::from("Ljava/util/stream/Stream;")),
+                },
+            ],
+            fields: vec![],
+            access_flags: ACC_PUBLIC,
+            inner_class_of: None,
+            generic_signature: Some(Arc::from("<E:Ljava/lang/Object;>Ljava/lang/Object;")),
+            origin: ClassOrigin::Unknown,
+        },
+        ClassMetadata {
+            package: Some(Arc::from("java/util/stream")),
+            name: Arc::from("Stream"),
+            internal_name: Arc::from("java/util/stream/Stream"),
+            super_name: None,
+            interfaces: vec![],
+            annotations: vec![],
+            methods: vec![
+                MethodSummary {
+                    name: Arc::from("map"),
+                    params: MethodParams::from([("Ljava/util/function/Function;", "mapper")]),
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    annotations: vec![],
+                    generic_signature: Some(Arc::from(
+                        "<R:Ljava/lang/Object;>(Ljava/util/function/Function<-TE;+TR;>;)Ljava/util/stream/Stream<TR;>;",
+                    )),
+                    return_type: Some(Arc::from("Ljava/util/stream/Stream;")),
+                },
+                MethodSummary {
+                    name: Arc::from("toList"),
+                    params: MethodParams::empty(),
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    annotations: vec![],
+                    generic_signature: Some(Arc::from("()Ljava/util/List<TE;>;")),
+                    return_type: Some(Arc::from("Ljava/util/List;")),
+                },
+            ],
+            fields: vec![],
+            access_flags: ACC_PUBLIC,
+            inner_class_of: None,
+            generic_signature: Some(Arc::from("<E:Ljava/lang/Object;>Ljava/lang/Object;")),
+            origin: ClassOrigin::Unknown,
+        },
+    ]);
+
+        let view = idx.view(root_scope());
+        let resolver = TypeResolver::new(&view);
+
+        let locals = vec![LocalVar {
+            name: Arc::from("list"),
+            type_internal: TypeName::with_args(
+                "java/util/List",
+                vec![TypeName::with_args(
+                    "java/util/List",
+                    vec![TypeName::new("java/lang/String")],
+                )],
+            ),
+            init_expr: None,
+        }];
+
+        let chain = parse_chain_from_expr("list.stream().map(List::size).toList()");
+        let result = resolver.resolve_chain(&chain, &locals, None);
+
+        assert_eq!(
+            result.as_ref().map(|t| t.erased_internal()),
+            Some("java/util/List"),
+            "toList() should return List"
+        );
+        assert_eq!(
+            result
+                .as_ref()
+                .and_then(|t| t.args.first())
+                .map(|a| a.erased_internal()),
+            Some("java/lang/Integer"),
+            "List::size returns int which should be boxed to Integer in generic context"
+        );
+    }
+
+    #[test]
+    fn test_method_ref_primitive_return_is_boxed_in_generic_binding() {
+        use crate::index::{ClassMetadata, ClassOrigin, MethodSummary};
+        use rust_asm::constants::ACC_PUBLIC;
+
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![ClassMetadata {
+            package: Some(Arc::from("java/util")),
+            name: Arc::from("List"),
+            internal_name: Arc::from("java/util/List"),
+            super_name: None,
+            interfaces: vec![],
+            annotations: vec![],
+            methods: vec![MethodSummary {
+                name: Arc::from("size"),
+                params: MethodParams::empty(),
+                access_flags: ACC_PUBLIC,
+                is_synthetic: false,
+                annotations: vec![],
+                generic_signature: None,
+                return_type: Some(Arc::from("I")),
+            }],
+            fields: vec![],
+            access_flags: ACC_PUBLIC,
+            inner_class_of: None,
+            generic_signature: Some(Arc::from("<E:Ljava/lang/Object;>Ljava/lang/Object;")),
+            origin: ClassOrigin::Unknown,
+        }]);
+
+        let view = idx.view(root_scope());
+        let resolver = TypeResolver::new(&view);
+
+        // Function<List, ? extends R> - 模拟 map 参数类型
+        let target_param = JvmType::Object(
+            "java/util/function/Function".to_string(),
+            vec![
+                JvmType::WildcardBound(
+                    '-',
+                    Box::new(JvmType::Object("java/util/List".to_string(), vec![])),
+                ),
+                JvmType::WildcardBound('+', Box::new(JvmType::TypeVar("R".to_string()))),
+            ],
+        );
+
+        let inferred = resolver.infer_functional_arg_return_shallow(
+            "List::size",
+            EvalContext::default(),
+            Some(&target_param),
+        );
+
+        assert_eq!(
+            inferred.as_ref().map(|t| t.to_signature_string()),
+            Some("Ljava/lang/Integer;".to_string()),
+            "List::size (returns int) should be auto-boxed to Integer in generic binding"
+        );
+    }
+
+    #[test]
+    fn test_stream_map_list_size_tolist_resolves_to_list_integer() {
+        use crate::index::{ClassMetadata, ClassOrigin, MethodSummary};
+        use rust_asm::constants::ACC_PUBLIC;
+
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+        ClassMetadata {
+            package: Some(Arc::from("java/util")),
+            name: Arc::from("List"),
+            internal_name: Arc::from("java/util/List"),
+            super_name: None,
+            interfaces: vec![],
+            annotations: vec![],
+            methods: vec![
+                MethodSummary {
+                    name: Arc::from("size"),
+                    params: MethodParams::empty(),
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    annotations: vec![],
+                    generic_signature: None,
+                    return_type: Some(Arc::from("I")),
+                },
+                MethodSummary {
+                    name: Arc::from("stream"),
+                    params: MethodParams::empty(),
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    annotations: vec![],
+                    generic_signature: Some(Arc::from(
+                        "()Ljava/util/stream/Stream<TE;>;",
+                    )),
+                    return_type: Some(Arc::from("Ljava/util/stream/Stream;")),
+                },
+            ],
+            fields: vec![],
+            access_flags: ACC_PUBLIC,
+            inner_class_of: None,
+            generic_signature: Some(Arc::from("<E:Ljava/lang/Object;>Ljava/lang/Object;")),
+            origin: ClassOrigin::Unknown,
+        },
+        ClassMetadata {
+            package: Some(Arc::from("java/util/stream")),
+            name: Arc::from("Stream"),
+            internal_name: Arc::from("java/util/stream/Stream"),
+            super_name: None,
+            interfaces: vec![],
+            annotations: vec![],
+            methods: vec![
+                MethodSummary {
+                    name: Arc::from("map"),
+                    params: MethodParams::from([("Ljava/util/function/Function;", "mapper")]),
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    annotations: vec![],
+                    generic_signature: Some(Arc::from(
+                        "<R:Ljava/lang/Object;>(Ljava/util/function/Function<-TE;+TR;>;)Ljava/util/stream/Stream<TR;>;",
+                    )),
+                    return_type: Some(Arc::from("Ljava/util/stream/Stream;")),
+                },
+                MethodSummary {
+                    name: Arc::from("toList"),
+                    params: MethodParams::empty(),
+                    access_flags: ACC_PUBLIC,
+                    is_synthetic: false,
+                    annotations: vec![],
+                    generic_signature: Some(Arc::from("()Ljava/util/List<TE;>;")),
+                    return_type: Some(Arc::from("Ljava/util/List;")),
+                },
+            ],
+            fields: vec![],
+            access_flags: ACC_PUBLIC,
+            inner_class_of: None,
+            generic_signature: Some(Arc::from("<E:Ljava/lang/Object;>Ljava/lang/Object;")),
+            origin: ClassOrigin::Unknown,
+        },
+    ]);
+
+        let view = idx.view(root_scope());
+        let resolver = TypeResolver::new(&view);
+
+        let locals = vec![LocalVar {
+            name: Arc::from("list"),
+            type_internal: TypeName::with_args(
+                "java/util/List",
+                vec![TypeName::with_args(
+                    "java/util/List",
+                    vec![TypeName::new("java/lang/String")],
+                )],
+            ),
+            init_expr: None,
+        }];
+
+        let chain = parse_chain_from_expr("list.stream().map(List::size).toList()");
+        let result = resolver.resolve_chain(&chain, &locals, None);
+
+        assert_eq!(
+            result.as_ref().map(|t| t.erased_internal()),
+            Some("java/util/List"),
+        );
+        assert_eq!(
+            result
+                .as_ref()
+                .and_then(|t| t.args.first())
+                .map(|a| a.erased_internal()),
+            Some("java/lang/Integer"),
+            "List::size returns int, should be boxed to Integer in generic position"
+        );
     }
 }

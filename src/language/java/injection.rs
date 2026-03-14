@@ -505,7 +505,8 @@ pub fn inject_and_determine(
                 type_text.as_str(),
                 "int" | "long" | "double" | "float" | "boolean" | "char" | "byte" | "short"
             );
-            if is_primitive {
+            let is_type_qualifier = is_primitive || is_type_qualifier_misparse(&type_text);
+            if is_type_qualifier {
                 let receiver_expr = strip_sentinel(&type_text);
                 return Some((
                     CursorLocation::MemberAccess {
@@ -518,7 +519,6 @@ pub fn inject_and_determine(
                     String::new(),
                 ));
             }
-
             return Some((CursorLocation::Unknown, String::new()));
         }
     }
@@ -559,6 +559,42 @@ pub fn inject_and_determine(
     }
 
     None
+}
+
+/// 判断一个被误解析为变量类型的文本是否实际上是类型限定符（用于 .class、成员访问等）。
+/// 例如 "String[]"、"int[]"、"Outer.Inner" 等。
+fn is_type_qualifier_misparse(type_text: &str) -> bool {
+    if type_text.is_empty() {
+        return false;
+    }
+    // 剥离数组维度
+    let base = type_text.trim_end_matches(['[', ']', ' ']);
+    let has_array = type_text.contains('[');
+    // base 必须全部是合法的类型名字符
+    if !base
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '$' || c == '.')
+    {
+        return false;
+    }
+    // 有数组维度的情况：base 是 primitive 或首字母大写的类型名
+    if has_array {
+        let is_prim_base = matches!(
+            base,
+            "int" | "long" | "double" | "float" | "boolean" | "char" | "byte" | "short"
+        );
+        let is_ref_base = base
+            .split('.')
+            .next_back()
+            .and_then(|s| s.chars().next())
+            .is_some_and(|c| c.is_ascii_uppercase());
+        return is_prim_base || is_ref_base;
+    }
+    // 无数组维度：首字母大写的类型名（如 Outer.Inner）
+    base.split('.')
+        .next_back()
+        .and_then(|s| s.chars().next())
+        .is_some_and(|c| c.is_ascii_uppercase())
 }
 
 fn requires_semicolon(cursor_node: Option<Node>) -> bool {
@@ -1040,6 +1076,59 @@ mod tests {
         insta::assert_snapshot!(
             "injection_anchor_drift_member_tail_with_later_generics",
             out
+        );
+    }
+
+    #[test]
+    fn test_inject_and_determine_array_type_member_access() {
+        // String[]. 应该被识别为 MemberAccess，而不是 Unknown
+        let src = indoc::indoc! {r#"
+    class T {
+        void m() {
+            String[].
+        }
+    }
+    "#};
+        let offset = src.find("String[].").unwrap() + "String[].".len();
+        let (ctx, tree) = setup_ctx(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+        let result = inject_and_determine(&ctx, cursor_node, None);
+        assert!(result.is_some(), "inject_and_determine should succeed");
+        let (location, _query) = result.unwrap();
+        assert!(
+            matches!(
+                &location,
+                CursorLocation::MemberAccess { receiver_expr, .. }
+                if receiver_expr == "String[]"
+            ),
+            "String[]. should parse as MemberAccess with receiver_expr=String[], got {:?}",
+            location
+        );
+    }
+
+    #[test]
+    fn test_inject_and_determine_primitive_array_type_member_access() {
+        let src = indoc::indoc! {r#"
+    class T {
+        void m() {
+            int[].
+        }
+    }
+    "#};
+        let offset = src.find("int[].").unwrap() + "int[].".len();
+        let (ctx, tree) = setup_ctx(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+        let result = inject_and_determine(&ctx, cursor_node, None);
+        assert!(result.is_some());
+        let (location, _) = result.unwrap();
+        assert!(
+            matches!(
+                &location,
+                CursorLocation::MemberAccess { receiver_expr, .. }
+                if receiver_expr == "int[]"
+            ),
+            "int[]. should parse as MemberAccess, got {:?}",
+            location
         );
     }
 }

@@ -3,7 +3,7 @@ source: src/language/java/completion_context.rs
 expression: out
 ---
 case1_box_map_list_size_get:
-receiver_semantic=Some("Box<I>")
+receiver_semantic=Some("Box<Ljava/lang/Integer;>")
 receiver_type=Some("Box")
 
 case2_function_string_integer_string_length:

@@ -2726,7 +2726,7 @@ mod tests {
             assert_eq!(sem.args.len(), 1);
             assert_eq!(
                 sem.args[0].erased_internal(),
-                "int",
+                "java/lang/Integer",
                 "List::size should bind map<R> return to int via import-aware qualifier resolution"
             );
         } else {

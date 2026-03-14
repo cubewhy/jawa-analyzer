@@ -165,6 +165,10 @@ fn resolve_ast_node_type(
                 expected_sam,
             )
         }
+        "array_type" => {
+            let text = node.utf8_text(bytes).ok()?.trim();
+            resolve_source_type_name(text, enclosing_internal, type_ctx, view)
+        }
         "identifier" => {
             let text = node.utf8_text(bytes).ok()?;
             resolver.resolve(text.trim(), locals, enclosing_internal)
