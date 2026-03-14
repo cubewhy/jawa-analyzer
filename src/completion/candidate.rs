@@ -217,6 +217,34 @@ impl CompletionCandidate {
         self.insertion.mode = InsertTextMode::Snippet;
         self
     }
+
+    pub fn with_generics_callable_insert(
+        mut self,
+        callable_name: &str,
+        param_names: &[Arc<str>],
+        has_paren_after_cursor: bool,
+    ) -> Self {
+        if has_paren_after_cursor {
+            return self.with_insert_text(callable_name);
+        }
+
+        if param_names.is_empty() {
+            self = self.with_insert_text(format!("{callable_name}<$1>()$0"));
+            self.insertion.mode = InsertTextMode::Snippet;
+            return self;
+        }
+
+        let mut args = Vec::with_capacity(param_names.len());
+        for (idx, raw) in param_names.iter().enumerate() {
+            let idx = idx + 1;
+            let safe = sanitize_placeholder_name(raw.as_ref(), idx);
+            args.push(format!("${{{}:{}}}", idx + 1, safe));
+        }
+        let snippet = format!("{callable_name}<$0>({})$1", args.join(", "));
+        self = self.with_insert_text(snippet);
+        self.insertion.mode = InsertTextMode::Snippet;
+        self
+    }
 }
 
 fn sanitize_placeholder_name(name: &str, index: usize) -> String {

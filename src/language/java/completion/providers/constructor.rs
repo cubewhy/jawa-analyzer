@@ -77,6 +77,7 @@ impl CompletionProvider for ConstructorProvider {
                 truncated = true;
                 break;
             }
+
             let fqn = source_fqn_of_meta(&meta, index);
             let needs_import = is_import_needed(
                 &fqn,
@@ -114,6 +115,16 @@ impl CompletionProvider for ConstructorProvider {
                 .with_detail(format!("new {}()", fqn))
                 .with_score(type_score_boost);
 
+                let candidate = if meta.generic_signature.is_some() {
+                    candidate.with_generics_callable_insert(
+                        meta.name.as_ref(),
+                        &[],
+                        ctx.has_paren_after_cursor(),
+                    )
+                } else {
+                    candidate
+                };
+
                 let candidate = if needs_import {
                     candidate.with_import(fqn)
                 } else {
@@ -146,6 +157,16 @@ impl CompletionProvider for ConstructorProvider {
                 )
                 .with_detail(detail)
                 .with_score(type_score_boost);
+
+                let candidate = if meta.generic_signature.is_some() {
+                    candidate.with_generics_callable_insert(
+                        meta.name.as_ref(),
+                        &[],
+                        ctx.has_paren_after_cursor(),
+                    )
+                } else {
+                    candidate
+                };
 
                 let candidate = if needs_import {
                     candidate.with_import(fqn.clone())
