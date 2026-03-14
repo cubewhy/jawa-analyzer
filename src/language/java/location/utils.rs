@@ -147,11 +147,9 @@ pub(super) fn detect_variable_name_position(
         }
         last
     }?;
-
     if preceding.kind() != "ERROR" {
         return None;
     }
-
     let mut wc = preceding.walk();
     let named_children: Vec<Node> = preceding.named_children(&mut wc).collect();
     if named_children.len() != 1 {
@@ -161,7 +159,13 @@ pub(super) fn detect_variable_name_position(
     if !is_type_like_node_kind(inner.kind()) {
         return None;
     }
-
+    // Reject plain identifiers that are Java keywords (not types)
+    if inner.kind() == "identifier" {
+        let text = ctx.node_text(inner).trim();
+        if crate::language::java::members::is_java_keyword(text) {
+            return None;
+        }
+    }
     let mut wc2 = preceding.walk();
     let has_assignment_or_semi = preceding
         .children(&mut wc2)
@@ -169,15 +173,15 @@ pub(super) fn detect_variable_name_position(
     if has_assignment_or_semi {
         return None;
     }
-
     let type_name = ctx.node_text(inner).trim().to_string();
     Some((CursorLocation::VariableName { type_name }, String::new()))
 }
 
-fn is_type_like_node_kind(kind: &str) -> bool {
+pub(super) fn is_type_like_node_kind(kind: &str) -> bool {
     matches!(
         kind,
         "type_identifier"
+            | "identifier"
             | "generic_type"
             | "array_type"
             | "scoped_type_identifier"

@@ -1,4 +1,5 @@
 use crate::language::java::JavaContextExtractor;
+use crate::language::java::location::utils;
 use crate::language::java::utils::strip_sentinel;
 use crate::semantic::CursorLocation;
 use tree_sitter::Node;
@@ -60,8 +61,12 @@ fn handle_error_as_last_block_child(
         }
     }
 
-    let before = &ctx.source[..ctx.offset.min(ctx.source.len())];
+    // Type awaiting variable name: `String |`, `int |`, `String[] |`, `List<String> |`
+    if let Some(var_loc) = detect_type_awaiting_name_in_error(ctx, error_node) {
+        return var_loc;
+    }
 
+    let before = &ctx.source[..ctx.offset.min(ctx.source.len())];
     // Case 12/cases with `new`: detect new keyword
     if let Some((class_prefix, expected_type)) = detect_new_keyword_before_cursor(before) {
         return (
@@ -72,15 +77,50 @@ fn handle_error_as_last_block_child(
             class_prefix,
         );
     }
-
-    // Trailing dot in ERROR context (shouldn't usually happen here, but as safety)
-    // Case 11/13: incomplete assignment (`int x =`) → Expression
+    // Case 11/13: incomplete assignment `int x =`) → Expression
     (
         CursorLocation::Expression {
             prefix: String::new(),
         },
         String::new(),
     )
+}
+
+/// ERROR contains a single type node and cursor is after it → VariableName position.
+fn detect_type_awaiting_name_in_error(
+    ctx: &JavaContextExtractor,
+    error_node: Node,
+) -> Option<(CursorLocation, String)> {
+    if ctx.offset < error_node.end_byte() {
+        return None;
+    }
+    let mut wc = error_node.walk();
+    let named_children: Vec<Node> = error_node.named_children(&mut wc).collect();
+    if named_children.len() != 1 {
+        return None;
+    }
+    let inner = named_children[0];
+    if !utils::is_type_like_node_kind(inner.kind()) {
+        return None;
+    }
+    if inner.kind() == "identifier" {
+        let text = ctx.node_text(inner).trim();
+        if crate::language::java::members::is_java_keyword(text) {
+            return None;
+        }
+    }
+    let mut wc2 = error_node.walk();
+    let has_assignment_or_semi = error_node
+        .children(&mut wc2)
+        .any(|c| matches!(c.kind(), "=" | ";"));
+    if has_assignment_or_semi {
+        return None;
+    }
+    let type_name = ctx.node_text(inner).trim().to_string();
+    if type_name.is_empty() {
+        return None;
+    }
+    Some((CursorLocation::VariableName { type_name }, String::new()))
 }
 
 /// `a.put` parsed as scoped_type_identifier → MemberAccess{receiver="a", prefix="put"}

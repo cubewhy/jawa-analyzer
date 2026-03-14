@@ -1249,4 +1249,149 @@ class A {
             }) if body == "x + 1"
         ));
     }
+
+    #[test]
+    fn test_plain_type_awaiting_variable_name() {
+        let src = indoc::indoc! {r#"
+class A {
+    void f() {
+        String 
+    }
+}
+"#};
+        let offset = src.find("String ").unwrap() + "String ".len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+        let (loc, _) = determine_location(&ctx, cursor_node, None);
+        assert!(
+            matches!(loc, CursorLocation::VariableName { ref type_name } if type_name == "String"),
+            "Expected VariableName{{String}}, got {:?}",
+            loc
+        );
+    }
+
+    #[test]
+    fn test_array_type_awaiting_variable_name() {
+        let src = indoc::indoc! {r#"
+class A {
+    void f() {
+        String[] 
+    }
+}
+"#};
+        let offset = src.find("String[] ").unwrap() + "String[] ".len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+        let (loc, _) = determine_location(&ctx, cursor_node, None);
+        assert!(
+            matches!(loc, CursorLocation::VariableName { ref type_name } if type_name == "String[]"),
+            "Expected VariableName{{String[]}}, got {:?}",
+            loc
+        );
+    }
+
+    #[test]
+    fn test_primitive_type_awaiting_variable_name() {
+        let src = indoc::indoc! {r#"
+class A {
+    void f() {
+        int 
+    }
+}
+"#};
+        let offset = src.find("int ").unwrap() + "int ".len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+        let (loc, _) = determine_location(&ctx, cursor_node, None);
+        assert!(
+            matches!(loc, CursorLocation::VariableName { ref type_name } if type_name == "int"),
+            "Expected VariableName{{int}}, got {:?}",
+            loc
+        );
+    }
+
+    #[test]
+    fn test_generic_type_awaiting_variable_name() {
+        let src = indoc::indoc! {r#"
+class A {
+    void f() {
+        List<String> 
+    }
+}
+"#};
+        let offset = src.find("List<String> ").unwrap() + "List<String> ".len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+        let (loc, _) = determine_location(&ctx, cursor_node, None);
+        assert!(
+            matches!(loc, CursorLocation::VariableName { ref type_name } if type_name == "List<String>"),
+            "Expected VariableName{{List<String>}}, got {:?}",
+            loc
+        );
+    }
+
+    #[test]
+    fn test_keyword_identifier_not_variable_name() {
+        let src = indoc::indoc! {r#"
+class A {
+    void f() {
+        return 
+    }
+}
+"#};
+        let offset = src.find("return ").unwrap() + "return ".len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+        let (loc, _) = determine_location(&ctx, cursor_node, None);
+        assert!(
+            !matches!(loc, CursorLocation::VariableName { .. }),
+            "return should NOT be VariableName, got {:?}",
+            loc
+        );
+    }
+
+    #[test]
+    fn test_array_creation_dimension_is_expression() {
+        let src = indoc::indoc! {r#"
+class A {
+    void f() {
+        new Object[]
+    }
+}
+"#};
+        let offset = src.find('[').unwrap() + 1; // cursor inside `[|]`
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+        let (loc, _) = determine_location(&ctx, cursor_node, None);
+        assert!(
+            !matches!(loc, CursorLocation::Unknown),
+            "new Object[|] should not be Unknown, got {:?}",
+            loc
+        );
+    }
+
+    #[test]
+    fn test_scoped_type_in_error_is_member_access() {
+        let src = indoc::indoc! {r#"
+class A {
+    void f() {
+        value.appe
+    }
+}
+"#};
+        let offset = src.find("appe").unwrap() + "appe".len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+        let (loc, query) = determine_location(&ctx, cursor_node, None);
+        assert!(
+            matches!(
+                loc,
+                CursorLocation::MemberAccess { ref receiver_expr, ref member_prefix, .. }
+                if receiver_expr == "value" && member_prefix == "appe"
+            ),
+            "Expected MemberAccess{{value, appe}}, got {:?}",
+            loc
+        );
+        assert_eq!(query, "appe");
+    }
 }
