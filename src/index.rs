@@ -716,47 +716,11 @@ pub fn merge_source_into_bytecode(bytecode: &mut [ClassMetadata], source: Vec<Cl
         .collect();
 
     for b_class in bytecode.iter_mut() {
-        // 如果在源码中找到了对应的类
         if let Some(s_class) = source_map.remove(&b_class.internal_name) {
-            b_class.origin = s_class.origin; // 提升来源标识为源码(方便跳转)
-            if b_class.internal_name.contains("ArrayList") {
-                tracing::debug!(
-                    class_internal = %b_class.internal_name,
-                    new_origin = ?b_class.origin,
-                    source_add = ?s_class
-                        .methods
-                        .iter()
-                        .filter(|m| m.name.as_ref() == "add")
-                        .map(|m| format!(
-                            "desc={} gs={:?} ret={:?} params={:?} names={:?}",
-                            m.desc(),
-                            m.generic_signature,
-                            m.return_type,
-                            m.params.items.iter().map(|p| p.descriptor.as_ref()).collect::<Vec<_>>(),
-                            m.params.items.iter().map(|p| p.name.as_ref()).collect::<Vec<_>>(),
-                        ))
-                        .collect::<Vec<_>>(),
-                    bytecode_add_before_merge = ?b_class
-                        .methods
-                        .iter()
-                        .filter(|m| m.name.as_ref() == "add")
-                        .map(|m| format!(
-                            "desc={} gs={:?} ret={:?} params={:?} names={:?}",
-                            m.desc(),
-                            m.generic_signature,
-                            m.return_type,
-                            m.params.items.iter().map(|p| p.descriptor.as_ref()).collect::<Vec<_>>(),
-                            m.params.items.iter().map(|p| p.name.as_ref()).collect::<Vec<_>>(),
-                        ))
-                        .collect::<Vec<_>>(),
-                    "index::merge_source_into_bytecode: before param-name merge"
-                );
-            }
+            b_class.origin = s_class.origin;
 
             for b_method in b_class.methods.iter_mut() {
                 let b_param_count = b_method.params.len();
-                let b_is_add = b_method.name.as_ref() == "add";
-                let b_desc_now = b_method.desc();
 
                 // 找同名、同参数数量的候选
                 let candidates: Vec<&MethodSummary> = s_class
@@ -765,97 +729,20 @@ pub fn merge_source_into_bytecode(bytecode: &mut [ClassMetadata], source: Vec<Cl
                     .filter(|m| m.name == b_method.name && m.params.len() == b_param_count)
                     .collect();
 
-                if b_is_add {
-                    tracing::debug!(
-                        class_internal = %b_class.internal_name,
-                        new_origin = ?b_class.origin,
-                        method_name = %b_method.name,
-                        bytecode_desc = %b_desc_now,
-                        bytecode_generic_signature = ?b_method.generic_signature,
-                        bytecode_param_names_before = ?b_method.params.items.iter().map(|p| p.name.as_ref()).collect::<Vec<_>>(),
-                        bytecode_simple_types = ?extract_simple_types(&b_desc_now),
-                        source_candidates = ?candidates
-                            .iter()
-                            .map(|m| format!(
-                                "desc={} gs={:?} names={:?} simple={:?}",
-                                m.desc(),
-                                m.generic_signature,
-                                m.params.items.iter().map(|p| p.name.as_ref()).collect::<Vec<_>>(),
-                                extract_simple_types(&m.desc())
-                            ))
-                            .collect::<Vec<_>>(),
-                        "index::merge_source_into_bytecode: add matching candidates"
-                    );
-                }
-
                 if candidates.len() == 1 {
                     b_method.params.expand(&candidates[0].params);
-                    if b_is_add {
-                        tracing::debug!(
-                            class_internal = %b_class.internal_name,
-                            method_name = %b_method.name,
-                            match_strategy = "single-candidate",
-                            matched_source_desc = %candidates[0].desc(),
-                            merged_param_names_after = ?b_method.params.items.iter().map(|p| p.name.as_ref()).collect::<Vec<_>>(),
-                            "index::merge_source_into_bytecode: add merge result"
-                        );
-                    }
                 } else if candidates.len() > 1 {
                     // 发生重载冲突时，使用参数的简单名称进行模糊匹配对齐 (例如 String 匹配 java/lang/String)
+                    // TODO: use the name table if possible
                     let b_simple = extract_simple_types(&b_method.desc());
                     if let Some(best) = candidates
                         .iter()
                         .find(|m| extract_simple_types(&m.desc()) == b_simple)
                     {
                         b_method.params.expand(&best.params);
-                        if b_is_add {
-                            tracing::debug!(
-                                class_internal = %b_class.internal_name,
-                                method_name = %b_method.name,
-                                match_strategy = "simple-types-exact",
-                                matched_source_desc = %best.desc(),
-                                matched_source_simple = ?extract_simple_types(&best.desc()),
-                                bytecode_simple = ?b_simple,
-                                merged_param_names_after = ?b_method.params.items.iter().map(|p| p.name.as_ref()).collect::<Vec<_>>(),
-                                "index::merge_source_into_bytecode: add merge result"
-                            );
-                        }
                     } else {
-                        b_method.params.expand(&candidates[0].params); // 保底
-                        if b_is_add {
-                            tracing::debug!(
-                                class_internal = %b_class.internal_name,
-                                method_name = %b_method.name,
-                                match_strategy = "fallback-first-candidate",
-                                matched_source_desc = %candidates[0].desc(),
-                                merged_param_names_after = ?b_method.params.items.iter().map(|p| p.name.as_ref()).collect::<Vec<_>>(),
-                                "index::merge_source_into_bytecode: add merge result"
-                            );
-                        }
+                        b_method.params.expand(&candidates[0].params); // fallback
                     }
-                }
-
-                if b_class.internal_name.contains("ArrayList") && b_method.name.as_ref() == "add" {
-                    tracing::debug!(
-                        class_internal = %b_class.internal_name,
-                        method_name = %b_method.name,
-                        method_desc = %b_method.desc(),
-                        method_generic_signature = ?b_method.generic_signature,
-                        method_return_type = ?b_method.return_type,
-                        merged_param_descriptors = ?b_method
-                            .params
-                            .items
-                            .iter()
-                            .map(|p| p.descriptor.as_ref())
-                            .collect::<Vec<_>>(),
-                        merged_param_names = ?b_method
-                            .params
-                            .items
-                            .iter()
-                            .map(|p| p.name.as_ref())
-                            .collect::<Vec<_>>(),
-                        "index::merge_source_into_bytecode: add overload after param merge"
-                    );
                 }
             }
         }
