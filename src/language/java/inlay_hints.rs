@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use ropey::Rope;
 use tree_sitter::Node;
+use tree_sitter_utils::{Handler, HandlerExt, Input};
 
 use crate::index::{IndexView, NameTable};
 use crate::language::java::editor_semantics::{
@@ -198,43 +199,52 @@ fn collect_parameter_hints(
 }
 
 fn invocation_site_for_node(source: &str, node: Node) -> Option<JavaInvocationSite> {
-    match node.kind() {
-        "method_invocation" => {
-            let method_name = node
-                .child_by_field_name("name")?
-                .utf8_text(source.as_bytes())
-                .ok()?;
-            let receiver_expr = node
-                .child_by_field_name("object")
-                .and_then(|receiver| receiver.utf8_text(source.as_bytes()).ok())
-                .unwrap_or("this");
-            let arg_texts = invocation_arguments(node)
-                .map(named_argument_nodes)
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|arg| arg.utf8_text(source.as_bytes()).ok().map(ToOwned::to_owned))
-                .collect();
-            Some(JavaInvocationSite::Method {
-                receiver_expr: receiver_expr.to_string(),
-                method_name: method_name.to_string(),
-                arg_texts,
-            })
-        }
-        "object_creation_expression" => {
-            let call_text = node.utf8_text(source.as_bytes()).ok()?.to_string();
-            let arg_texts = invocation_arguments(node)
-                .map(named_argument_nodes)
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|arg| arg.utf8_text(source.as_bytes()).ok().map(ToOwned::to_owned))
-                .collect();
-            Some(JavaInvocationSite::Constructor {
-                call_text,
-                arg_texts,
-            })
-        }
-        _ => None,
-    }
+    // Dispatch on node kind to build the appropriate invocation site.
+    let handler = (|inp: Input<&&[u8]>| -> Option<JavaInvocationSite> {
+        let bytes = *inp.ctx;
+        let method_name = inp
+            .node
+            .child_by_field_name("name")?
+            .utf8_text(bytes)
+            .ok()?
+            .to_owned();
+        let receiver_expr = inp
+            .node
+            .child_by_field_name("object")
+            .and_then(|r| r.utf8_text(bytes).ok())
+            .unwrap_or("this")
+            .to_owned();
+        let arg_texts = invocation_arguments(inp.node)
+            .map(named_argument_nodes)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|arg| arg.utf8_text(bytes).ok().map(ToOwned::to_owned))
+            .collect();
+        Some(JavaInvocationSite::Method {
+            receiver_expr,
+            method_name,
+            arg_texts,
+        })
+    })
+    .for_kinds(&["method_invocation"])
+    .or((|inp: Input<&&[u8]>| -> Option<JavaInvocationSite> {
+        let bytes = *inp.ctx;
+        let call_text = inp.node.utf8_text(bytes).ok()?.to_owned();
+        let arg_texts = invocation_arguments(inp.node)
+            .map(named_argument_nodes)
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|arg| arg.utf8_text(bytes).ok().map(ToOwned::to_owned))
+            .collect();
+        Some(JavaInvocationSite::Constructor {
+            call_text,
+            arg_texts,
+        })
+    })
+    .for_kinds(&["object_creation_expression"]));
+
+    let bytes_ref: &[u8] = source.as_bytes();
+    handler.handle(Input::new(node, &bytes_ref, None))
 }
 
 fn invocation_arguments(node: Node) -> Option<Node> {

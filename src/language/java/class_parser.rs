@@ -1,6 +1,7 @@
 use rust_asm::constants::{ACC_ANNOTATION, ACC_ENUM, ACC_INTERFACE, ACC_PUBLIC, ACC_SUPER};
 use std::sync::Arc;
 use tree_sitter::{Node, Query};
+use tree_sitter_utils::{Handler, Input, constructors::Always, dispatch_on_kind};
 
 use crate::index::{ClassMetadata, ClassOrigin};
 use crate::jvm::descriptor::consume_one_descriptor_type;
@@ -384,20 +385,21 @@ fn extract_java_access_flags(ctx: &JavaContextExtractor, node: Node) -> u16 {
         flags = ACC_PUBLIC;
     }
 
-    match node.kind() {
-        "class_declaration" | "record_declaration" => {
-            flags |= ACC_SUPER;
-        }
-        "enum_declaration" => {
-            flags |= ACC_ENUM | ACC_SUPER;
-        }
-        "interface_declaration" => {
-            flags |= ACC_INTERFACE;
-        }
-        "annotation_type_declaration" => {
-            flags |= ACC_INTERFACE | ACC_ANNOTATION;
-        }
-        _ => {}
+    // Map declaration kind to the extra JVM access flags it always carries.
+    // `dispatch_on_kind` returns `None` for unrecognised kinds, which maps
+    // cleanly to the existing "no extra flags" default.
+    static KIND_FLAGS: &[(&str, &dyn Handler<(), u16>)] = &[
+        ("class_declaration", &Always::new_const(ACC_SUPER)),
+        ("record_declaration", &Always::new_const(ACC_SUPER)),
+        ("enum_declaration", &Always::new_const(ACC_ENUM | ACC_SUPER)),
+        ("interface_declaration", &Always::new_const(ACC_INTERFACE)),
+        (
+            "annotation_type_declaration",
+            &Always::new_const(ACC_INTERFACE | ACC_ANNOTATION),
+        ),
+    ];
+    if let Some(extra) = dispatch_on_kind(KIND_FLAGS).handle(Input::new(node, (), None)) {
+        flags |= extra;
     }
 
     flags

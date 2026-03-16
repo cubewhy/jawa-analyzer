@@ -103,12 +103,7 @@ pub(crate) fn is_comment_kind(kind: &str) -> bool {
 }
 
 pub(crate) fn find_ancestor<'a>(mut node: Node<'a>, kind: &str) -> Option<Node<'a>> {
-    loop {
-        node = node.parent()?;
-        if node.kind() == kind {
-            return Some(node);
-        }
-    }
+    traversal::ancestor_of_kind(node, kind)
 }
 
 /// Remove SENTINEL from the string (the prefix in the injection path may contain it).
@@ -267,12 +262,11 @@ pub fn java_type_to_internal(ty: &str) -> String {
 }
 
 pub fn find_error_ancestor(mut node: Node) -> Option<Node> {
-    loop {
-        if node.kind() == "ERROR" {
-            return Some(node);
-        }
-        node = node.parent()?;
+    // Includes the node itself (non-strict), then climbs.
+    if node.kind() == "ERROR" {
+        return Some(node);
     }
+    traversal::ancestor_of_kind(node, "ERROR")
 }
 
 pub fn error_has_new_keyword(error_node: Node) -> bool {
@@ -348,11 +342,10 @@ pub fn is_in_name_position(id_node: Node, decl_node: Node) -> bool {
 }
 
 pub(crate) fn find_string_ancestor<'a>(mut node: Node<'a>) -> Option<Node<'a>> {
-    loop {
-        match node.kind() {
-            "string_literal" | "text_block" => return Some(node),
-            _ => {}
-        }
-        node = node.parent()?;
+    // Includes the node itself (non-strict), then climbs.
+    if matches!(node.kind(), "string_literal" | "text_block") {
+        return Some(node);
     }
+    traversal::ancestor_of_kinds(node, &["string_literal", "text_block"])
 }
+use tree_sitter_utils::traversal;

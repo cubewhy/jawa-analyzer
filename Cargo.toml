@@ -26,6 +26,7 @@ nucleo-matcher = "0.3.1"
 indoc = "2.0.7"
 tree-sitter = "0.26.5"
 tree-sitter-java = "0.23.5"
+tree-sitter-utils = { git = "https://github.com/cubewhy/tree-sitter-utils.git" }
 tree-sitter-kotlin = { git = "https://github.com/fwcd/tree-sitter-kotlin.git" }
 walkdir = "2.5.0"
 jimage-rs = "0.0.4"

@@ -12,6 +12,8 @@ use crate::language::java::location::utils::is_member_part_of_scoped_type;
 use crate::language::java::utils::{find_string_ancestor, is_comment_kind};
 use crate::semantic::CursorLocation;
 use tree_sitter::Node;
+use tree_sitter_utils::Handler;
+use tree_sitter_utils::{HandlerExt, Input, handler_fn};
 
 pub(crate) fn determine_location(
     ctx: &JavaContextExtractor,
@@ -61,113 +63,159 @@ fn determine_location_impl(
         return result;
     }
 
-    let mut current = node;
-    loop {
-        match current.kind() {
-            "break_statement" | "continue_statement" => {
-                if let Some(r) = handlers::handle_jump_statement(ctx, current) {
-                    return r;
-                }
-                break;
-            }
-            "marker_annotation" | "annotation" => {
-                return handlers::handle_annotation(ctx, current);
-            }
-            "import_declaration" => return handlers::handle_import(ctx, current),
-            "method_invocation" | "field_access" => {
-                return handlers::handle_member_access(ctx, current);
-            }
-            "method_reference" => return handlers::handle_method_reference(ctx, current),
-            "object_creation_expression" => {
+    // Build a combinator chain that dispatches on node kind and climbs.
+    // Each handler arm returns `Option<(CursorLocation, String)>`; `.or()`
+    // tries the next arm on `None`; `.climb(stop_kinds)` walks to the parent
+    // when the whole chain returns `None` for the current node.
+    //
+    // Stop kinds are the container boundaries where climbing must halt.
+    let location_handler =
+        // jump statements: only fire when the handler succeeds; on failure the
+        // whole climbing stops (break semantics reproduced by returning None
+        // AND listing the kinds in stop_kinds below).
+        (|inp: Input<(&JavaContextExtractor, Option<char>, Node)>| {
+            let (ctx, _trigger_char, _orig) = inp.ctx;
+            handlers::handle_jump_statement(ctx, inp.node)
+        })
+        .for_kinds(&["break_statement", "continue_statement"])
+        .or(
+            handler_fn(|inp: Input<(&JavaContextExtractor, Option<char>, Node)>| {
+                let (ctx, _, _) = inp.ctx;
+                handlers::handle_annotation(ctx, inp.node)
+            })
+            .for_kinds(&["marker_annotation", "annotation"]),
+        )
+        .or(
+            handler_fn(|inp: Input<(&JavaContextExtractor, Option<char>, Node)>| {
+                let (ctx, _, _) = inp.ctx;
+                handlers::handle_import(ctx, inp.node)
+            })
+            .for_kinds(&["import_declaration"]),
+        )
+        .or(
+            handler_fn(|inp: Input<(&JavaContextExtractor, Option<char>, Node)>| {
+                let (ctx, _, _) = inp.ctx;
+                handlers::handle_member_access(ctx, inp.node)
+            })
+            .for_kinds(&["method_invocation", "field_access"]),
+        )
+        .or(
+            handler_fn(|inp: Input<(&JavaContextExtractor, Option<char>, Node)>| {
+                let (ctx, _, _) = inp.ctx;
+                handlers::handle_method_reference(ctx, inp.node)
+            })
+            .for_kinds(&["method_reference"]),
+        )
+        .or(
+            (|inp: Input<(&JavaContextExtractor, Option<char>, Node)>| {
+                let (ctx, _, _) = inp.ctx;
                 if let Some(type_args) =
-                    utils::find_innermost_constructor_type_arguments(current, ctx.offset)
+                    utils::find_innermost_constructor_type_arguments(inp.node, ctx.offset)
                 {
                     let prefix = utils::find_prefix_in_type_arguments_hole(ctx, type_args);
-                    return (
-                        CursorLocation::TypeAnnotation {
-                            prefix: prefix.clone(),
-                        },
-                        prefix,
-                    );
+                    return Some((CursorLocation::TypeAnnotation { prefix: prefix.clone() }, prefix));
                 }
-                return handlers::handle_constructor(ctx, current);
-            }
-            "argument_list" => return handlers::handle_argument_list(ctx, current),
-            "identifier" | "type_identifier" => {
-                // If this identifier is the member part of a scoped_type_identifier
-                // that may actually be a misread member access (e.g. `s.subs`),
-                // skip and let the parent local_variable_declaration handler detect it.
-                if !is_member_part_of_scoped_type(current) {
-                    // continue to parent
-                    return handlers::handle_identifier(ctx, current, trigger_char);
+                Some(handlers::handle_constructor(ctx, inp.node))
+            })
+            .for_kinds(&["object_creation_expression"]),
+        )
+        .or(
+            handler_fn(|inp: Input<(&JavaContextExtractor, Option<char>, Node)>| {
+                let (ctx, _, _) = inp.ctx;
+                handlers::handle_argument_list(ctx, inp.node)
+            })
+            .for_kinds(&["argument_list"]),
+        )
+        .or(
+            (|inp: Input<(&JavaContextExtractor, Option<char>, Node)>| {
+                let (ctx, trigger_char, _) = inp.ctx;
+                if is_member_part_of_scoped_type(inp.node) {
+                    return None;
                 }
-            }
-            "scoped_type_identifier" => {
-                if let Some(r) = heuristics::detect_member_access_in_scoped_type(ctx, current) {
-                    return r;
-                }
-            }
-            "local_variable_declaration" => {
-                if let Some(ctor) = utils::find_object_creation_at_cursor(current, ctx.offset) {
+                Some(handlers::handle_identifier(ctx, inp.node, trigger_char))
+            })
+            .for_kinds(&["identifier", "type_identifier"]),
+        )
+        .or(
+            (|inp: Input<(&JavaContextExtractor, Option<char>, Node)>| {
+                let (ctx, _, _) = inp.ctx;
+                heuristics::detect_member_access_in_scoped_type(ctx, inp.node)
+            })
+            .for_kinds(&["scoped_type_identifier"]),
+        )
+        .or(
+            (|inp: Input<(&JavaContextExtractor, Option<char>, Node)>| {
+                let (ctx, _, _) = inp.ctx;
+                if let Some(ctor) = utils::find_object_creation_at_cursor(inp.node, ctx.offset) {
                     if let Some(type_args) =
                         utils::find_innermost_constructor_type_arguments(ctor, ctx.offset)
                     {
                         let prefix = utils::find_prefix_in_type_arguments_hole(ctx, type_args);
-                        return (
-                            CursorLocation::TypeAnnotation {
-                                prefix: prefix.clone(),
-                            },
+                        return Some((
+                            CursorLocation::TypeAnnotation { prefix: prefix.clone() },
                             prefix,
-                        );
+                        ));
                     }
-                    return handlers::handle_constructor(ctx, ctor);
+                    return Some(handlers::handle_constructor(ctx, ctor));
                 }
+                if let Some(r) = heuristics::detect_member_access_in_local_decl(ctx, inp.node) {
+                    return Some(r);
+                }
+                heuristics::detect_constructor_in_local_decl_error(ctx, inp.node)
+            })
+            .for_kinds(&["local_variable_declaration"]),
+        )
+        .or(
+            (|inp: Input<(&JavaContextExtractor, Option<char>, Node)>| {
+                let (ctx, _, _) = inp.ctx;
+                handlers::handle_expression_statement(ctx, inp.node)
+            })
+            .for_kinds(&["expression_statement"]),
+        )
+        .or(
+            handler_fn(|_inp: Input<(&JavaContextExtractor, Option<char>, Node)>| {
+                (CursorLocation::Expression { prefix: String::new() }, String::new())
+            })
+            .for_kinds(&["dimensions"]),
+        )
+        .or(
+            (|inp: Input<(&JavaContextExtractor, Option<char>, Node)>| {
+                let (ctx, trigger_char, orig) = inp.ctx;
+                Some(error::handle_error(ctx, inp.node, orig, trigger_char))
+            })
+            .for_kinds(&["ERROR"]),
+        )
+        .or(
+            (|inp: Input<(&JavaContextExtractor, Option<char>, Node)>| {
+                let (_, _, orig) = inp.ctx;
+                if inp.node.id() == orig.id() {
+                    Some(block::handle_block_as_cursor(inp.ctx.0, inp.node))
+                } else {
+                    None
+                }
+            })
+            .for_kinds(&["block"]),
+        )
+        // class_body / program / block (non-cursor): stop climbing (return None)
+        .or(
+            (|inp: Input<(&JavaContextExtractor, Option<char>, Node)>| -> Option<(CursorLocation, String)> {
+                let (_, _, orig) = inp.ctx;
+                if inp.node.kind() == "class_body" && inp.node.id() == orig.id() {
+                    Some((CursorLocation::Expression { prefix: String::new() }, String::new()))
+                } else {
+                    // Returning None here causes climbing to stop because
+                    // these kinds are listed in stop_kinds below.
+                    None
+                }
+            })
+            .for_kinds(&["block", "class_body", "program"]),
+        )
+        .climb(&["block", "class_body", "program",
+                 "break_statement", "continue_statement"]);
 
-                if let Some(r) = heuristics::detect_member_access_in_local_decl(ctx, current) {
-                    return r;
-                }
-
-                if let Some(r) = heuristics::detect_constructor_in_local_decl_error(ctx, current) {
-                    return r;
-                }
-            }
-            "expression_statement" => {
-                if let Some(r) = handlers::handle_expression_statement(ctx, current) {
-                    return r;
-                }
-            }
-            "dimensions" => {
-                // Inside `[` and `]` of array creation -> Expression
-                return (
-                    CursorLocation::Expression {
-                        prefix: String::new(),
-                    },
-                    String::new(),
-                );
-            }
-            "ERROR" => {
-                return error::handle_error(ctx, current, node, trigger_char);
-            }
-            "block" if current.id() == node.id() => {
-                return block::handle_block_as_cursor(ctx, current);
-            }
-            "block" | "class_body" | "program" => {
-                if current.kind() == "class_body" && current.id() == node.id() {
-                    return (
-                        CursorLocation::Expression {
-                            prefix: String::new(),
-                        },
-                        String::new(),
-                    );
-                }
-                break;
-            }
-            _ => {}
-        }
-        match current.parent() {
-            Some(p) => current = p,
-            None => break,
-        }
+    let ctx_tuple: (&JavaContextExtractor, Option<char>, Node) = (ctx, trigger_char, node);
+    if let Some(result) = location_handler.handle(Input::new(node, ctx_tuple, trigger_char)) {
+        return result;
     }
 
     if matches!(node.kind(), "identifier" | "type_identifier") {
