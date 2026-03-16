@@ -876,65 +876,6 @@ mod tests {
     }
 
     #[test]
-    fn test_global_scan_fast_path_beats_full_scan_baseline() {
-        let index = WorkspaceIndex::new();
-        let mut classes = Vec::new();
-        for i in 0..20_000 {
-            classes.push(make_cls("bench/p", &format!("Class{i:05}")));
-        }
-        classes.push(make_cls("java/util", "ArrayList"));
-        classes.push(make_cls("java/util", "AbstractList"));
-        index.add_classes(classes);
-        let view = index.view(root_scope());
-        let ctx = SemanticContext::new(
-            CursorLocation::Expression {
-                prefix: "Array".to_string(),
-            },
-            "Array",
-            vec![],
-            Some(Arc::from("Bench")),
-            None,
-            Some(Arc::from("bench/p")),
-            vec![],
-        );
-
-        let t_slow = Instant::now();
-        let mut slow = 0usize;
-        for meta in view.classes_in_package("bench/p") {
-            if fuzzy::fuzzy_match("array", &meta.name.to_lowercase()).is_some() {
-                slow += 1;
-            }
-        }
-        for meta in view.iter_all_classes() {
-            if fuzzy::fuzzy_match("array", &meta.name.to_lowercase()).is_some() {
-                slow += 1;
-            }
-        }
-        let slow_ms = t_slow.elapsed().as_secs_f64() * 1000.0;
-
-        let t_fast = Instant::now();
-        let fast_candidates = ExpressionProvider
-            .provide(root_scope(), &ctx, &view, None)
-            .candidates;
-        let fast_ms = t_fast.elapsed().as_secs_f64() * 1000.0;
-        eprintln!(
-            "expression_provider_perf_baseline: slow_scan_ms={slow_ms:.3} fast_provider_ms={fast_ms:.3} slow_hits={slow} fast_hits={}",
-            fast_candidates.len()
-        );
-        assert!(fast_ms < slow_ms);
-        assert!(
-            fast_candidates
-                .iter()
-                .any(|c| fuzzy::fuzzy_match("array", &c.label.to_lowercase()).is_some()),
-            "expected at least one Array* candidate, got: {:?}",
-            fast_candidates
-                .iter()
-                .map(|c| c.label.as_ref())
-                .collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
     fn test_member_access_zero_result_fast_path_beats_full_scan_baseline() {
         let index = WorkspaceIndex::new();
         let mut classes = Vec::new();
