@@ -38,6 +38,7 @@ pub mod inlay_hints;
 pub mod intrinsics;
 pub mod locals;
 pub mod location;
+pub mod lombok;
 pub mod members;
 pub mod render;
 pub mod scope;

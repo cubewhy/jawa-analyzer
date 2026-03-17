@@ -5,6 +5,7 @@ use crate::{
     index::{FieldSummary, MethodSummary},
     language::java::{
         JavaContextExtractor,
+        lombok::rules::GetterSetterRule,
         members::extract_class_members_from_body,
         synthetic::rules::{enum_rule, record_rule},
         type_ctx::SourceTypeCtx,
@@ -14,13 +15,41 @@ use crate::{
 
 use super::rules::{enum_rule::EnumRule, record_rule::RecordRule};
 
-const SYNTHETIC_RULES: [&dyn SyntheticMemberRule; 2] = [&RecordRule, &EnumRule];
+const SYNTHETIC_RULES: [&dyn SyntheticMemberRule; 3] = [&RecordRule, &EnumRule, &GetterSetterRule];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SyntheticOrigin {
-    RecordComponentAccessor { component_name: Arc<str> },
+    RecordComponentAccessor {
+        component_name: Arc<str>,
+    },
     RecordCanonicalConstructor,
-    EnumConstant { constant_name: Arc<str> },
+    EnumConstant {
+        constant_name: Arc<str>,
+    },
+
+    // Lombok origins
+    LombokGetter {
+        field_name: Arc<str>,
+    },
+    LombokSetter {
+        field_name: Arc<str>,
+    },
+    LombokToString,
+    LombokEquals,
+    LombokHashCode,
+    LombokConstructor {
+        constructor_type: crate::language::java::lombok::LombokConstructorType,
+    },
+    LombokBuilder {
+        builder_method: crate::language::java::lombok::LombokBuilderMethod,
+    },
+    LombokWith {
+        field_name: Arc<str>,
+    },
+    LombokDelegate {
+        field_name: Arc<str>,
+    },
+    LombokLog,
 }
 
 #[derive(Debug, Clone)]
@@ -183,6 +212,60 @@ pub fn resolve_synthetic_definition<'a>(
             SyntheticOrigin::EnumConstant { constant_name } => {
                 enum_rule::find_enum_constant_node(ctx, decl, constant_name.as_ref())
             }
+            // Lombok origins - resolve to field or class declaration
+            SyntheticOrigin::LombokGetter { field_name } => {
+                find_field_node(ctx, decl, field_name.as_ref())
+            }
+            SyntheticOrigin::LombokSetter { field_name } => {
+                find_field_node(ctx, decl, field_name.as_ref())
+            }
+            SyntheticOrigin::LombokWith { field_name } => {
+                find_field_node(ctx, decl, field_name.as_ref())
+            }
+            SyntheticOrigin::LombokDelegate { field_name } => {
+                find_field_node(ctx, decl, field_name.as_ref())
+            }
+            SyntheticOrigin::LombokToString
+            | SyntheticOrigin::LombokEquals
+            | SyntheticOrigin::LombokHashCode
+            | SyntheticOrigin::LombokConstructor { .. }
+            | SyntheticOrigin::LombokBuilder { .. }
+            | SyntheticOrigin::LombokLog => {
+                // Resolve to class name
+                decl.child_by_field_name("name")
+            }
         }
     })
+}
+
+/// Find a field node by name in a class declaration
+fn find_field_node<'a>(
+    ctx: &JavaContextExtractor,
+    decl: Node<'a>,
+    field_name: &str,
+) -> Option<Node<'a>> {
+    let body = decl.child_by_field_name("body")?;
+    let mut cursor = body.walk();
+
+    for child in body.named_children(&mut cursor) {
+        if child.kind() != "field_declaration" {
+            continue;
+        }
+
+        // Look for declarator with matching name
+        let mut field_cursor = child.walk();
+        for declarator in child.named_children(&mut field_cursor) {
+            if declarator.kind() != "variable_declarator" {
+                continue;
+            }
+
+            if let Some(name_node) = declarator.child_by_field_name("name") {
+                if ctx.node_text(name_node) == field_name {
+                    return Some(name_node);
+                }
+            }
+        }
+    }
+
+    None
 }
