@@ -171,47 +171,47 @@ fn collect_misread_decls(
 ) {
     let mut stack = vec![root];
     while let Some(node) = stack.pop() {
-        if node.kind() == "variable_declarator" {
-            if let Some(assignment) = first_child_of_kind(node, "assignment_expression") {
-                let lhs = assignment.child_by_field_name("left").or_else(|| {
-                    let mut wc = assignment.walk();
-                    assignment.named_children(&mut wc).next()
-                });
-                let rhs = assignment.child_by_field_name("right").or_else(|| {
-                    let mut wc = assignment.walk();
-                    assignment.named_children(&mut wc).nth(1)
-                });
-                if let (Some(name_node), Some(init_node)) = (lhs, rhs) {
-                    if name_node.kind() != "identifier" {
-                        continue;
-                    }
-                    if name_node.start_byte() >= ctx.offset {
-                        continue;
-                    }
-                    let name = ctx.node_text(name_node);
-                    let type_name = find_type_in_error_sibling(ctx, node);
-                    let init_text = ctx.node_text(init_node).to_string();
-                    let lv = if type_name.as_deref() == Some("var") {
-                        LocalVar {
-                            name: Arc::from(name),
-                            type_internal: TypeName::new("var"),
-                            init_expr: Some(init_text),
-                        }
-                    } else {
-                        let raw_ty = type_name.as_deref().unwrap_or("Object");
-                        LocalVar {
-                            name: Arc::from(name),
-                            type_internal: resolve_declared_source_type(raw_ty, type_ctx),
-                            init_expr: None,
-                        }
-                    };
-                    vars.push(RankedLocal {
-                        local: lv,
-                        declaration_start: name_node.start_byte(),
-                        visibility_scope: local_visibility_scope(node)
-                            .unwrap_or_else(|| fallback_visibility_scope(ctx.offset)),
-                    });
+        if node.kind() == "variable_declarator"
+            && let Some(assignment) = first_child_of_kind(node, "assignment_expression")
+        {
+            let lhs = assignment.child_by_field_name("left").or_else(|| {
+                let mut wc = assignment.walk();
+                assignment.named_children(&mut wc).next()
+            });
+            let rhs = assignment.child_by_field_name("right").or_else(|| {
+                let mut wc = assignment.walk();
+                assignment.named_children(&mut wc).nth(1)
+            });
+            if let (Some(name_node), Some(init_node)) = (lhs, rhs) {
+                if name_node.kind() != "identifier" {
+                    continue;
                 }
+                if name_node.start_byte() >= ctx.offset {
+                    continue;
+                }
+                let name = ctx.node_text(name_node);
+                let type_name = find_type_in_error_sibling(ctx, node);
+                let init_text = ctx.node_text(init_node).to_string();
+                let lv = if type_name.as_deref() == Some("var") {
+                    LocalVar {
+                        name: Arc::from(name),
+                        type_internal: TypeName::new("var"),
+                        init_expr: Some(init_text),
+                    }
+                } else {
+                    let raw_ty = type_name.as_deref().unwrap_or("Object");
+                    LocalVar {
+                        name: Arc::from(name),
+                        type_internal: resolve_declared_source_type(raw_ty, type_ctx),
+                        init_expr: None,
+                    }
+                };
+                vars.push(RankedLocal {
+                    local: lv,
+                    declaration_start: name_node.start_byte(),
+                    visibility_scope: local_visibility_scope(node)
+                        .unwrap_or_else(|| fallback_visibility_scope(ctx.offset)),
+                });
             }
         }
         // Push children in reverse order so we visit them left-to-right
@@ -225,13 +225,13 @@ fn collect_misread_decls(
 
 fn find_type_in_error_sibling(ctx: &JavaContextExtractor, declarator_node: Node) -> Option<String> {
     // Look inside ERROR children of the declarator for type_identifier
-    if let Some(error_child) = first_child_of_kind(declarator_node, "ERROR") {
-        if let Some(type_node) = first_child_of_kinds(
+    if let Some(error_child) = first_child_of_kind(declarator_node, "ERROR")
+        && let Some(type_node) = first_child_of_kinds(
             error_child,
             &["type_identifier", "integral_type", "void_type"],
-        ) {
-            return Some(ctx.node_text(type_node).to_string());
-        }
+        )
+    {
+        return Some(ctx.node_text(type_node).to_string());
     }
     None
 }
