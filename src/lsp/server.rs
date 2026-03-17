@@ -212,7 +212,6 @@ impl LanguageServer for Backend {
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
         let td = params.text_document;
 
-        // 用 registry 判断是否支持
         let lang = match self.registry.find(&td.language_id) {
             Some(l) => l,
             None => return,
@@ -220,7 +219,6 @@ impl LanguageServer for Backend {
 
         info!(uri = %td.uri, lang = %td.language_id, "did_open");
 
-        // 先存 document（Document::new 需要是 text+rope+tree=None 的新结构）
         self.workspace
             .documents
             .open(Document::new(crate::workspace::SourceFile::new(
@@ -231,7 +229,6 @@ impl LanguageServer for Backend {
                 None,
             )));
 
-        // 立刻 parse 一次，缓存 tree（避免 completion/semantic_tokens 每次 parse）
         let mut parser = lang.make_parser();
         let tree = parser.parse(&td.text, None);
 
@@ -281,7 +278,6 @@ impl LanguageServer for Backend {
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
         let uri = &params.text_document.uri;
 
-        // 只处理已打开文档
         let Some(lang_id) = self
             .workspace
             .documents
@@ -295,8 +291,6 @@ impl LanguageServer for Backend {
             None => return,
         };
 
-        // 在 doc 上完成：应用 edits -> tree.edit -> parse(Some(old))
-        // 注意：闭包里不能 await
         let mut changed_text_for_index: Option<String> = None;
 
         let ok = self.workspace.documents.with_doc_mut(uri, |doc| {
@@ -392,7 +386,6 @@ impl LanguageServer for Backend {
             return;
         }
 
-        // 下面可以 await：更新索引 + refresh
         let Some(content) = changed_text_for_index else {
             return;
         };
@@ -452,12 +445,11 @@ impl LanguageServer for Backend {
             None => return,
         };
 
-        // 在 doc 内更新内容 + rope + tree（闭包内不能 await）
-        // 最终用于索引更新的内容
         let mut content_for_index: Option<String> = None;
 
         self.workspace.documents.with_doc_mut(uri, |doc| {
             if let Some(text) = params.text.as_ref() {
+                // TODO: should we use increment parsing here?
                 // 规范：如果 didSave 携带 text，以它为准（可能与内存不同步）
                 let mut parser = lang.make_parser();
                 let new_tree = parser.parse(text.as_str(), None);
@@ -487,7 +479,6 @@ impl LanguageServer for Backend {
             return;
         };
 
-        // 重新索引（你原有逻辑）
         let uri_str = uri.to_string();
         let analysis = self.workspace.analysis_context_for_uri(uri);
         let name_table = self
@@ -514,7 +505,6 @@ impl LanguageServer for Backend {
             classpath = ?analysis.classpath,
             source_root = ?analysis.source_root.map(|id| id.0),
             visible_classpath_len = visible_classpath.len(),
-            asm_visible = visible_classpath.iter().any(|jar| jar.contains("asm-")),
             "did_save indexing with analysis context"
         );
         self.workspace.index.write().await.update_source_in_context(
@@ -524,7 +514,6 @@ impl LanguageServer for Backend {
             classes,
         );
 
-        // 刷新语义高亮
         self.client.semantic_tokens_refresh().await.ok();
         self.notify_build_file_change(uri).await;
     }
