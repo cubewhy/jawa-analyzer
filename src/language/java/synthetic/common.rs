@@ -6,8 +6,8 @@ use crate::{
     language::java::{
         JavaContextExtractor,
         lombok::rules::{
-            BuilderRule, ConstructorRule, DataRule, EqualsAndHashCodeRule, GetterSetterRule,
-            ToStringRule, ValueRule,
+            BuilderRule, ConstructorRule, DataRule, DelegateRule, EqualsAndHashCodeRule,
+            GetterSetterRule, LogRule, ToStringRule, ValueRule, WithRule,
         },
         members::extract_class_members_from_body,
         synthetic::rules::{enum_rule, record_rule},
@@ -18,7 +18,7 @@ use crate::{
 
 use super::rules::{enum_rule::EnumRule, record_rule::RecordRule};
 
-const SYNTHETIC_RULES: [&dyn SyntheticMemberRule; 9] = [
+const SYNTHETIC_RULES: [&dyn SyntheticMemberRule; 12] = [
     &RecordRule,
     &EnumRule,
     &DataRule,
@@ -28,6 +28,9 @@ const SYNTHETIC_RULES: [&dyn SyntheticMemberRule; 9] = [
     &EqualsAndHashCodeRule,
     &ConstructorRule,
     &BuilderRule,
+    &WithRule,
+    &LogRule,
+    &DelegateRule,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]

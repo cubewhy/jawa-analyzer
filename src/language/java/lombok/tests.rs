@@ -3562,3 +3562,952 @@ mod builder_tests {
         );
     }
 }
+
+mod with_tests {
+    use super::*;
+    use rust_asm::constants::{ACC_FINAL, ACC_PRIVATE, ACC_PROTECTED, ACC_PUBLIC};
+
+    #[test]
+    fn test_with_generates_method_for_field() {
+        let src = indoc::indoc! {"
+            import lombok.With;
+            
+            public class Person {
+                @With
+                private final String name;
+                
+                public Person(String name) {
+                    this.name = name;
+                }
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        let with_method = class.methods.iter().find(|m| m.name.as_ref() == "withName");
+        assert!(with_method.is_some(), "Should generate withName() method");
+
+        let with_method = with_method.unwrap();
+        assert_eq!(
+            with_method.params.items.len(),
+            1,
+            "withName should have 1 parameter"
+        );
+        assert_eq!(
+            with_method.access_flags & ACC_PUBLIC,
+            ACC_PUBLIC,
+            "withName should be public by default"
+        );
+    }
+
+    #[test]
+    fn test_with_class_level_annotation() {
+        let src = indoc::indoc! {"
+            import lombok.With;
+            import lombok.AllArgsConstructor;
+            
+            @With
+            @AllArgsConstructor
+            public class Person {
+                private final String name;
+                private final int age;
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        assert!(
+            class.methods.iter().any(|m| m.name.as_ref() == "withName"),
+            "Should generate withName() method"
+        );
+        assert!(
+            class.methods.iter().any(|m| m.name.as_ref() == "withAge"),
+            "Should generate withAge() method"
+        );
+    }
+
+    #[test]
+    fn test_with_respects_access_level() {
+        let src = indoc::indoc! {"
+            import lombok.With;
+            import lombok.AccessLevel;
+            
+            public class Person {
+                @With(AccessLevel.PROTECTED)
+                private final String name;
+                
+                public Person(String name) {
+                    this.name = name;
+                }
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        let with_method = class.methods.iter().find(|m| m.name.as_ref() == "withName");
+        assert!(with_method.is_some(), "Should generate withName() method");
+
+        let with_method = with_method.unwrap();
+        assert_eq!(
+            with_method.access_flags & ACC_PROTECTED,
+            ACC_PROTECTED,
+            "withName should be protected"
+        );
+    }
+
+    #[test]
+    fn test_with_not_generated_for_static_fields() {
+        let src = indoc::indoc! {"
+            import lombok.With;
+            
+            public class Config {
+                @With
+                private static final String DEFAULT_NAME = \"default\";
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        assert!(
+            !class
+                .methods
+                .iter()
+                .any(|m| m.name.as_ref() == "withDEFAULT_NAME"),
+            "Should not generate with method for static field"
+        );
+    }
+
+    #[test]
+    fn test_with_skips_existing_method() {
+        let src = indoc::indoc! {"
+            import lombok.With;
+            
+            public class Person {
+                @With
+                private final String name;
+                
+                public Person(String name) {
+                    this.name = name;
+                }
+                
+                public Person withName(String name) {
+                    return new Person(name.toUpperCase());
+                }
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        let with_methods: Vec<_> = class
+            .methods
+            .iter()
+            .filter(|m| m.name.as_ref() == "withName")
+            .collect();
+
+        assert_eq!(
+            with_methods.len(),
+            1,
+            "Should only have one withName method (the explicit one)"
+        );
+    }
+
+    #[test]
+    fn test_with_handles_nonnull_annotation() {
+        let src = indoc::indoc! {"
+            import lombok.With;
+            import lombok.NonNull;
+            
+            public class Person {
+                @With
+                @NonNull
+                private final String name;
+                
+                public Person(String name) {
+                    this.name = name;
+                }
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        let with_method = class.methods.iter().find(|m| m.name.as_ref() == "withName");
+        assert!(with_method.is_some(), "Should generate withName() method");
+
+        let with_method = with_method.unwrap();
+        assert_eq!(with_method.params.items.len(), 1);
+
+        // Check if parameter has @NonNull annotation
+        let param_has_nonnull = with_method.params.items[0]
+            .annotations
+            .iter()
+            .any(|a| a.internal_name.as_ref() == "lombok/NonNull");
+        assert!(
+            param_has_nonnull,
+            "Parameter should have @NonNull annotation"
+        );
+    }
+
+    #[test]
+    fn test_with_multiple_fields() {
+        let src = indoc::indoc! {"
+            import lombok.With;
+            
+            public class Person {
+                @With
+                private final String firstName;
+                @With
+                private final String lastName;
+                @With
+                private final int age;
+                
+                public Person(String firstName, String lastName, int age) {
+                    this.firstName = firstName;
+                    this.lastName = lastName;
+                    this.age = age;
+                }
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        assert!(
+            class
+                .methods
+                .iter()
+                .any(|m| m.name.as_ref() == "withFirstName"),
+            "Should generate withFirstName() method"
+        );
+        assert!(
+            class
+                .methods
+                .iter()
+                .any(|m| m.name.as_ref() == "withLastName"),
+            "Should generate withLastName() method"
+        );
+        assert!(
+            class.methods.iter().any(|m| m.name.as_ref() == "withAge"),
+            "Should generate withAge() method"
+        );
+    }
+
+    #[test]
+    fn test_with_returns_same_type() {
+        let src = indoc::indoc! {"
+            package com.example;
+            import lombok.With;
+            
+            public class Person {
+                @With
+                private final String name;
+                
+                public Person(String name) {
+                    this.name = name;
+                }
+            }
+        "};
+
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let class = &classes[0];
+
+        let with_method = class.methods.iter().find(|m| m.name.as_ref() == "withName");
+        assert!(with_method.is_some(), "Should generate withName() method");
+
+        let with_method = with_method.unwrap();
+        assert!(
+            with_method.return_type.is_some(),
+            "withName should have return type"
+        );
+        assert_eq!(
+            with_method.return_type.as_ref().unwrap().as_ref(),
+            "Lcom/example/Person;",
+            "withName should return Person type"
+        );
+    }
+
+    #[test]
+    fn test_with_deprecated_wither_annotation() {
+        let src = indoc::indoc! {"
+            import lombok.experimental.Wither;
+            
+            public class Person {
+                @Wither
+                private final String name;
+                
+                public Person(String name) {
+                    this.name = name;
+                }
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        assert!(
+            class.methods.iter().any(|m| m.name.as_ref() == "withName"),
+            "Should generate withName() method for @Wither annotation"
+        );
+    }
+
+    #[test]
+    fn test_with_integration_with_value() {
+        let src = indoc::indoc! {"
+            import lombok.Value;
+            import lombok.With;
+            
+            @Value
+            @With
+            public class Point {
+                int x;
+                int y;
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        // @Value makes fields final and generates all-args constructor
+        // @With should generate with methods
+        assert!(
+            class.methods.iter().any(|m| m.name.as_ref() == "withX"),
+            "Should generate withX() method"
+        );
+        assert!(
+            class.methods.iter().any(|m| m.name.as_ref() == "withY"),
+            "Should generate withY() method"
+        );
+    }
+
+    #[test]
+    fn test_with_field_prefix_stripping() {
+        let src = indoc::indoc! {"
+            import lombok.With;
+            
+            public class Person {
+                @With
+                private final String name;
+                
+                public Person(String name) {
+                    this.name = name;
+                }
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        // Even if field has prefix, method should be withName (capitalized)
+        assert!(
+            class.methods.iter().any(|m| m.name.as_ref() == "withName"),
+            "Should generate withName() method"
+        );
+    }
+}
+
+mod log_tests {
+    use super::*;
+    use rust_asm::constants::{ACC_FINAL, ACC_PRIVATE, ACC_STATIC};
+
+    #[test]
+    fn test_slf4j_generates_log_field() {
+        let src = indoc::indoc! {"
+            import lombok.extern.slf4j.Slf4j;
+            
+            @Slf4j
+            public class MyService {
+                public void doSomething() {
+                    // log.info(\"doing something\");
+                }
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        let log_field = class.fields.iter().find(|f| f.name.as_ref() == "log");
+        assert!(log_field.is_some(), "Should generate log field");
+
+        let log_field = log_field.unwrap();
+        assert_eq!(
+            log_field.descriptor.as_ref(),
+            "Lorg/slf4j/Logger;",
+            "Should be slf4j Logger type"
+        );
+        assert_eq!(
+            log_field.access_flags & ACC_STATIC,
+            ACC_STATIC,
+            "Should be static"
+        );
+        assert_eq!(
+            log_field.access_flags & ACC_FINAL,
+            ACC_FINAL,
+            "Should be final"
+        );
+        assert_eq!(
+            log_field.access_flags & ACC_PRIVATE,
+            ACC_PRIVATE,
+            "Should be private"
+        );
+    }
+
+    #[test]
+    fn test_log4j2_generates_log_field() {
+        let src = indoc::indoc! {"
+            import lombok.extern.log4j.Log4j2;
+            
+            @Log4j2
+            public class MyService {
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        let log_field = class.fields.iter().find(|f| f.name.as_ref() == "log");
+        assert!(log_field.is_some(), "Should generate log field");
+
+        let log_field = log_field.unwrap();
+        assert_eq!(
+            log_field.descriptor.as_ref(),
+            "Lorg/apache/logging/log4j/Logger;",
+            "Should be log4j2 Logger type"
+        );
+    }
+
+    #[test]
+    fn test_log4j_generates_log_field() {
+        let src = indoc::indoc! {"
+            import lombok.extern.log4j.Log4j;
+            
+            @Log4j
+            public class MyService {
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        let log_field = class.fields.iter().find(|f| f.name.as_ref() == "log");
+        assert!(log_field.is_some(), "Should generate log field");
+
+        let log_field = log_field.unwrap();
+        assert_eq!(
+            log_field.descriptor.as_ref(),
+            "Lorg/apache/log4j/Logger;",
+            "Should be log4j Logger type"
+        );
+    }
+
+    #[test]
+    fn test_java_util_logging_generates_log_field() {
+        let src = indoc::indoc! {"
+            import lombok.extern.java.Log;
+            
+            @Log
+            public class MyService {
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        let log_field = class.fields.iter().find(|f| f.name.as_ref() == "log");
+        assert!(log_field.is_some(), "Should generate log field");
+
+        let log_field = log_field.unwrap();
+        assert_eq!(
+            log_field.descriptor.as_ref(),
+            "Ljava/util/logging/Logger;",
+            "Should be java.util.logging Logger type"
+        );
+    }
+
+    #[test]
+    fn test_commons_log_generates_log_field() {
+        let src = indoc::indoc! {"
+            import lombok.extern.apachecommons.CommonsLog;
+            
+            @CommonsLog
+            public class MyService {
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        let log_field = class.fields.iter().find(|f| f.name.as_ref() == "log");
+        assert!(log_field.is_some(), "Should generate log field");
+
+        let log_field = log_field.unwrap();
+        assert_eq!(
+            log_field.descriptor.as_ref(),
+            "Lorg/apache/commons/logging/Log;",
+            "Should be commons logging Log type"
+        );
+    }
+
+    #[test]
+    fn test_jboss_log_generates_log_field() {
+        let src = indoc::indoc! {"
+            import lombok.extern.jbosslog.JBossLog;
+            
+            @JBossLog
+            public class MyService {
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        let log_field = class.fields.iter().find(|f| f.name.as_ref() == "log");
+        assert!(log_field.is_some(), "Should generate log field");
+
+        let log_field = log_field.unwrap();
+        assert_eq!(
+            log_field.descriptor.as_ref(),
+            "Lorg/jboss/logging/Logger;",
+            "Should be JBoss Logger type"
+        );
+    }
+
+    #[test]
+    fn test_flogger_generates_log_field() {
+        let src = indoc::indoc! {"
+            import lombok.extern.flogger.Flogger;
+            
+            @Flogger
+            public class MyService {
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        let log_field = class.fields.iter().find(|f| f.name.as_ref() == "log");
+        assert!(log_field.is_some(), "Should generate log field");
+
+        let log_field = log_field.unwrap();
+        assert_eq!(
+            log_field.descriptor.as_ref(),
+            "Lcom/google/common/flogger/FluentLogger;",
+            "Should be Flogger FluentLogger type"
+        );
+    }
+
+    #[test]
+    fn test_xslf4j_generates_log_field() {
+        let src = indoc::indoc! {"
+            import lombok.extern.slf4j.XSlf4j;
+            
+            @XSlf4j
+            public class MyService {
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        let log_field = class.fields.iter().find(|f| f.name.as_ref() == "log");
+        assert!(log_field.is_some(), "Should generate log field");
+
+        let log_field = log_field.unwrap();
+        assert_eq!(
+            log_field.descriptor.as_ref(),
+            "Lorg/slf4j/ext/XLogger;",
+            "Should be XSlf4j XLogger type"
+        );
+    }
+
+    #[test]
+    fn test_log_field_not_generated_if_exists() {
+        let src = indoc::indoc! {"
+            import lombok.extern.slf4j.Slf4j;
+            
+            @Slf4j
+            public class MyService {
+                private static final org.slf4j.Logger log = null;
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        // Should only have one log field (the explicit one)
+        let log_fields: Vec<_> = class
+            .fields
+            .iter()
+            .filter(|f| f.name.as_ref() == "log")
+            .collect();
+        assert_eq!(
+            log_fields.len(),
+            1,
+            "Should only have one log field (the explicit one)"
+        );
+    }
+
+    #[test]
+    fn test_log_with_custom_topic() {
+        let src = indoc::indoc! {"
+            import lombok.extern.slf4j.Slf4j;
+            
+            @Slf4j(topic = \"MyCustomLogger\")
+            public class MyService {
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        let log_field = class.fields.iter().find(|f| f.name.as_ref() == "log");
+        assert!(
+            log_field.is_some(),
+            "Should generate log field even with custom topic"
+        );
+    }
+
+    #[test]
+    fn test_multiple_classes_different_loggers() {
+        let src = indoc::indoc! {"
+            import lombok.extern.slf4j.Slf4j;
+            import lombok.extern.log4j.Log4j2;
+            
+            @Slf4j
+            class ServiceA {
+            }
+            
+            @Log4j2
+            class ServiceB {
+            }
+        "};
+
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        assert_eq!(classes.len(), 2, "Should have two classes");
+
+        let service_a = classes.iter().find(|c| c.name.as_ref() == "ServiceA");
+        assert!(service_a.is_some());
+        let service_a = service_a.unwrap();
+        let log_a = service_a.fields.iter().find(|f| f.name.as_ref() == "log");
+        assert!(log_a.is_some());
+        assert_eq!(log_a.unwrap().descriptor.as_ref(), "Lorg/slf4j/Logger;");
+
+        let service_b = classes.iter().find(|c| c.name.as_ref() == "ServiceB");
+        assert!(service_b.is_some());
+        let service_b = service_b.unwrap();
+        let log_b = service_b.fields.iter().find(|f| f.name.as_ref() == "log");
+        assert!(log_b.is_some());
+        assert_eq!(
+            log_b.unwrap().descriptor.as_ref(),
+            "Lorg/apache/logging/log4j/Logger;"
+        );
+    }
+
+    #[test]
+    fn test_log_in_enum() {
+        let src = indoc::indoc! {"
+            import lombok.extern.slf4j.Slf4j;
+            
+            @Slf4j
+            public enum Status {
+                ACTIVE, INACTIVE
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        let log_field = class.fields.iter().find(|f| f.name.as_ref() == "log");
+        assert!(log_field.is_some(), "Should generate log field in enum");
+    }
+
+    #[test]
+    fn test_log_in_record() {
+        let src = indoc::indoc! {"
+            import lombok.extern.slf4j.Slf4j;
+            
+            @Slf4j
+            public record Person(String name, int age) {
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        let log_field = class.fields.iter().find(|f| f.name.as_ref() == "log");
+        assert!(log_field.is_some(), "Should generate log field in record");
+    }
+}
+
+mod delegate_tests {
+    use super::*;
+
+    #[test]
+    fn test_delegate_basic_field() {
+        let src = indoc::indoc! {"
+            import lombok.experimental.Delegate;
+            import java.util.List;
+            import java.util.ArrayList;
+            
+            public class MyList {
+                @Delegate
+                private List<String> items = new ArrayList<>();
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        // @Delegate is recognized and the class parses correctly
+        assert_eq!(class.name.as_ref(), "MyList");
+        assert!(class.fields.iter().any(|f| f.name.as_ref() == "items"));
+    }
+
+    #[test]
+    fn test_delegate_not_generated_for_static_field() {
+        let src = indoc::indoc! {"
+            import lombok.experimental.Delegate;
+            import java.util.List;
+            
+            public class MyList {
+                @Delegate
+                private static List<String> SHARED_LIST;
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        // Static field with @Delegate should still parse
+        assert_eq!(class.name.as_ref(), "MyList");
+        assert!(
+            class
+                .fields
+                .iter()
+                .any(|f| f.name.as_ref() == "SHARED_LIST")
+        );
+    }
+
+    #[test]
+    fn test_delegate_with_types_parameter() {
+        let src = indoc::indoc! {"
+            import lombok.experimental.Delegate;
+            import java.util.Collection;
+            import java.util.ArrayList;
+            
+            public class MyCollection {
+                @Delegate(types = Collection.class)
+                private ArrayList<String> items = new ArrayList<>();
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        // @Delegate with types parameter should parse
+        assert_eq!(class.name.as_ref(), "MyCollection");
+        assert!(class.fields.iter().any(|f| f.name.as_ref() == "items"));
+    }
+
+    #[test]
+    fn test_delegate_with_excludes_parameter() {
+        let src = indoc::indoc! {"
+            import lombok.experimental.Delegate;
+            import java.util.List;
+            import java.util.ArrayList;
+            
+            public class MyList {
+                @Delegate(excludes = java.util.Collection.class)
+                private List<String> items = new ArrayList<>();
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        // @Delegate with excludes parameter should parse
+        assert_eq!(class.name.as_ref(), "MyList");
+        assert!(class.fields.iter().any(|f| f.name.as_ref() == "items"));
+    }
+
+    #[test]
+    fn test_delegate_multiple_fields() {
+        let src = indoc::indoc! {"
+            import lombok.experimental.Delegate;
+            import java.util.List;
+            import java.util.Set;
+            
+            public class MyContainer {
+                @Delegate
+                private List<String> list;
+                
+                @Delegate
+                private Set<String> set;
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        // Multiple @Delegate fields should parse
+        assert_eq!(class.name.as_ref(), "MyContainer");
+        assert!(class.fields.iter().any(|f| f.name.as_ref() == "list"));
+        assert!(class.fields.iter().any(|f| f.name.as_ref() == "set"));
+    }
+
+    #[test]
+    fn test_delegate_with_interface() {
+        let src = indoc::indoc! {"
+            import lombok.experimental.Delegate;
+            
+            interface Printer {
+                void print(String message);
+            }
+            
+            class MyPrinter {
+                @Delegate
+                private Printer printer;
+            }
+        "};
+
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let my_printer = classes.iter().find(|c| c.name.as_ref() == "MyPrinter");
+        assert!(my_printer.is_some());
+
+        let my_printer = my_printer.unwrap();
+        assert!(
+            my_printer
+                .fields
+                .iter()
+                .any(|f| f.name.as_ref() == "printer")
+        );
+    }
+
+    #[test]
+    fn test_delegate_private_inner_interface() {
+        let src = indoc::indoc! {"
+            import lombok.experimental.Delegate;
+            import java.util.Collection;
+            
+            public class MyCollection {
+                private interface SimpleCollection {
+                    boolean add(String item);
+                    boolean remove(Object item);
+                }
+                
+                @Delegate(types = SimpleCollection.class)
+                private Collection<String> items;
+            }
+        "};
+
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let my_collection = classes.iter().find(|c| c.name.as_ref() == "MyCollection");
+        assert!(my_collection.is_some());
+
+        let my_collection = my_collection.unwrap();
+        // @Delegate with private inner interface should parse
+        assert!(
+            my_collection
+                .fields
+                .iter()
+                .any(|f| f.name.as_ref() == "items")
+        );
+    }
+
+    #[test]
+    fn test_delegate_with_generic_type() {
+        let src = indoc::indoc! {"
+            import lombok.experimental.Delegate;
+            import java.util.List;
+            
+            public class GenericContainer<T> {
+                @Delegate
+                private List<T> items;
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        // @Delegate with generic types should parse
+        assert_eq!(class.name.as_ref(), "GenericContainer");
+        assert!(class.fields.iter().any(|f| f.name.as_ref() == "items"));
+    }
+
+    #[test]
+    fn test_delegate_integration_scenario() {
+        let src = indoc::indoc! {"
+            import lombok.experimental.Delegate;
+            import java.util.ArrayList;
+            import java.util.List;
+            
+            public class DelegatingList {
+                @Delegate
+                private final List<String> delegate = new ArrayList<>();
+                
+                public void customMethod() {
+                }
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        // Should parse with both @Delegate and custom methods
+        assert_eq!(class.name.as_ref(), "DelegatingList");
+        assert!(class.fields.iter().any(|f| f.name.as_ref() == "delegate"));
+        assert!(
+            class
+                .methods
+                .iter()
+                .any(|m| m.name.as_ref() == "customMethod"),
+            "Should preserve custom methods"
+        );
+    }
+
+    #[test]
+    fn test_delegate_with_multiple_types() {
+        let src = indoc::indoc! {"
+            import lombok.experimental.Delegate;
+            import java.util.Collection;
+            import java.util.List;
+            
+            public class MyList {
+                @Delegate(types = {Collection.class, List.class})
+                private java.util.ArrayList<String> items;
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        // @Delegate with multiple types should parse
+        assert_eq!(class.name.as_ref(), "MyList");
+        assert!(class.fields.iter().any(|f| f.name.as_ref() == "items"));
+    }
+
+    #[test]
+    fn test_delegate_excludes_with_types() {
+        let src = indoc::indoc! {"
+            import lombok.experimental.Delegate;
+            import java.util.List;
+            
+            public class MyList {
+                private interface Add {
+                    boolean add(String x);
+                }
+                
+                @Delegate(excludes = Add.class)
+                private List<String> items;
+            }
+        "};
+
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let my_list = classes.iter().find(|c| c.name.as_ref() == "MyList");
+        assert!(my_list.is_some());
+
+        let my_list = my_list.unwrap();
+        // @Delegate with excludes should parse
+        assert!(my_list.fields.iter().any(|f| f.name.as_ref() == "items"));
+    }
+
+    #[test]
+    fn test_delegate_annotation_recognized() {
+        let src = indoc::indoc! {"
+            import lombok.experimental.Delegate;
+            import java.util.List;
+            
+            public class MyList {
+                @Delegate
+                private List<String> items;
+            }
+        "};
+
+        let class = parse_first_class(src);
+
+        // Verify the @Delegate annotation is recognized on the field
+        let items_field = class.fields.iter().find(|f| f.name.as_ref() == "items");
+        assert!(items_field.is_some());
+
+        let items_field = items_field.unwrap();
+        let has_delegate_anno = items_field.annotations.iter().any(|a| {
+            a.internal_name.as_ref() == "lombok/experimental/Delegate"
+                || a.internal_name.as_ref() == "Delegate"
+        });
+        assert!(has_delegate_anno, "Field should have @Delegate annotation");
+    }
+}

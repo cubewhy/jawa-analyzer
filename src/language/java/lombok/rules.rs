@@ -1,15 +1,21 @@
 pub mod builder_rule;
 pub mod constructor_rule;
 pub mod data_rule;
+pub mod delegate_rule;
 pub mod equals_hash_code_rule;
 pub mod getter_setter_rule;
+pub mod log_rule;
 pub mod to_string_rule;
 pub mod value_rule;
+pub mod with_rule;
 
 pub use builder_rule::BuilderRule;
 pub use constructor_rule::ConstructorRule;
 pub use data_rule::DataRule;
+pub use delegate_rule::DelegateRule;
 pub use equals_hash_code_rule::EqualsAndHashCodeRule;
 pub use getter_setter_rule::GetterSetterRule;
+pub use log_rule::LogRule;
 pub use to_string_rule::ToStringRule;
 pub use value_rule::ValueRule;
+pub use with_rule::WithRule;

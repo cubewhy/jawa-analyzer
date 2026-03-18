@@ -79,7 +79,7 @@ pub mod annotations {
     pub const SNEAKY_THROWS: &str = "lombok/SneakyThrows";
     pub const SYNCHRONIZED: &str = "lombok/Synchronized";
     pub const LOCKED: &str = "lombok/Locked";
-    pub const DELEGATE: &str = "lombok/Delegate";
+    pub const DELEGATE: &str = "lombok/experimental/Delegate";
     pub const GETTER_LAZY: &str = "lombok/Getter"; // with lazy=true parameter
 
     // Log annotations
