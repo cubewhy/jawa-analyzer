@@ -57,14 +57,6 @@ pub fn parse_java_source(
         &mut results,
     );
 
-    // Generate synthetic nested classes (e.g., Builder classes from @Builder)
-    let synthetic_nested = generate_synthetic_nested_classes(&results, &type_ctx, &origin);
-    results.extend(synthetic_nested);
-
-    // Generate synthetic nested classes (e.g., Builder classes from @Builder)
-    let synthetic_nested = generate_synthetic_nested_classes(&results, &type_ctx, &origin);
-    results.extend(synthetic_nested);
-
     results
 }
 
@@ -76,7 +68,7 @@ fn parse_java_class(
     outer_simple: Option<Arc<str>>,
     origin: &ClassOrigin,
     type_ctx: &SourceTypeCtx,
-) -> Option<ClassMetadata> {
+) -> Option<(ClassMetadata, Vec<ClassMetadata>)> {
     let name_node = node.child_by_field_name("name")?;
     let class_name = ctx.node_text(name_node);
     if class_name.is_empty() {
@@ -193,7 +185,7 @@ fn parse_java_class(
         );
     }
 
-    Some(ClassMetadata {
+    let main_class = ClassMetadata {
         package: package.clone(),
         name,
         internal_name,
@@ -206,7 +198,10 @@ fn parse_java_class(
         inner_class_of: outer_simple,
         generic_signature: class_generic_signature,
         origin: origin.clone(),
-    })
+    };
+
+    // Return the main class and any synthetic nested classes
+    Some((main_class, synthetic.nested_classes))
 }
 
 fn synthesize_class_typevar_method_signature(
@@ -373,7 +368,7 @@ fn collect_java_classes(
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             if is_class_decl.test(Input::new(child, (), None)) {
-                if let Some(meta) = parse_java_class(
+                if let Some((meta, synthetic_nested)) = parse_java_class(
                     ctx,
                     child,
                     package,
@@ -388,6 +383,8 @@ fn collect_java_classes(
                         stack.push((body, inner_outer_internal, inner_outer_simple));
                     }
                     out.push(meta);
+                    // Add synthetic nested classes (e.g., Builder classes)
+                    out.extend(synthetic_nested);
                 }
             } else {
                 // Continue searching downwards
@@ -1594,29 +1591,6 @@ record Point(int x, int y) {
         assert_eq!(range.start.line, 0);
         assert_eq!(range.start.character, 18);
     }
-}
-
-/// Generate synthetic nested classes from Lombok annotations (e.g., @Builder)
-fn generate_synthetic_nested_classes(
-    classes: &[ClassMetadata],
-    _type_ctx: &SourceTypeCtx,
-    _origin: &ClassOrigin,
-) -> Vec<ClassMetadata> {
-    let mut synthetic_nested = Vec::new();
-
-    for _class in classes {
-        // For each class, check if it has annotations that generate nested classes
-        // Currently, this is primarily @Builder
-
-        // Extract synthetic nested classes from the class's synthetic member set
-        // This requires re-parsing to get the tree node, which we'll optimize later
-        // For now, we'll collect nested classes that were generated during synthesis
-
-        // TODO: Implement actual nested class generation
-        // This will be filled in by the BuilderRule
-    }
-
-    synthetic_nested
 }
 
 #[cfg(test)]

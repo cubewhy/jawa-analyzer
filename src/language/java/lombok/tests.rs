@@ -6,6 +6,7 @@
 use crate::index::ClassOrigin;
 use crate::language::java::class_parser::parse_java_source;
 use rust_asm::constants::{ACC_PUBLIC, ACC_STATIC};
+use std::sync::Arc;
 
 /// Helper function to parse Java source and return the first class
 fn parse_first_class(src: &str) -> crate::index::ClassMetadata {
@@ -3107,5 +3108,457 @@ mod value_tests {
         // Should NOT have setters
         assert!(!class.methods.iter().any(|m| m.name.as_ref() == "setName"));
         assert!(!class.methods.iter().any(|m| m.name.as_ref() == "setAge"));
+    }
+}
+
+mod builder_tests {
+    use super::*;
+
+    #[test]
+    fn test_builder_generates_nested_class() {
+        let src = indoc::indoc! {"
+            import lombok.Builder;
+            
+            @Builder
+            public class Person {
+                private String name;
+                private int age;
+            }
+        "};
+
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        assert_eq!(
+            classes.len(),
+            2,
+            "Expected Person class and PersonBuilder class"
+        );
+
+        let _person_class = classes
+            .iter()
+            .find(|c| c.name.as_ref() == "Person")
+            .unwrap();
+        let builder_class = classes
+            .iter()
+            .find(|c| c.name.as_ref() == "PersonBuilder")
+            .unwrap();
+
+        // Check that PersonBuilder is a nested class of Person
+        assert_eq!(builder_class.inner_class_of, Some(Arc::from("Person")));
+        assert_eq!(builder_class.internal_name.as_ref(), "Person$PersonBuilder");
+    }
+
+    #[test]
+    fn test_builder_generates_builder_method() {
+        let src = indoc::indoc! {"
+            import lombok.Builder;
+            
+            @Builder
+            public class Person {
+                private String name;
+                private int age;
+            }
+        "};
+
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let person_class = classes
+            .iter()
+            .find(|c| c.name.as_ref() == "Person")
+            .unwrap();
+
+        // Should have static builder() method
+        let builder_method = person_class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "builder");
+        assert!(builder_method.is_some(), "Should generate builder() method");
+
+        let builder_method = builder_method.unwrap();
+        assert_eq!(
+            builder_method.access_flags & ACC_STATIC,
+            ACC_STATIC,
+            "builder() should be static"
+        );
+        assert_eq!(
+            builder_method.access_flags & ACC_PUBLIC,
+            ACC_PUBLIC,
+            "builder() should be public"
+        );
+        assert!(
+            builder_method.params.is_empty(),
+            "builder() should have no parameters"
+        );
+    }
+
+    #[test]
+    fn test_builder_class_has_fields() {
+        let src = indoc::indoc! {"
+            import lombok.Builder;
+            
+            @Builder
+            public class Person {
+                private String name;
+                private int age;
+                private String email;
+            }
+        "};
+
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let builder_class = classes
+            .iter()
+            .find(|c| c.name.as_ref() == "PersonBuilder")
+            .unwrap();
+
+        // Builder should have fields for each buildable field
+        assert_eq!(builder_class.fields.len(), 3);
+        assert!(
+            builder_class
+                .fields
+                .iter()
+                .any(|f| f.name.as_ref() == "name")
+        );
+        assert!(
+            builder_class
+                .fields
+                .iter()
+                .any(|f| f.name.as_ref() == "age")
+        );
+        assert!(
+            builder_class
+                .fields
+                .iter()
+                .any(|f| f.name.as_ref() == "email")
+        );
+    }
+
+    #[test]
+    fn test_builder_class_has_setter_methods() {
+        let src = indoc::indoc! {"
+            import lombok.Builder;
+            
+            @Builder
+            public class Person {
+                private String name;
+                private int age;
+            }
+        "};
+
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let builder_class = classes
+            .iter()
+            .find(|c| c.name.as_ref() == "PersonBuilder")
+            .unwrap();
+
+        // Builder should have setter methods (fluent style)
+        let name_setter = builder_class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "name");
+        assert!(name_setter.is_some(), "Should have name() setter");
+
+        let name_setter = name_setter.unwrap();
+        assert_eq!(name_setter.params.len(), 1);
+        assert_eq!(name_setter.params.items[0].name.as_ref(), "name");
+
+        let age_setter = builder_class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "age");
+        assert!(age_setter.is_some(), "Should have age() setter");
+
+        let age_setter = age_setter.unwrap();
+        assert_eq!(age_setter.params.len(), 1);
+        assert_eq!(age_setter.params.items[0].name.as_ref(), "age");
+    }
+
+    #[test]
+    fn test_builder_class_has_build_method() {
+        let src = indoc::indoc! {"
+            import lombok.Builder;
+            
+            @Builder
+            public class Person {
+                private String name;
+                private int age;
+            }
+        "};
+
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let builder_class = classes
+            .iter()
+            .find(|c| c.name.as_ref() == "PersonBuilder")
+            .unwrap();
+
+        // Builder should have build() method
+        let build_method = builder_class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "build");
+        assert!(build_method.is_some(), "Should have build() method");
+
+        let build_method = build_method.unwrap();
+        assert!(
+            build_method.params.is_empty(),
+            "build() should have no parameters"
+        );
+        assert_eq!(
+            build_method.access_flags & ACC_PUBLIC,
+            ACC_PUBLIC,
+            "build() should be public"
+        );
+    }
+
+    #[test]
+    fn test_builder_class_has_tostring() {
+        let src = indoc::indoc! {"
+            import lombok.Builder;
+            
+            @Builder
+            public class Person {
+                private String name;
+                private int age;
+            }
+        "};
+
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let builder_class = classes
+            .iter()
+            .find(|c| c.name.as_ref() == "PersonBuilder")
+            .unwrap();
+
+        // Builder should have toString() method
+        let tostring = builder_class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "toString");
+        assert!(tostring.is_some(), "Builder should have toString() method");
+    }
+
+    #[test]
+    fn test_builder_skips_static_fields() {
+        let src = indoc::indoc! {"
+            import lombok.Builder;
+            
+            @Builder
+            public class Person {
+                private String name;
+                private static int counter;
+                private int age;
+            }
+        "};
+
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let builder_class = classes
+            .iter()
+            .find(|c| c.name.as_ref() == "PersonBuilder")
+            .unwrap();
+
+        // Builder should only have non-static fields
+        assert_eq!(builder_class.fields.len(), 2);
+        assert!(
+            builder_class
+                .fields
+                .iter()
+                .any(|f| f.name.as_ref() == "name")
+        );
+        assert!(
+            builder_class
+                .fields
+                .iter()
+                .any(|f| f.name.as_ref() == "age")
+        );
+        assert!(
+            !builder_class
+                .fields
+                .iter()
+                .any(|f| f.name.as_ref() == "counter")
+        );
+    }
+
+    #[test]
+    fn test_builder_with_tobuilder() {
+        let src = indoc::indoc! {"
+            import lombok.Builder;
+            
+            @Builder(toBuilder = true)
+            public class Person {
+                private String name;
+                private int age;
+            }
+        "};
+
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let person_class = classes
+            .iter()
+            .find(|c| c.name.as_ref() == "Person")
+            .unwrap();
+
+        // Should have toBuilder() instance method
+        let to_builder = person_class
+            .methods
+            .iter()
+            .find(|m| m.name.as_ref() == "toBuilder");
+        assert!(to_builder.is_some(), "Should have toBuilder() method");
+
+        let to_builder = to_builder.unwrap();
+        assert_eq!(
+            to_builder.access_flags & ACC_STATIC,
+            0,
+            "toBuilder() should not be static"
+        );
+        assert_eq!(
+            to_builder.access_flags & ACC_PUBLIC,
+            ACC_PUBLIC,
+            "toBuilder() should be public"
+        );
+    }
+
+    #[test]
+    fn test_builder_custom_method_names() {
+        let src = indoc::indoc! {"
+            import lombok.Builder;
+            
+            @Builder(builderMethodName = \"create\", buildMethodName = \"construct\")
+            public class Person {
+                private String name;
+            }
+        "};
+
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let person_class = classes
+            .iter()
+            .find(|c| c.name.as_ref() == "Person")
+            .unwrap();
+        let builder_class = classes
+            .iter()
+            .find(|c| c.name.as_ref() == "PersonBuilder")
+            .unwrap();
+
+        // Should have custom builder method name
+        assert!(
+            person_class
+                .methods
+                .iter()
+                .any(|m| m.name.as_ref() == "create")
+        );
+        assert!(
+            !person_class
+                .methods
+                .iter()
+                .any(|m| m.name.as_ref() == "builder")
+        );
+
+        // Should have custom build method name
+        assert!(
+            builder_class
+                .methods
+                .iter()
+                .any(|m| m.name.as_ref() == "construct")
+        );
+        assert!(
+            !builder_class
+                .methods
+                .iter()
+                .any(|m| m.name.as_ref() == "build")
+        );
+    }
+
+    #[test]
+    fn test_builder_custom_class_name() {
+        let src = indoc::indoc! {"
+            import lombok.Builder;
+            
+            @Builder(builderClassName = \"PersonFactory\")
+            public class Person {
+                private String name;
+            }
+        "};
+
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+
+        // Should have custom builder class name
+        let builder_class = classes.iter().find(|c| c.name.as_ref() == "PersonFactory");
+        assert!(
+            builder_class.is_some(),
+            "Should generate PersonFactory class"
+        );
+
+        let builder_class = builder_class.unwrap();
+        assert_eq!(builder_class.internal_name.as_ref(), "Person$PersonFactory");
+    }
+
+    #[test]
+    fn test_builder_with_package() {
+        let src = indoc::indoc! {"
+            package com.example;
+            
+            import lombok.Builder;
+            
+            @Builder
+            public class Person {
+                private String name;
+            }
+        "};
+
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let person_class = classes
+            .iter()
+            .find(|c| c.name.as_ref() == "Person")
+            .unwrap();
+        let builder_class = classes
+            .iter()
+            .find(|c| c.name.as_ref() == "PersonBuilder")
+            .unwrap();
+
+        // Check internal names include package
+        assert_eq!(person_class.internal_name.as_ref(), "com/example/Person");
+        assert_eq!(
+            builder_class.internal_name.as_ref(),
+            "com/example/Person$PersonBuilder"
+        );
+    }
+
+    #[test]
+    fn test_builder_completion_scenario() {
+        let src = indoc::indoc! {"
+            import lombok.Builder;
+            
+            @Builder
+            public class Person {
+                private String firstName;
+                private String lastName;
+                private int age;
+            }
+        "};
+
+        let classes = parse_java_source(src, ClassOrigin::Unknown, None);
+        let builder_class = classes
+            .iter()
+            .find(|c| c.name.as_ref() == "PersonBuilder")
+            .unwrap();
+
+        // Verify all methods are present for completion
+        let method_names: Vec<&str> = builder_class
+            .methods
+            .iter()
+            .map(|m| m.name.as_ref())
+            .collect();
+
+        assert!(
+            method_names.contains(&"firstName"),
+            "Should have firstName() method"
+        );
+        assert!(
+            method_names.contains(&"lastName"),
+            "Should have lastName() method"
+        );
+        assert!(method_names.contains(&"age"), "Should have age() method");
+        assert!(
+            method_names.contains(&"build"),
+            "Should have build() method"
+        );
+        assert!(
+            method_names.contains(&"toString"),
+            "Should have toString() method"
+        );
     }
 }
