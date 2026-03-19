@@ -1,14 +1,6 @@
 repos:
   - repo: local
     hooks:
-      - id: test
-        name: test
-        description: Run tests
-        entry: cargo test
-        language: system
-        types: [rust]
-        pass_filenames: false
-
       - id: fmt
         name: fmt
         description: Format files with cargo fmt
@@ -25,11 +17,19 @@ repos:
         types: [rust]
         pass_filenames: false
 
-      # - id: clippy
-      #   name: clippy
-      #   description: Lint rust sources
-      #   entry: cargo clippy
-      #   language: system
-      #   args: ["--"]
-      #   types: [rust]
-      #   pass_filenames: false
+      - id: clippy
+        name: clippy
+        description: Lint rust sources
+        entry: cargo clippy
+        language: system
+        args: ["--fix", "--allow-dirty", "--all-targets"]
+        types: [rust]
+        pass_filenames: false
+
+      - id: test
+        name: test
+        description: Run tests
+        entry: cargo test
+        language: system
+        types: [rust]
+        pass_filenames: false
