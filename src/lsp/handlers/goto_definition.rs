@@ -59,6 +59,7 @@ pub async fn handle_goto_definition(
 
     let env = ParseEnv {
         name_table: Some(name_table),
+        workspace: Some(backend.workspace.clone()),
     };
 
     let ctx = backend.workspace.documents.with_doc(uri, |doc| {

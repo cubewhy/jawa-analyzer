@@ -397,7 +397,10 @@ mod tests {
                 line,
                 col,
                 None,
-                &ParseEnv { name_table: None },
+                &ParseEnv {
+                    name_table: None,
+                    workspace: None,
+                },
             )
             .expect("context extraction should succeed")
     }

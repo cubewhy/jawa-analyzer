@@ -90,6 +90,7 @@ pub async fn handle_completion(
 
     let env = ParseEnv {
         name_table: Some(name_table.clone()),
+        workspace: Some(workspace.clone()),
     };
 
     // Phase 3: Completion Context Caching

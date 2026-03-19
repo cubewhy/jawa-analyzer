@@ -80,16 +80,44 @@ pub fn extract_method_locals_incremental(
 
 /// Parse method locals (called on cache miss)
 fn parse_method_locals(
-    _db: &dyn crate::salsa_queries::Db,
-    _file: SourceFile,
+    db: &dyn crate::salsa_queries::Db,
+    file: SourceFile,
     _method_start: usize,
-    _method_end: usize,
+    method_end: usize,
 ) -> Vec<LocalVar> {
-    // TODO: Implement actual parsing using the existing locals extraction logic
-    // For now, return empty vec
-    // This will be implemented by calling the existing extract_locals_with_type_ctx
-    // but scoped to just this method
-    Vec::new()
+    use crate::language::java::locals::extract_locals_with_type_ctx;
+    use crate::language::java::type_ctx::SourceTypeCtx;
+    use crate::language::java::{JavaContextExtractor, scope};
+
+    let content = file.content(db);
+    let language_id = file.language_id(db);
+
+    // Only handle Java for now
+    if language_id.as_ref() != "java" {
+        return Vec::new();
+    }
+
+    // Parse tree
+    let Some(tree) = parse_tree(content, language_id.as_ref()) else {
+        return Vec::new();
+    };
+
+    let root = tree.root_node();
+
+    // Create a context extractor with cursor at the end of the method
+    // Use method_end - 1 to ensure we're inside the method (not at the closing brace)
+    // This ensures we extract all locals declared in the method
+    let cursor_pos = method_end.saturating_sub(1);
+    let ctx = JavaContextExtractor::new(content.to_string(), cursor_pos, None);
+
+    // Extract package and imports for type resolution
+    let package = scope::extract_package(&ctx, root);
+    let imports = scope::extract_imports(&ctx, root);
+    let type_ctx = SourceTypeCtx::new(package, imports, None);
+
+    // Pass None as cursor_node and let extract_locals_with_type_ctx find the method by offset
+    // This is simpler and more reliable than trying to pass the right node
+    extract_locals_with_type_ctx(&ctx, root, None, Some(&type_ctx))
 }
 
 /// Metadata about a file's structure (cached by Salsa)
@@ -583,7 +611,30 @@ fn find_deepest_node_at_offset<'a>(
     }
 }
 
-/// Helper to find a node of specific kinds at a given offset
+/// Find a node of specific kinds at a given offset
+fn find_node_at_offset<'a>(
+    root: tree_sitter::Node<'a>,
+    offset: usize,
+    kinds: &[&str],
+) -> Option<tree_sitter::Node<'a>> {
+    use tree_sitter_utils::traversal::find_node_by_offset;
+
+    // Try each kind directly
+    for kind in kinds {
+        if let Some(node) = find_node_by_offset(root, kind, offset) {
+            return Some(node);
+        }
+    }
+
+    // Fallback: find any node at offset and walk up
+    use tree_sitter_utils::traversal::ancestor_of_kinds;
+    let node_at_offset = find_node_by_offset(root, "identifier", offset)
+        .or_else(|| find_node_by_offset(root, "block", offset))
+        .or_else(|| find_deepest_node_at_offset(root, offset))?;
+
+    ancestor_of_kinds(node_at_offset, kinds)
+}
+
 /// Find the enclosing class bounds for a cursor position (cached by Salsa)
 ///
 /// Returns (class_name, class_start, class_end) if cursor is inside a class.
@@ -639,4 +690,110 @@ pub fn find_enclosing_class_bounds(
     );
 
     Some((class_name, start, end))
+}
+
+/// Extract actual class members from a class (uses cache)
+///
+/// This is the incremental version that uses the PSI-style cache.
+/// Call this instead of extract_type_members_with_synthetics().
+pub fn extract_class_members_incremental(
+    db: &dyn crate::salsa_queries::Db,
+    file: SourceFile,
+    cursor_offset: usize,
+    workspace: &crate::workspace::Workspace,
+) -> std::collections::HashMap<Arc<str>, crate::semantic::context::CurrentClassMember> {
+    use std::collections::HashMap;
+
+    // Step 1: Find class bounds (Salsa cached)
+    let Some((class_name, class_start, class_end)) =
+        find_enclosing_class_bounds(db, file, cursor_offset)
+    else {
+        return HashMap::new();
+    };
+
+    // Step 2: Get metadata (Salsa cached)
+    let metadata = extract_class_members_metadata(db, file, class_start, class_end);
+
+    // Step 3: Check PSI cache
+    if let Some(cached) = workspace.get_cached_class_members(metadata.content_hash) {
+        tracing::debug!(
+            content_hash = metadata.content_hash,
+            member_count = cached.len(),
+            class_name = %class_name,
+            "extract_class_members_incremental: cache hit!"
+        );
+        return cached;
+    }
+
+    // Step 4: Cache miss - parse members
+    tracing::debug!(
+        content_hash = metadata.content_hash,
+        class_name = %class_name,
+        "extract_class_members_incremental: cache miss, parsing..."
+    );
+
+    let members = parse_class_members(db, file, class_start, class_end);
+
+    // Step 5: Cache the result
+    workspace.cache_class_members(metadata.content_hash, members.clone());
+
+    members
+}
+
+/// Parse class members (called on cache miss)
+fn parse_class_members(
+    db: &dyn crate::salsa_queries::Db,
+    file: SourceFile,
+    class_start: usize,
+    _class_end: usize,
+) -> std::collections::HashMap<Arc<str>, crate::semantic::context::CurrentClassMember> {
+    use crate::language::java::synthetic::extract_type_members_with_synthetics;
+    use crate::language::java::type_ctx::SourceTypeCtx;
+    use crate::language::java::{JavaContextExtractor, scope};
+    use std::collections::HashMap;
+
+    let content = file.content(db);
+    let language_id = file.language_id(db);
+
+    // Only handle Java for now
+    if language_id.as_ref() != "java" {
+        return HashMap::new();
+    }
+
+    // Parse tree
+    let Some(tree) = parse_tree(content, language_id.as_ref()) else {
+        return HashMap::new();
+    };
+
+    let root = tree.root_node();
+
+    // Create a minimal context extractor for parsing
+    let ctx = JavaContextExtractor::for_indexing(content, None);
+
+    // Extract package and imports for type resolution
+    let package = scope::extract_package(&ctx, root);
+    let imports = scope::extract_imports(&ctx, root);
+    let type_ctx = SourceTypeCtx::new(package, imports, None);
+
+    // Find the class node at class_start
+    let class_node = find_node_at_offset(
+        root,
+        class_start,
+        &[
+            "class_declaration",
+            "interface_declaration",
+            "enum_declaration",
+            "record_declaration",
+        ],
+    );
+
+    let Some(class_node) = class_node else {
+        return HashMap::new();
+    };
+
+    // Extract members with synthetics (Lombok, etc.)
+    let members = extract_type_members_with_synthetics(&ctx, class_node, &type_ctx, None);
+
+    // Convert Vec to HashMap keyed by member name
+    members.into_iter().map(|m| (m.name(), m)).collect()
 }

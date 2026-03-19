@@ -122,6 +122,46 @@ impl Workspace {
             .insert(content_hash, members);
     }
 
+    /// Get or create a Salsa SourceFile for a URI string
+    ///
+    /// This is used by incremental parsing to get a Salsa file handle.
+    /// Files are cached so repeated calls return the same SourceFile.
+    pub fn get_or_create_salsa_file_by_uri_str(
+        &self,
+        uri: &str,
+    ) -> Option<crate::salsa_db::SourceFile> {
+        let url = Url::parse(uri).ok()?;
+
+        // Check if already exists
+        {
+            let files = self.salsa_files.read();
+            if let Some(file) = files.get(&url) {
+                return Some(*file);
+            }
+        }
+
+        // Create new file
+        let content = self
+            .documents
+            .with_doc(&url, |doc| doc.source().text().to_string())?;
+        let language_id = self
+            .documents
+            .with_doc(&url, |doc| doc.language_id().to_string())?;
+
+        let db = self.salsa_db.lock();
+        let file = crate::salsa_db::SourceFile::new(
+            &*db,
+            crate::salsa_db::FileId::new(url.clone()),
+            content,
+            Arc::from(language_id.as_str()),
+        );
+
+        // Cache it
+        self.salsa_files.write().insert(url, file);
+
+        Some(file)
+    }
+
     pub fn scope_for_uri(&self, uri: &Url) -> IndexScope {
         self.resolve_analysis_context_for_path(uri.to_file_path().ok().as_deref())
             .scope()

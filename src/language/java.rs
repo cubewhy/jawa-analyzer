@@ -123,12 +123,19 @@ impl Language for JavaLanguage {
     ) -> Option<SemanticContext> {
         let offset = rope_line_col_to_offset(&file.rope, line, character)?;
         tracing::debug!(line, character, trigger = ?trigger_char, "java: parsing context (cached tree)");
-        let extractor = JavaContextExtractor::with_rope(
+        let mut extractor = JavaContextExtractor::with_rope(
             file.text().to_string(),
             offset,
             (*file.rope).clone(),
             env.name_table.clone(),
         );
+
+        // Set workspace and file URI if available for incremental parsing
+        if let Some(workspace) = env.workspace.clone() {
+            extractor = extractor.with_workspace(workspace);
+        }
+        extractor = extractor.with_file_uri(Arc::from(file.uri.as_str()));
+
         if extractor.is_in_comment() {
             return Some(SemanticContext::new(
                 CursorLocation::Unknown,
@@ -357,6 +364,8 @@ pub struct JavaContextExtractor {
     pub rope: Rope,
     pub offset: usize,
     name_table: Option<Arc<NameTable>>,
+    workspace: Option<Arc<crate::workspace::Workspace>>,
+    file_uri: Option<Arc<str>>,
 }
 
 impl JavaContextExtractor {
@@ -372,6 +381,8 @@ impl JavaContextExtractor {
             rope,
             offset,
             name_table,
+            workspace: None,
+            file_uri: None,
         }
     }
 
@@ -391,7 +402,21 @@ impl JavaContextExtractor {
             rope,
             offset,
             name_table,
+            workspace: None,
+            file_uri: None,
         }
+    }
+
+    /// Set the workspace reference for incremental parsing
+    pub fn with_workspace(mut self, workspace: Arc<crate::workspace::Workspace>) -> Self {
+        self.workspace = Some(workspace);
+        self
+    }
+
+    /// Set the file URI for incremental parsing
+    pub fn with_file_uri(mut self, uri: Arc<str>) -> Self {
+        self.file_uri = Some(uri);
+        self
     }
 
     pub fn bytes(&self) -> &[u8] {
@@ -449,12 +474,45 @@ impl JavaContextExtractor {
             existing_imports.clone(),
             self.name_table.clone(),
         ));
-        let local_variables = locals::extract_locals_with_type_ctx(
-            semantic_extractor,
-            semantic_root,
-            semantic_cursor_node,
-            Some(&type_ctx),
-        );
+
+        // Feature flag to enable incremental extraction
+        let use_incremental = std::env::var("JAVA_ANALYZER_INCREMENTAL")
+            .map(|v| v == "1" || v == "true")
+            .unwrap_or(false);
+
+        let local_variables =
+            if use_incremental && self.workspace.is_some() && self.file_uri.is_some() {
+                // NEW: Incremental extraction with PSI cache
+                let workspace = self.workspace.as_ref().unwrap();
+                let file_uri = self.file_uri.as_ref().unwrap();
+
+                if let Some(file) = workspace.get_or_create_salsa_file_by_uri_str(file_uri.as_ref())
+                {
+                    let db = workspace.salsa_db.lock();
+                    crate::salsa_queries::extract_method_locals_incremental(
+                        &*db,
+                        file,
+                        self.offset,
+                        workspace,
+                    )
+                } else {
+                    // Fallback to old method if file not found
+                    locals::extract_locals_with_type_ctx(
+                        semantic_extractor,
+                        semantic_root,
+                        semantic_cursor_node,
+                        Some(&type_ctx),
+                    )
+                }
+            } else {
+                // OLD: Direct extraction (no cache)
+                locals::extract_locals_with_type_ctx(
+                    semantic_extractor,
+                    semantic_root,
+                    semantic_cursor_node,
+                    Some(&type_ctx),
+                )
+            };
         let active_lambda_param_names =
             locals::extract_active_lambda_param_names(semantic_extractor, semantic_cursor_node);
         let active_lambda_param_names = if active_lambda_param_names.is_empty() {
@@ -478,30 +536,76 @@ impl JavaContextExtractor {
             scope::extract_static_imports(semantic_extractor, semantic_root);
         let is_class_member_position =
             scope::is_cursor_in_class_member_position(semantic_cursor_node);
-        let current_class_members = semantic_cursor_node
-            .and_then(scope::nearest_type_declaration)
-            .map(|decl| {
-                synthetic::extract_type_members_with_synthetics(
-                    semantic_extractor,
-                    decl,
-                    &type_ctx,
-                    enclosing_internal_name.as_deref(),
-                )
-            })
-            .or_else(|| {
-                // Fallback: find top-level ERROR node anywhere under program
-                // Use two-phase approach: valid members + error recovery
-                let error_node = utils::find_top_error_node(semantic_root)?;
-                let mut members = Vec::new();
-                members::collect_members_from_node(
-                    semantic_extractor,
-                    error_node,
-                    &type_ctx,
-                    &mut members,
-                );
-                Some(members)
-            })
-            .unwrap_or_default();
+
+        let current_class_members =
+            if use_incremental && self.workspace.is_some() && self.file_uri.is_some() {
+                // NEW: Incremental extraction with PSI cache
+                let workspace = self.workspace.as_ref().unwrap();
+                let file_uri = self.file_uri.as_ref().unwrap();
+
+                if let Some(file) = workspace.get_or_create_salsa_file_by_uri_str(file_uri.as_ref())
+                {
+                    let db = workspace.salsa_db.lock();
+                    let members_map = crate::salsa_queries::extract_class_members_incremental(
+                        &*db,
+                        file,
+                        self.offset,
+                        workspace,
+                    );
+                    // Convert HashMap to Vec
+                    members_map.into_values().collect()
+                } else {
+                    // Fallback to old method
+                    semantic_cursor_node
+                        .and_then(scope::nearest_type_declaration)
+                        .map(|decl| {
+                            synthetic::extract_type_members_with_synthetics(
+                                semantic_extractor,
+                                decl,
+                                &type_ctx,
+                                enclosing_internal_name.as_deref(),
+                            )
+                        })
+                        .or_else(|| {
+                            let error_node = utils::find_top_error_node(semantic_root)?;
+                            let mut members = Vec::new();
+                            members::collect_members_from_node(
+                                semantic_extractor,
+                                error_node,
+                                &type_ctx,
+                                &mut members,
+                            );
+                            Some(members)
+                        })
+                        .unwrap_or_default()
+                }
+            } else {
+                // OLD: Direct extraction (no cache)
+                semantic_cursor_node
+                    .and_then(scope::nearest_type_declaration)
+                    .map(|decl| {
+                        synthetic::extract_type_members_with_synthetics(
+                            semantic_extractor,
+                            decl,
+                            &type_ctx,
+                            enclosing_internal_name.as_deref(),
+                        )
+                    })
+                    .or_else(|| {
+                        // Fallback: find top-level ERROR node anywhere under program
+                        // Use two-phase approach: valid members + error recovery
+                        let error_node = utils::find_top_error_node(semantic_root)?;
+                        let mut members = Vec::new();
+                        members::collect_members_from_node(
+                            semantic_extractor,
+                            error_node,
+                            &type_ctx,
+                            &mut members,
+                        );
+                        Some(members)
+                    })
+                    .unwrap_or_default()
+            };
         let enclosing_class_member = semantic_cursor_node
             .and_then(|n| utils::find_ancestor(n, "method_declaration"))
             .or_else(|| find_node_by_offset(semantic_root, "method_declaration", self.offset))
@@ -688,7 +792,10 @@ mod tests {
                 line,
                 col,
                 trigger,
-                &ParseEnv { name_table: None },
+                &ParseEnv {
+                    name_table: None,
+                    workspace: None,
+                },
             )
             .expect("parse_completion_context_with_tree returned None")
     }
@@ -930,6 +1037,7 @@ mod tests {
                 None,
                 &ParseEnv {
                     name_table: Some(view.build_name_table()),
+                    workspace: None,
                 },
             )
             .expect("parse_completion_context_with_tree returned None");
@@ -3845,7 +3953,7 @@ mod tests {
             },
         ]);
         let view = idx.view(root_scope());
-        let name_table = view.build_name_table();
+        let _name_table = view.build_name_table();
         let _rope = ropey::Rope::from_str(src);
         let mut parser = super::make_java_parser();
         let tree = parser.parse(src, None).expect("failed to parse java");
@@ -3862,7 +3970,8 @@ mod tests {
                 col,
                 None,
                 &ParseEnv {
-                    name_table: Some(name_table),
+                    name_table: Some(view.build_name_table()),
+                    workspace: None,
                 },
             )
             .expect("parse_completion_context_with_tree returned None");
@@ -3973,6 +4082,7 @@ mod tests {
                 None,
                 &ParseEnv {
                     name_table: Some(view.build_name_table()),
+                    workspace: None,
                 },
             )
             .expect("parse_completion_context_with_tree returned None");
@@ -4092,6 +4202,7 @@ mod tests {
                 None,
                 &ParseEnv {
                     name_table: Some(view.build_name_table()),
+                    workspace: None,
                 },
             )
             .expect("parse_completion_context_with_tree returned None");
@@ -4808,6 +4919,7 @@ mod tests {
                 None,
                 &ParseEnv {
                     name_table: Some(view.build_name_table()),
+                    workspace: None,
                 },
             )
             .expect("parse_completion_context_with_tree returned None");
@@ -5614,6 +5726,7 @@ mod tests {
                     None,
                     &ParseEnv {
                         name_table: Some(view.build_name_table()),
+                        workspace: None,
                     },
                 )
                 .expect("type ctx")
@@ -5663,6 +5776,7 @@ mod tests {
                     None,
                     &ParseEnv {
                         name_table: Some(view.build_name_table()),
+                        workspace: None,
                     },
                 )
                 .expect("ctor ctx")
@@ -5709,6 +5823,7 @@ mod tests {
                     None,
                     &ParseEnv {
                         name_table: Some(view.build_name_table()),
+                        workspace: None,
                     },
                 )
                 .expect("decl ctx")

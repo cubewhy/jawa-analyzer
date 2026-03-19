@@ -145,6 +145,7 @@ pub trait Language: Send + Sync + std::fmt::Debug {
 #[derive(Clone, Default)]
 pub struct ParseEnv {
     pub name_table: Option<Arc<NameTable>>,
+    pub workspace: Option<Arc<crate::workspace::Workspace>>,
 }
 
 pub struct LanguageRegistry {

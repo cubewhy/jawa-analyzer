@@ -47,6 +47,7 @@ pub async fn handle_inlay_hints(
 
     let env = ParseEnv {
         name_table: Some(name_table),
+        workspace: Some(workspace.clone()),
     };
 
     // Ensure tree is parsed.

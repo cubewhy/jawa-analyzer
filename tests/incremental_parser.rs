@@ -1,9 +1,11 @@
 /// Tests for incremental semantic analysis queries
 use java_analyzer::salsa_db::{Database, FileId, SourceFile};
 use java_analyzer::salsa_queries::{
-    extract_class_members_metadata, extract_method_locals_metadata, find_enclosing_class_bounds,
+    extract_class_members_incremental, extract_class_members_metadata,
+    extract_method_locals_incremental, extract_method_locals_metadata, find_enclosing_class_bounds,
     find_enclosing_method_bounds,
 };
+use java_analyzer::workspace::Workspace;
 use std::sync::Arc;
 use tower_lsp::lsp_types::Url;
 
@@ -327,5 +329,215 @@ public class Test {
     assert_eq!(
         metadata2.local_count, 2,
         "Second version should have 2 locals"
+    );
+}
+
+#[test]
+fn test_incremental_locals_cache_hit() {
+    let workspace = Arc::new(Workspace::new());
+    let db = workspace.salsa_db.lock();
+
+    let source = r#"
+public class Test {
+    public void method() {
+        int x = 1;
+        String y = "hello";
+    }
+}
+"#;
+
+    let uri = Url::parse("file:///test/Test.java").unwrap();
+    let file = SourceFile::new(
+        &*db,
+        FileId::new(uri),
+        source.to_string(),
+        Arc::from("java"),
+    );
+
+    let cursor_offset = 70; // Inside method
+
+    // First check if we can find the method bounds
+    let bounds = find_enclosing_method_bounds(&*db, file, cursor_offset);
+    assert!(bounds.is_some(), "Should find method bounds");
+    let (method_start, method_end) = bounds.unwrap();
+    println!("Method bounds: {} to {}", method_start, method_end);
+    println!("Method text: {}", &source[method_start..method_end]);
+
+    // First call - cache miss
+    let locals1 = extract_method_locals_incremental(&*db, file, cursor_offset, &workspace);
+    println!("Extracted {} locals", locals1.len());
+    for local in &locals1 {
+        println!("  - {}", local.name);
+    }
+    assert_eq!(locals1.len(), 2, "Should extract 2 local variables");
+
+    // Second call - should be cache hit
+    let locals2 = extract_method_locals_incremental(&*db, file, cursor_offset, &workspace);
+    assert_eq!(locals2.len(), 2, "Should still have 2 local variables");
+
+    // Verify they're the same
+    assert_eq!(locals1[0].name, locals2[0].name);
+    assert_eq!(locals1[1].name, locals2[1].name);
+}
+
+#[test]
+fn test_incremental_locals_cache_invalidation() {
+    let workspace = Arc::new(Workspace::new());
+
+    let source1 = r#"
+public class Test {
+    public void method() {
+        int x = 1;
+    }
+}
+"#;
+
+    let uri = Url::parse("file:///test/Test.java").unwrap();
+    let file1 = {
+        let db = workspace.salsa_db.lock();
+        SourceFile::new(
+            &*db,
+            FileId::new(uri.clone()),
+            source1.to_string(),
+            Arc::from("java"),
+        )
+    };
+
+    let cursor_offset = 70;
+
+    // First call
+    let locals1 = {
+        let db = workspace.salsa_db.lock();
+        extract_method_locals_incremental(&*db, file1, cursor_offset, &workspace)
+    };
+    assert_eq!(locals1.len(), 1, "First version should have 1 local");
+
+    // Change the file content (add another local)
+    let source2 = r#"
+public class Test {
+    public void method() {
+        int x = 1;
+        int y = 2;
+    }
+}
+"#;
+
+    let file2 = {
+        let db = workspace.salsa_db.lock();
+        SourceFile::new(
+            &*db,
+            FileId::new(uri),
+            source2.to_string(),
+            Arc::from("java"),
+        )
+    };
+
+    // Second call - should detect change and re-parse
+    let locals2 = {
+        let db = workspace.salsa_db.lock();
+        extract_method_locals_incremental(&*db, file2, cursor_offset, &workspace)
+    };
+    assert_eq!(locals2.len(), 2, "Second version should have 2 locals");
+}
+
+#[test]
+fn test_incremental_class_members_cache_hit() {
+    let workspace = Arc::new(Workspace::new());
+    let db = workspace.salsa_db.lock();
+
+    let source = r#"
+public class Test {
+    private int field1;
+    private String field2;
+    
+    public void method1() {}
+    public void method2() {}
+}
+"#;
+
+    let uri = Url::parse("file:///test/Test.java").unwrap();
+    let file = SourceFile::new(
+        &*db,
+        FileId::new(uri),
+        source.to_string(),
+        Arc::from("java"),
+    );
+
+    let cursor_offset = 50; // Inside class
+
+    // First call - cache miss
+    let members1 = extract_class_members_incremental(&*db, file, cursor_offset, &workspace);
+    assert!(
+        members1.len() >= 2,
+        "Should extract at least 2 methods (may include synthetic members)"
+    );
+
+    // Second call - should be cache hit
+    let members2 = extract_class_members_incremental(&*db, file, cursor_offset, &workspace);
+    assert_eq!(
+        members1.len(),
+        members2.len(),
+        "Should return same number of members from cache"
+    );
+}
+
+#[test]
+fn test_incremental_class_members_cache_invalidation() {
+    let workspace = Arc::new(Workspace::new());
+
+    let source1 = r#"
+public class Test {
+    public void method1() {}
+}
+"#;
+
+    let uri = Url::parse("file:///test/Test.java").unwrap();
+    let file1 = {
+        let db = workspace.salsa_db.lock();
+        SourceFile::new(
+            &*db,
+            FileId::new(uri.clone()),
+            source1.to_string(),
+            Arc::from("java"),
+        )
+    };
+
+    let cursor_offset = 30;
+
+    // First call
+    let members1 = {
+        let db = workspace.salsa_db.lock();
+        extract_class_members_incremental(&*db, file1, cursor_offset, &workspace)
+    };
+    let count1 = members1.len();
+
+    // Change the file content (add another method)
+    let source2 = r#"
+public class Test {
+    public void method1() {}
+    public void method2() {}
+}
+"#;
+
+    let file2 = {
+        let db = workspace.salsa_db.lock();
+        SourceFile::new(
+            &*db,
+            FileId::new(uri),
+            source2.to_string(),
+            Arc::from("java"),
+        )
+    };
+
+    // Second call - should detect change and re-parse
+    let members2 = {
+        let db = workspace.salsa_db.lock();
+        extract_class_members_incremental(&*db, file2, cursor_offset, &workspace)
+    };
+    let count2 = members2.len();
+
+    assert!(
+        count2 > count1,
+        "Second version should have more members (added method2)"
     );
 }
