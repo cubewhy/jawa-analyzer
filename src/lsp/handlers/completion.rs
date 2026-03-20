@@ -9,6 +9,8 @@ use crate::language::LanguageRegistry;
 use crate::salsa_queries::conversion::{FromSalsaDataWithAnalysis, RequestAnalysisState};
 use crate::workspace::Workspace;
 
+use super::syntax_access::ensure_parsed_source;
+
 pub async fn handle_completion(
     workspace: Arc<Workspace>,
     engine: Arc<CompletionEngine>,
@@ -40,12 +42,7 @@ pub async fn handle_completion(
         "completion request"
     );
 
-    workspace.documents.with_doc_mut(uri, |doc| {
-        if !doc.source().has_unified_syntax() {
-            let tree = lang.parse_tree(doc.source().text(), None);
-            doc.set_tree(tree);
-        }
-    })?;
+    let _source = ensure_parsed_source(&workspace, uri, lang)?;
 
     let analysis = workspace.analysis_context_for_uri(uri);
     let inferred_package = workspace.infer_java_package_for_uri(uri, analysis.source_root);
