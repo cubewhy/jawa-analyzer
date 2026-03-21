@@ -1487,7 +1487,7 @@ pub fn extract_class_members_metadata(
     // Parse the tree and count methods/fields
     let (method_count, field_count) = if let Some(tree) = parse_tree(content, language_id.as_ref())
     {
-        count_members_in_range(tree.root_node(), content.as_bytes(), class_start, class_end)
+        count_members_in_range(tree.root_node(), class_start, class_end)
     } else {
         (0, 0)
     };
@@ -1512,12 +1512,7 @@ pub fn extract_class_members_metadata(
 }
 
 /// Count methods and fields in a specific range
-fn count_members_in_range(
-    root: tree_sitter::Node,
-    source: &[u8],
-    start: usize,
-    end: usize,
-) -> (usize, usize) {
+fn count_members_in_range(root: tree_sitter::Node, start: usize, end: usize) -> (usize, usize) {
     let mut method_count = 0;
     let mut field_count = 0;
 
@@ -1543,91 +1538,53 @@ fn count_members_in_range(
     }
 
     // Now traverse from this node
-    traverse_and_count_members(
-        &mut current.walk(),
-        source,
-        start,
-        end,
-        &mut method_count,
-        &mut field_count,
-    );
+    traverse_and_count_members(current, start, end, &mut method_count, &mut field_count);
 
     (method_count, field_count)
 }
 
-/// Recursive traversal to count methods and fields
+/// Iterative traversal to count methods and fields.
+///
+/// This avoids hard recursion limits for deeply nested blocks such as
+/// large chains of `if` statements inside a method body.
 fn traverse_and_count_members(
-    cursor: &mut tree_sitter::TreeCursor,
-    source: &[u8],
+    root: tree_sitter::Node,
     start: usize,
     end: usize,
     method_count: &mut usize,
     field_count: &mut usize,
 ) {
-    traverse_and_count_members_with_depth(cursor, source, start, end, method_count, field_count, 0);
-}
-
-/// Recursive traversal with depth limit to prevent stack overflow
-fn traverse_and_count_members_with_depth(
-    cursor: &mut tree_sitter::TreeCursor,
-    source: &[u8],
-    start: usize,
-    end: usize,
-    method_count: &mut usize,
-    field_count: &mut usize,
-    depth: usize,
-) {
-    // Prevent stack overflow with depth limit
-    const MAX_DEPTH: usize = 500;
-    if depth > MAX_DEPTH {
-        tracing::warn!(
-            "traverse_and_count_members: max depth {} exceeded, stopping",
-            MAX_DEPTH
-        );
-        return;
-    }
-
-    let node = cursor.node();
-
-    // Skip nodes completely outside our range
-    if node.end_byte() < start || node.start_byte() > end {
-        return;
-    }
-
-    // Count methods
-    match node.kind() {
-        "method_declaration" | "constructor_declaration" => {
-            *method_count += 1;
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if node.end_byte() < start || node.start_byte() > end {
+            continue;
         }
-        "field_declaration" => {
-            // Count the number of declarators (can have multiple: int x, y, z;)
-            let mut child_cursor = node.walk();
-            let declarator_count = node
-                .children(&mut child_cursor)
-                .filter(|n| n.kind() == "variable_declarator")
-                .count();
-            *field_count += declarator_count;
-        }
-        _ => {}
-    }
 
-    // Recurse into children with incremented depth
-    if cursor.goto_first_child() {
-        loop {
-            traverse_and_count_members_with_depth(
-                cursor,
-                source,
-                start,
-                end,
-                method_count,
-                field_count,
-                depth + 1,
-            );
-            if !cursor.goto_next_sibling() {
-                break;
+        match node.kind() {
+            "method_declaration" | "constructor_declaration" => {
+                *method_count += 1;
             }
+            "field_declaration" => {
+                let mut child_cursor = node.walk();
+                let declarator_count = node
+                    .children(&mut child_cursor)
+                    .filter(|n| n.kind() == "variable_declarator")
+                    .count();
+                *field_count += declarator_count;
+            }
+            _ => {}
         }
-        cursor.goto_parent();
+
+        let children: Vec<_> = {
+            let mut cursor = node.walk();
+            node.children(&mut cursor).collect()
+        };
+        for child in children.into_iter().rev() {
+            if child.end_byte() < start || child.start_byte() > end {
+                continue;
+            }
+            stack.push(child);
+        }
     }
 }
 
@@ -2389,6 +2346,47 @@ mod tests {
         assert!(
             !catch_names.contains(&"e"),
             "catch variable leaked after catch block: {catch_names:?}"
+        );
+    }
+
+    #[test]
+    fn test_count_members_in_range_handles_deeply_nested_local_classes() {
+        let nesting_depth = 501;
+        let mut source = String::from("class Outer {\n    int top;\n    void outer() {\n");
+        for _ in 0..nesting_depth {
+            source.push_str("        if (true) {\n");
+        }
+        source.push_str(
+            "            class DeepLocal {\n                int deepField;\n                void deepMethod() {}\n            }\n",
+        );
+        for _ in 0..nesting_depth {
+            source.push_str("        }\n");
+        }
+        source.push_str("    }\n}\n");
+
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_java::LANGUAGE.into())
+            .expect("java grammar");
+        let tree = parser.parse(&source, None).expect("parsed");
+        let root = tree.root_node();
+        let class_node = {
+            let mut cursor = root.walk();
+            root.named_children(&mut cursor)
+                .find(|node| node.kind() == "class_declaration")
+                .expect("outer class")
+        };
+
+        let (method_count, field_count) =
+            count_members_in_range(root, class_node.start_byte(), class_node.end_byte());
+
+        assert_eq!(
+            method_count, 2,
+            "outer method and deep local-class method should both be counted"
+        );
+        assert_eq!(
+            field_count, 2,
+            "outer field and deep local-class field should both be counted"
         );
     }
 }
