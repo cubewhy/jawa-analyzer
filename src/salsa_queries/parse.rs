@@ -71,15 +71,14 @@ pub fn parse_file(db: &dyn Db, file: SourceFile) -> ParseResult {
 /// Memoized - only recomputes when file content changes.
 #[salsa::tracked]
 pub fn extract_package(db: &dyn Db, file: SourceFile) -> Option<Arc<str>> {
-    let content = file.content(db);
     let lang_id = file.language_id(db);
 
     // For Java files, extract package
     if lang_id.as_ref() == "java" {
+        let content = file.content(db);
         crate::language::java::class_parser::extract_package_from_source(content)
     } else if lang_id.as_ref() == "kotlin" {
-        // TODO: Implement Kotlin package extraction
-        None
+        super::kotlin::extract_kotlin_package(db, file)
     } else {
         None
     }
@@ -90,14 +89,13 @@ pub fn extract_package(db: &dyn Db, file: SourceFile) -> Option<Arc<str>> {
 /// Memoized - only recomputes when file content changes.
 #[salsa::tracked]
 pub fn extract_imports(db: &dyn Db, file: SourceFile) -> Arc<Vec<Arc<str>>> {
-    let content = file.content(db);
     let lang_id = file.language_id(db);
 
     let imports = if lang_id.as_ref() == "java" {
+        let content = file.content(db);
         crate::language::java::class_parser::extract_imports_from_source(content)
     } else if lang_id.as_ref() == "kotlin" {
-        // TODO: Implement Kotlin import extraction
-        vec![]
+        super::kotlin::extract_kotlin_imports(db, file)
     } else {
         vec![]
     };
@@ -213,5 +211,41 @@ mod tests {
         assert_eq!(imports.len(), 2);
         assert!(imports.iter().any(|i| i.as_ref() == "java.util.List"));
         assert!(imports.iter().any(|i| i.as_ref() == "java.util.Map"));
+    }
+
+    #[test]
+    fn test_extract_kotlin_package() {
+        let db = Database::default();
+        let uri = Url::parse("file:///test/Test.kt").unwrap();
+        let file = SourceFile::new(
+            &db,
+            FileId::new(uri),
+            "package org.example.test\nclass Test".to_string(),
+            Arc::from("kotlin"),
+        );
+
+        let package = extract_package(&db, file);
+        assert_eq!(package.as_deref(), Some("org/example/test"));
+    }
+
+    #[test]
+    fn test_extract_kotlin_imports() {
+        let db = Database::default();
+        let uri = Url::parse("file:///test/Test.kt").unwrap();
+        let file = SourceFile::new(
+            &db,
+            FileId::new(uri),
+            "import kotlin.collections.List\nimport org.example.Foo\nclass Test".to_string(),
+            Arc::from("kotlin"),
+        );
+
+        let imports = extract_imports(&db, file);
+        assert_eq!(imports.len(), 2);
+        assert!(
+            imports
+                .iter()
+                .any(|i| i.as_ref() == "kotlin.collections.List")
+        );
+        assert!(imports.iter().any(|i| i.as_ref() == "org.example.Foo"));
     }
 }

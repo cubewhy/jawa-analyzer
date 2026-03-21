@@ -76,14 +76,45 @@ pub fn compute_relevant_content_hash(source: &str, line: u32, character: u32) ->
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
 
-    // For now, hash the entire file content
-    // TODO: Optimize to hash only relevant scope (current method/class)
-    // This requires tree-sitter parsing to find the enclosing scope
+    let rope = ropey::Rope::from_str(source);
+    let offset = line_col_to_offset(&rope, line, character).unwrap_or(source.len());
+    let relevant_scope = relevant_scope_for_hash(source, offset);
+
     let mut hasher = DefaultHasher::new();
-    source.hash(&mut hasher);
+    relevant_scope.hash(&mut hasher);
     line.hash(&mut hasher);
     character.hash(&mut hasher);
     hasher.finish()
+}
+
+fn line_col_to_offset(rope: &ropey::Rope, line: u32, character: u32) -> Option<usize> {
+    let line_idx = line as usize;
+    if line_idx >= rope.len_lines() {
+        return None;
+    }
+
+    let line_start_char = rope.line_to_char(line_idx);
+    let line_slice = rope.line(line_idx);
+    let char_in_line = (character as usize).min(line_slice.len_chars());
+    Some(rope.char_to_byte(line_start_char + char_in_line))
+}
+
+fn relevant_scope_for_hash<'a>(source: &'a str, cursor_offset: usize) -> &'a str {
+    let mut best_scope = source;
+
+    for language_id in ["java", "kotlin"] {
+        let Some(tree) = crate::salsa_queries::parse::parse_tree_for_language(source, language_id)
+        else {
+            continue;
+        };
+
+        let scope = extract_relevant_scope(source, Some(tree.root_node()), cursor_offset);
+        if scope.len() < best_scope.len() {
+            best_scope = scope;
+        }
+    }
+
+    best_scope
 }
 
 /// Helper to extract relevant source scope for hashing
@@ -96,15 +127,18 @@ pub fn compute_relevant_content_hash(source: &str, line: u32, character: u32) ->
 /// This allows caching to survive edits in unrelated methods/classes.
 pub fn extract_relevant_scope<'a>(
     source: &'a str,
-    tree_root: Option<tree_sitter::Node<'a>>,
+    tree_root: Option<tree_sitter::Node<'_>>,
     cursor_offset: usize,
 ) -> &'a str {
     // If we have a tree, find the enclosing method or class
     if let Some(root) = tree_root
         && let Some(enclosing) = find_enclosing_scope_node(root, cursor_offset)
-        && let Ok(text) = enclosing.utf8_text(source.as_bytes())
     {
-        return text;
+        let start = enclosing.start_byte().min(source.len());
+        let end = enclosing.end_byte().min(source.len());
+        if start < end && source.is_char_boundary(start) && source.is_char_boundary(end) {
+            return &source[start..end];
+        }
     }
 
     // Fallback: return entire file

@@ -208,11 +208,10 @@ fn fetch_class_members_from_workspace(
 }
 
 fn fetch_static_imports(db: &dyn Db, file: SourceFile) -> Vec<Arc<str>> {
-    crate::salsa_queries::extract_imports(db, file)
-        .iter()
-        .filter(|imp| imp.starts_with("static "))
-        .map(|imp| Arc::from(imp.trim_start_matches("static ").trim()))
-        .collect()
+    match file.language_id(db).as_ref() {
+        "java" => crate::salsa_queries::java::extract_java_static_imports(db, file),
+        _ => Vec::new(),
+    }
 }
 
 fn compute_char_after_cursor(content: &str, cursor_offset: usize) -> Option<char> {

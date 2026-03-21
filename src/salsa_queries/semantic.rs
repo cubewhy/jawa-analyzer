@@ -1142,17 +1142,63 @@ pub struct FileStructureMetadata {
 /// When this changes, we know we need to re-parse.
 #[salsa::tracked]
 pub fn extract_file_structure(
-    _db: &dyn crate::salsa_queries::Db,
-    _file: SourceFile,
+    db: &dyn crate::salsa_queries::Db,
+    file: SourceFile,
 ) -> FileStructureMetadata {
-    // TODO: Implement actual structure extraction
-    FileStructureMetadata {
-        package: None,
-        import_count: 0,
-        static_import_count: 0,
-        class_count: 0,
-        structure_hash: 0,
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let package = crate::salsa_queries::extract_package(db, file);
+    let imports = crate::salsa_queries::extract_imports(db, file);
+    let language_id = file.language_id(db);
+    let content = file.content(db);
+
+    let static_import_count = match language_id.as_ref() {
+        "java" => crate::salsa_queries::java::extract_java_static_imports(db, file).len(),
+        _ => 0,
+    };
+
+    let class_count = if let Some(tree) = parse_tree(content, language_id.as_ref()) {
+        count_top_level_type_declarations(tree.root_node(), language_id.as_ref())
+    } else {
+        0
+    };
+
+    let mut hasher = DefaultHasher::new();
+    package.hash(&mut hasher);
+    imports.len().hash(&mut hasher);
+    for import in imports.iter() {
+        import.hash(&mut hasher);
     }
+    static_import_count.hash(&mut hasher);
+    class_count.hash(&mut hasher);
+
+    FileStructureMetadata {
+        package,
+        import_count: imports.len(),
+        static_import_count,
+        class_count,
+        structure_hash: hasher.finish(),
+    }
+}
+
+fn count_top_level_type_declarations(root: Node, language_id: &str) -> usize {
+    let target_kinds: &[&str] = match language_id {
+        "java" => &[
+            "class_declaration",
+            "interface_declaration",
+            "enum_declaration",
+            "record_declaration",
+            "annotation_type_declaration",
+        ],
+        "kotlin" => &["class_declaration", "object_declaration"],
+        _ => &[],
+    };
+
+    let mut cursor = root.walk();
+    root.named_children(&mut cursor)
+        .filter(|node| target_kinds.contains(&node.kind()))
+        .count()
 }
 
 /// Metadata about a method's local variables (cached by Salsa)

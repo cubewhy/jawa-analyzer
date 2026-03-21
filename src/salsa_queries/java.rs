@@ -1,5 +1,7 @@
 use super::Db;
-use crate::index::{ClassMetadata, NameTable};
+use crate::index::{ClassMetadata, IndexScope, ModuleId, NameTable};
+use crate::language::java::editor_semantics::semantic_context_at_offset;
+use crate::language::java::inlay_hints::{JavaInlayHintKind, collect_java_inlay_hints};
 use crate::salsa_db::SourceFile;
 use crate::salsa_queries::context::{
     CompletionContextData, CursorLocationData, line_col_to_offset,
@@ -7,6 +9,8 @@ use crate::salsa_queries::context::{
 use crate::salsa_queries::hints::{InlayHintData, InlayHintKindData};
 use crate::salsa_queries::symbols::{ResolvedSymbolData, SymbolKind};
 use crate::semantic::CursorLocation;
+use crate::semantic::types::symbol_resolver::{ResolvedSymbol, SymbolResolver};
+use ropey::Rope;
 /// Java-specific Salsa queries
 ///
 /// These queries handle Java-specific parsing and analysis.
@@ -55,6 +59,22 @@ pub fn extract_java_package(db: &dyn Db, file: SourceFile) -> Option<Arc<str>> {
 pub fn extract_java_imports(db: &dyn Db, file: SourceFile) -> Vec<Arc<str>> {
     let content = file.content(db);
     crate::language::java::class_parser::extract_imports_from_source(content)
+}
+
+pub fn extract_java_static_imports(db: &dyn Db, file: SourceFile) -> Vec<Arc<str>> {
+    let content = file.content(db);
+    extract_java_static_imports_from_source(content)
+}
+
+pub fn extract_java_static_imports_from_source(source: &str) -> Vec<Arc<str>> {
+    let ctx = crate::language::java::JavaContextExtractor::for_indexing(source, None);
+    let mut parser = crate::language::java::make_java_parser();
+    let tree = match parser.parse(source, None) {
+        Some(t) => t,
+        None => return vec![],
+    };
+    let root = tree.root_node();
+    crate::language::java::scope::extract_static_imports(&ctx, root)
 }
 
 #[cfg(test)]
@@ -228,6 +248,7 @@ pub fn extract_java_completion_context(
     // Extract scope information (all cached separately)
     let package = super::parse::extract_package(db, file);
     let imports = super::parse::extract_imports(db, file);
+    let static_imports = extract_java_static_imports(db, file);
     let enclosing_class = find_java_enclosing_class_name(db, file, offset);
     let enclosing_internal_name = crate::language::java::scope::extract_enclosing_internal_name(
         &extractor,
@@ -251,7 +272,7 @@ pub fn extract_java_completion_context(
         enclosing_package: package,
         local_var_count,
         import_count: imports.len(),
-        static_import_count: 0, // TODO: count static imports
+        static_import_count: static_imports.len(),
         content_hash,
         file_uri: Arc::from(file.file_id(db).as_str()),
         language_id: Arc::from("java"),
@@ -444,12 +465,15 @@ pub fn resolve_java_symbol(
         CursorLocationData::MemberAccess {
             receiver_expr,
             member_prefix,
+            arguments,
             ..
         } => resolve_java_member_symbol(
             db,
             file,
             Arc::clone(receiver_expr),
             Arc::clone(member_prefix),
+            arguments.clone(),
+            offset,
         ),
         CursorLocationData::StaticAccess {
             class_internal_name,
@@ -490,20 +514,37 @@ fn resolve_java_expression_symbol(
         }));
     }
 
-    // TODO: Check fields, methods, imports
-    None
+    resolve_java_symbol_with_resolver(
+        db,
+        file,
+        offset,
+        Some(CursorLocation::Expression {
+            prefix: symbol_name.to_string(),
+        }),
+    )
 }
 
 #[salsa::tracked]
 fn resolve_java_member_symbol(
-    _db: &dyn Db,
-    _file: SourceFile,
-    _receiver_expr: Arc<str>,
-    _member_name: Arc<str>,
+    db: &dyn Db,
+    file: SourceFile,
+    receiver_expr: Arc<str>,
+    member_name: Arc<str>,
+    arguments: Option<Arc<str>>,
+    offset: usize,
 ) -> Option<Arc<ResolvedSymbolData>> {
-    // TODO: Implement member resolution
-    // This requires type inference for the receiver
-    None
+    resolve_java_symbol_with_resolver(
+        db,
+        file,
+        offset,
+        Some(CursorLocation::MemberAccess {
+            receiver_semantic_type: None,
+            receiver_type: None,
+            member_prefix: member_name.to_string(),
+            receiver_expr: receiver_expr.to_string(),
+            arguments: arguments.map(|args| args.to_string()),
+        }),
+    )
 }
 
 /// Check if a symbol is a local variable (CACHED)
@@ -539,32 +580,35 @@ pub fn compute_java_inlay_hints(
         return Arc::new(Vec::new());
     };
 
-    let mut hints = Vec::new();
+    let Some(tree) = super::parse::parse_tree_for_language(content, "java") else {
+        return Arc::new(Vec::new());
+    };
 
-    // Find variable declarations (cached)
-    let var_decls =
-        super::hints::find_variable_declarations_in_range(db, file, start_offset, end_offset);
+    let view = root_index_view(db);
+    let rope = Rope::from_str(content);
 
-    // Add type hints for variables without explicit types
-    for decl in var_decls.iter() {
-        if !decl.has_explicit_type
-            && let Some(inferred_type) = infer_java_variable_type(db, file, decl.offset)
-        {
-            hints.push(InlayHintData {
-                offset: decl.offset + decl.name.len(),
-                label: format!(": {}", inferred_type).into(),
-                kind: InlayHintKindData::Type,
-            });
-        }
-    }
-
-    // Find method calls (cached)
-    let _method_calls =
-        super::hints::find_method_calls_in_range(db, file, start_offset, end_offset);
-
-    // TODO: Add parameter hints for method calls
-
-    Arc::new(hints)
+    Arc::new(
+        collect_java_inlay_hints(
+            content,
+            &rope,
+            tree.root_node(),
+            &view,
+            start_offset..end_offset,
+            None,
+            None,
+            None,
+        )
+        .into_iter()
+        .map(|hint| InlayHintData {
+            offset: hint.offset,
+            label: Arc::from(hint.label),
+            kind: match hint.kind {
+                JavaInlayHintKind::Type => InlayHintKindData::Type,
+                JavaInlayHintKind::Parameter => InlayHintKindData::Parameter,
+            },
+        })
+        .collect(),
+    )
 }
 
 /// Infer Java variable type (CACHED)
@@ -633,5 +677,57 @@ fn infer_type_from_expression(expr: tree_sitter::Node, source: &[u8]) -> Option<
             }
         }
         _ => None,
+    }
+}
+
+fn root_index_view(db: &dyn Db) -> crate::index::IndexView {
+    let workspace_index = db.workspace_index();
+    let index = workspace_index.read();
+    index.view(IndexScope {
+        module: ModuleId::ROOT,
+    })
+}
+
+fn resolve_java_symbol_with_resolver(
+    db: &dyn Db,
+    file: SourceFile,
+    offset: usize,
+    location_override: Option<CursorLocation>,
+) -> Option<Arc<ResolvedSymbolData>> {
+    let content = file.content(db);
+    let tree = super::parse::parse_tree_for_language(content, "java")?;
+    let root = tree.root_node();
+    let rope = Rope::from_str(content);
+    let view = root_index_view(db);
+
+    let mut ctx = semantic_context_at_offset(content, &rope, root, offset, &view)?;
+    if let Some(location) = location_override {
+        ctx.location = location;
+    }
+
+    let resolved = SymbolResolver::new(&view).resolve(&ctx)?;
+    Some(Arc::new(convert_resolved_symbol(resolved)))
+}
+
+fn convert_resolved_symbol(symbol: ResolvedSymbol) -> ResolvedSymbolData {
+    match symbol {
+        ResolvedSymbol::Class(internal_name) => ResolvedSymbolData {
+            kind: SymbolKind::Class,
+            target_internal_name: internal_name,
+            member_name: None,
+            descriptor: None,
+        },
+        ResolvedSymbol::Method { owner, summary } => ResolvedSymbolData {
+            kind: SymbolKind::Method,
+            target_internal_name: owner,
+            member_name: Some(Arc::clone(&summary.name)),
+            descriptor: Some(summary.desc()),
+        },
+        ResolvedSymbol::Field { owner, summary } => ResolvedSymbolData {
+            kind: SymbolKind::Field,
+            target_internal_name: owner,
+            member_name: Some(Arc::clone(&summary.name)),
+            descriptor: Some(Arc::clone(&summary.descriptor)),
+        },
     }
 }

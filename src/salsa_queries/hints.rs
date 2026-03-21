@@ -2,7 +2,13 @@
 ///
 /// This module provides incremental, cached inlay hint generation.
 use super::Db;
+use crate::index::{IndexScope, IndexView, ModuleId};
+use crate::language::java::editor_semantics::semantic_context_at_offset;
+use crate::language::java::expression_typing;
+use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::salsa_db::SourceFile;
+use crate::semantic::types::{TypeResolver, parse_single_type_to_internal};
+use ropey::Rope;
 use std::sync::Arc;
 
 // ============================================================================
@@ -122,14 +128,29 @@ pub fn find_method_calls_in_range(
 
     let root = tree.root_node();
     let mut calls = Vec::new();
-
-    collect_method_calls(
-        root,
-        content.as_bytes(),
-        start_offset,
-        end_offset,
-        &mut calls,
-    );
+    match language_id.as_ref() {
+        "java" => {
+            let view = root_index_view(db);
+            let rope = Rope::from_str(content);
+            collect_java_method_calls(
+                root,
+                root,
+                content,
+                &rope,
+                &view,
+                start_offset,
+                end_offset,
+                &mut calls,
+            );
+        }
+        _ => collect_method_calls(
+            root,
+            content.as_bytes(),
+            start_offset,
+            end_offset,
+            &mut calls,
+        ),
+    }
 
     Arc::new(calls)
 }
@@ -226,10 +247,15 @@ fn collect_method_calls(
             0
         };
 
+        let receiver_type = node
+            .child_by_field_name("object")
+            .and_then(|receiver| receiver.utf8_text(source).ok())
+            .and_then(infer_receiver_type_from_text);
+
         calls.push(MethodCallMetadata {
             offset: name_node.start_byte(),
             method_name: Arc::from(method_name),
-            receiver_type: None, // TODO: infer receiver type
+            receiver_type,
             arg_count,
         });
     }
@@ -247,6 +273,127 @@ fn count_arguments(args_node: tree_sitter::Node) -> usize {
         .named_children(&mut cursor)
         .filter(|n| !matches!(n.kind(), "(" | ")" | ","))
         .count()
+}
+
+fn collect_java_method_calls(
+    root: tree_sitter::Node,
+    node: tree_sitter::Node,
+    source: &str,
+    rope: &Rope,
+    view: &IndexView,
+    start: usize,
+    end: usize,
+    calls: &mut Vec<MethodCallMetadata>,
+) {
+    if node.end_byte() < start || node.start_byte() > end {
+        return;
+    }
+
+    if node.kind() == "method_invocation"
+        && let Some(name_node) = node.child_by_field_name("name")
+        && let Ok(method_name) = name_node.utf8_text(source.as_bytes())
+    {
+        let arg_count = node
+            .child_by_field_name("arguments")
+            .map(count_arguments)
+            .unwrap_or(0);
+        let receiver_expr = node
+            .child_by_field_name("object")
+            .and_then(|receiver| receiver.utf8_text(source.as_bytes()).ok());
+
+        calls.push(MethodCallMetadata {
+            offset: name_node.start_byte(),
+            method_name: Arc::from(method_name),
+            receiver_type: infer_java_receiver_type_for_call(
+                source,
+                rope,
+                root,
+                view,
+                name_node.start_byte(),
+                receiver_expr,
+            ),
+            arg_count,
+        });
+    }
+
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        collect_java_method_calls(root, child, source, rope, view, start, end, calls);
+    }
+}
+
+fn infer_receiver_type_from_text(receiver: &str) -> Option<Arc<str>> {
+    let trimmed = receiver.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.chars().next().is_some_and(|ch| ch.is_uppercase()) {
+        return Some(Arc::from(trimmed.replace('.', "/")));
+    }
+    None
+}
+
+fn infer_java_receiver_type_for_call(
+    source: &str,
+    rope: &Rope,
+    root: tree_sitter::Node,
+    view: &IndexView,
+    offset: usize,
+    receiver_expr: Option<&str>,
+) -> Option<Arc<str>> {
+    let ctx = semantic_context_at_offset(source, rope, root, offset, view)?;
+
+    if let Some(owner) = ctx.location.member_access_receiver_owner_internal() {
+        return Some(Arc::from(owner));
+    }
+
+    let receiver_expr = match receiver_expr.map(str::trim) {
+        Some(expr) if !expr.is_empty() => expr,
+        _ => return ctx.enclosing_internal_name.clone(),
+    };
+
+    if receiver_expr == "this" {
+        return ctx.enclosing_internal_name.clone();
+    }
+
+    if let Some(local) = ctx
+        .local_variables
+        .iter()
+        .find(|local| local.name.as_ref() == receiver_expr)
+    {
+        return Some(Arc::from(local.type_internal.erased_internal()));
+    }
+
+    if let Some(enclosing) = ctx.enclosing_internal_name.as_ref()
+        && let Some(field) = view.lookup_field_in_hierarchy(enclosing, receiver_expr)
+        && let Some(field_ty) = parse_single_type_to_internal(&field.descriptor)
+    {
+        return Some(Arc::from(field_ty.erased_internal()));
+    }
+
+    if let Some(type_ctx) = ctx.extension::<SourceTypeCtx>() {
+        let resolver = TypeResolver::new(view);
+        if let Some(receiver_ty) = expression_typing::resolve_expression_type(
+            receiver_expr,
+            &ctx.local_variables,
+            ctx.enclosing_internal_name.as_ref(),
+            &resolver,
+            type_ctx,
+            view,
+        ) {
+            return Some(Arc::from(receiver_ty.erased_internal()));
+        }
+    }
+
+    infer_receiver_type_from_text(receiver_expr)
+}
+
+fn root_index_view(db: &dyn Db) -> IndexView {
+    let workspace_index = db.workspace_index();
+    let index = workspace_index.read();
+    index.view(IndexScope {
+        module: ModuleId::ROOT,
+    })
 }
 
 #[cfg(test)]
