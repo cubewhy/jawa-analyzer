@@ -401,6 +401,7 @@ mod tests {
                     name_table: None,
                     view: None,
                     workspace: None,
+                    metrics: None,
                 },
             )
             .expect("context extraction should succeed")

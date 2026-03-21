@@ -4,6 +4,7 @@ use tower_lsp::lsp_types::{Position, Url};
 
 use crate::index::{IndexScope, IndexView};
 use crate::language::{Language, LanguageRegistry, ParseEnv};
+use crate::request_metrics::RequestMetrics;
 use crate::salsa_queries::conversion::{FromSalsaDataWithAnalysis, RequestAnalysisState};
 use crate::semantic::SemanticContext;
 use crate::workspace::{AnalysisContext, SourceFile, Workspace};
@@ -17,6 +18,7 @@ pub struct PreparedRequest<'a> {
     salsa_file: crate::salsa_db::SourceFile,
     inferred_package: Option<Arc<str>>,
     request_analysis: RequestAnalysisState,
+    metrics: Arc<RequestMetrics>,
 }
 
 impl<'a> PreparedRequest<'a> {
@@ -24,7 +26,9 @@ impl<'a> PreparedRequest<'a> {
         workspace: Arc<Workspace>,
         registry: &'a LanguageRegistry,
         uri: &Url,
+        request_kind: &'static str,
     ) -> Option<Self> {
+        let metrics = RequestMetrics::new(request_kind, uri);
         let lang_id = workspace
             .documents
             .with_doc(uri, |doc| doc.language_id().to_owned())?;
@@ -37,12 +41,23 @@ impl<'a> PreparedRequest<'a> {
 
         let view = {
             let db = workspace.salsa_db.lock();
+            metrics.record_index_view_acquisition(
+                "request_setup",
+                scope.module.0,
+                analysis.classpath,
+                analysis.source_root.map(|id| id.0),
+                false,
+            );
             crate::salsa_queries::get_index_view_for_context(
                 &*db,
                 scope.module,
                 analysis.classpath,
                 analysis.source_root,
             )
+        };
+        let request_analysis = RequestAnalysisState {
+            analysis,
+            view: view.clone(),
         };
 
         let salsa_file = workspace.get_or_update_salsa_file(uri)?;
@@ -55,7 +70,8 @@ impl<'a> PreparedRequest<'a> {
             view,
             salsa_file,
             inferred_package,
-            request_analysis: RequestAnalysisState { analysis },
+            request_analysis,
+            metrics,
         })
     }
 
@@ -87,6 +103,10 @@ impl<'a> PreparedRequest<'a> {
         &self.view
     }
 
+    pub fn metrics(&self) -> &Arc<RequestMetrics> {
+        &self.metrics
+    }
+
     pub fn salsa_file(&self) -> crate::salsa_db::SourceFile {
         self.salsa_file
     }
@@ -96,6 +116,7 @@ impl<'a> PreparedRequest<'a> {
             name_table: None,
             view: Some(self.view.clone()),
             workspace: Some(Arc::clone(&self.workspace)),
+            metrics: Some(Arc::clone(&self.metrics)),
         }
     }
 

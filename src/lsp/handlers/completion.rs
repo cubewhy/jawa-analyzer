@@ -23,7 +23,8 @@ pub async fn handle_completion(
         .and_then(|ctx| ctx.trigger_character.as_deref())
         .and_then(|s| s.chars().next());
 
-    let request = PreparedRequest::prepare(Arc::clone(&workspace), registry.as_ref(), uri)?;
+    let request =
+        PreparedRequest::prepare(Arc::clone(&workspace), registry.as_ref(), uri, "completion")?;
     let lang = request.lang();
     let analysis = request.analysis();
     let scope = request.scope();

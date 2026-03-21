@@ -1,14 +1,17 @@
 use ropey::Rope;
 use std::ops::Range;
+use std::sync::Arc;
 use tree_sitter::Node;
 use tree_sitter_utils::{Handler, HandlerExt, Input};
 
 use crate::index::IndexView;
 use crate::language::java::editor_semantics::{
-    JavaInvocationSite, intersects_range, render_type_for_ui, resolve_invocation,
-    semantic_context_at_offset,
+    JavaInvocationSite, JavaSemanticRequestContext, intersects_range, render_type_for_ui,
+    resolve_invocation,
 };
 use crate::language::java::type_ctx::SourceTypeCtx;
+use crate::request_metrics::RequestMetrics;
+use crate::workspace::Workspace;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JavaInlayHintKind {
@@ -29,21 +32,48 @@ pub fn collect_java_inlay_hints(
     root: Node,
     view: &IndexView,
     byte_range: Range<usize>,
+    metrics: Option<Arc<RequestMetrics>>,
+    workspace: Option<&Workspace>,
+    salsa_file: Option<crate::salsa_db::SourceFile>,
 ) -> Vec<JavaInlayHint> {
+    let collect_started = std::time::Instant::now();
+    let semantic = JavaSemanticRequestContext::new(source, rope, root, view, metrics);
     let mut hints = Vec::new();
-    collect_var_hints(source, rope, root, root, view, &byte_range, &mut hints);
-    collect_parameter_hints(source, rope, root, root, view, &byte_range, &mut hints);
+    collect_var_hints(
+        source,
+        root,
+        root,
+        &semantic,
+        workspace,
+        salsa_file,
+        &byte_range,
+        &mut hints,
+    );
+    collect_parameter_hints(
+        source,
+        root,
+        root,
+        &semantic,
+        workspace,
+        salsa_file,
+        &byte_range,
+        &mut hints,
+    );
     hints.sort_by_key(|hint| hint.offset);
+    if let Some(metrics) = semantic.metrics() {
+        metrics.record_phase_duration("inlay.collect_total", collect_started.elapsed());
+    }
     hints
 }
 
 #[allow(clippy::too_many_arguments)]
 fn collect_var_hints(
     source: &str,
-    rope: &Rope,
     root: Node,
     node: Node,
-    view: &IndexView,
+    semantic: &JavaSemanticRequestContext<'_>,
+    workspace: Option<&Workspace>,
+    salsa_file: Option<crate::salsa_db::SourceFile>,
     byte_range: &Range<usize>,
     out: &mut Vec<JavaInlayHint>,
 ) {
@@ -66,7 +96,7 @@ fn collect_var_hints(
                 continue;
             }
             let Some(ctx) =
-                semantic_context_at_offset(source, rope, root, name_node.end_byte(), view)
+                semantic_context_for_inlay(semantic, workspace, salsa_file, name_node.end_byte())
             else {
                 continue;
             };
@@ -87,9 +117,21 @@ fn collect_var_hints(
             {
                 continue;
             }
+            let render_started = std::time::Instant::now();
+            let label = format!(
+                ": {}",
+                render_type_for_ui(&local.type_internal, semantic.view(), &ctx)
+            );
+            if let Some(metrics) = semantic.metrics() {
+                metrics.record_phase_duration_at(
+                    "inlay.render_var_hint",
+                    Some(name_node.end_byte()),
+                    render_started.elapsed(),
+                );
+            }
             out.push(JavaInlayHint {
                 offset: name_node.end_byte(),
-                label: format!(": {}", render_type_for_ui(&local.type_internal, view, &ctx)),
+                label,
                 kind: JavaInlayHintKind::Type,
             });
         }
@@ -97,17 +139,20 @@ fn collect_var_hints(
 
     let mut walker = node.walk();
     for child in node.children(&mut walker) {
-        collect_var_hints(source, rope, root, child, view, byte_range, out);
+        collect_var_hints(
+            source, root, child, semantic, workspace, salsa_file, byte_range, out,
+        );
     }
 }
 
 #[allow(clippy::too_many_arguments)]
 fn collect_parameter_hints(
     source: &str,
-    rope: &Rope,
     root: Node,
     node: Node,
-    view: &IndexView,
+    semantic: &JavaSemanticRequestContext<'_>,
+    workspace: Option<&Workspace>,
+    salsa_file: Option<crate::salsa_db::SourceFile>,
     byte_range: &Range<usize>,
     out: &mut Vec<JavaInlayHint>,
 ) {
@@ -121,25 +166,37 @@ fn collect_parameter_hints(
         let arg_nodes = named_argument_nodes(arguments);
         if !arg_nodes.is_empty() {
             let ctx_offset = arguments.start_byte().saturating_add(1);
-            if let Some(ctx) = semantic_context_at_offset(source, rope, root, ctx_offset, view)
+            if let Some(ctx) =
+                semantic_context_for_inlay(semantic, workspace, salsa_file, ctx_offset)
                 && let Some(type_ctx) = ctx.extension::<SourceTypeCtx>()
-                && let Some(call) = resolve_invocation(&ctx, view, type_ctx, &site, None)
             {
-                for (arg_index, arg_node) in arg_nodes.into_iter().enumerate() {
-                    if !intersects_range(arg_node, byte_range) {
-                        continue;
+                let resolve_started = std::time::Instant::now();
+                let resolved_call =
+                    resolve_invocation(&ctx, semantic.view(), type_ctx, &site, None);
+                if let Some(metrics) = semantic.metrics() {
+                    metrics.record_phase_duration_at(
+                        "inlay.resolve_invocation",
+                        Some(ctx_offset),
+                        resolve_started.elapsed(),
+                    );
+                }
+                if let Some(call) = resolved_call {
+                    for (arg_index, arg_node) in arg_nodes.into_iter().enumerate() {
+                        if !intersects_range(arg_node, byte_range) {
+                            continue;
+                        }
+                        let Some(param_name) = call.parameter_name_for_argument(arg_index) else {
+                            continue;
+                        };
+                        if should_skip_parameter_hint(param_name.as_ref(), arg_node, source) {
+                            continue;
+                        }
+                        out.push(JavaInlayHint {
+                            offset: arg_node.start_byte(),
+                            label: format!("{param_name}:"),
+                            kind: JavaInlayHintKind::Parameter,
+                        });
                     }
-                    let Some(param_name) = call.parameter_name_for_argument(arg_index) else {
-                        continue;
-                    };
-                    if should_skip_parameter_hint(param_name.as_ref(), arg_node, source) {
-                        continue;
-                    }
-                    out.push(JavaInlayHint {
-                        offset: arg_node.start_byte(),
-                        label: format!("{param_name}:"),
-                        kind: JavaInlayHintKind::Parameter,
-                    });
                 }
             }
         }
@@ -147,7 +204,23 @@ fn collect_parameter_hints(
 
     let mut walker = node.walk();
     for child in node.children(&mut walker) {
-        collect_parameter_hints(source, rope, root, child, view, byte_range, out);
+        collect_parameter_hints(
+            source, root, child, semantic, workspace, salsa_file, byte_range, out,
+        );
+    }
+}
+
+fn semantic_context_for_inlay(
+    semantic: &JavaSemanticRequestContext<'_>,
+    workspace: Option<&Workspace>,
+    salsa_file: Option<crate::salsa_db::SourceFile>,
+    offset: usize,
+) -> Option<crate::semantic::SemanticContext> {
+    match (workspace, salsa_file) {
+        (Some(workspace), Some(salsa_file)) => {
+            semantic.inlay_context_at_offset(workspace, salsa_file, offset)
+        }
+        _ => semantic.semantic_context_at_offset(offset),
     }
 }
 

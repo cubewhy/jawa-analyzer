@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::index::{FieldSummary, MethodParams, MethodSummary};
+use crate::index::{FieldSummary, IndexView, MethodParams, MethodSummary};
 use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::salsa_db::SourceFile;
 use crate::salsa_queries::Db;
@@ -14,6 +14,7 @@ use crate::workspace::AnalysisContext;
 #[derive(Clone)]
 pub struct RequestAnalysisState {
     pub analysis: AnalysisContext,
+    pub view: IndexView,
 }
 
 /// Conversion layer between Salsa-compatible data and rich semantic types.
@@ -102,8 +103,6 @@ fn enrich_java_semantic_context(
     existing_imports: Vec<Arc<str>>,
     analysis: Option<&RequestAnalysisState>,
 ) -> SemanticContext {
-    let _ = analysis;
-
     let members = workspace
         .map(|ws| fetch_class_members_from_workspace(db, file, ws, data.cursor_offset))
         .unwrap_or_default();
@@ -118,34 +117,13 @@ fn enrich_java_semantic_context(
         })
         .collect();
 
-    let runtime_view = analysis
-        .map(|state| {
-            crate::salsa_queries::get_index_view_for_context(
-                db,
-                state.analysis.module,
-                state.analysis.classpath,
-                state.analysis.source_root,
-            )
-        })
-        .or_else(|| {
-            workspace.map(|ws| {
-                let analysis = ws.analysis_context_for_uri(file.file_id(db).uri());
-                crate::salsa_queries::get_index_view_for_context(
-                    db,
-                    analysis.module,
-                    analysis.classpath,
-                    analysis.source_root,
-                )
-            })
-        });
-
     let mut type_ctx = SourceTypeCtx::new(
         data.enclosing_package.clone(),
         existing_imports.clone(),
         None,
     );
-    if let Some(view) = runtime_view {
-        type_ctx = type_ctx.with_view(view);
+    if let Some(request_analysis) = analysis {
+        type_ctx = type_ctx.with_view(request_analysis.view.clone());
     }
     let type_ctx = Arc::new(type_ctx.with_current_class_methods(method_map));
 

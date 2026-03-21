@@ -4,6 +4,7 @@ use crate::{
     completion::{CompletionCandidate, provider::CompletionProvider},
     index::{IndexScope, IndexView, NameTable},
     lsp::semantic_tokens::{get_modifier_mask, get_type_idx},
+    request_metrics::RequestMetrics,
     semantic::SemanticContext,
 };
 use ropey::Rope;
@@ -207,6 +208,7 @@ pub struct ParseEnv {
     pub name_table: Option<Arc<NameTable>>,
     pub view: Option<IndexView>,
     pub workspace: Option<Arc<crate::workspace::Workspace>>,
+    pub metrics: Option<Arc<RequestMetrics>>,
 }
 
 pub struct LanguageRegistry {

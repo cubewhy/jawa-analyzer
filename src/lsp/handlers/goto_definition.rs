@@ -21,6 +21,7 @@ pub async fn handle_goto_definition(
         Arc::clone(&backend.workspace),
         backend.registry.as_ref(),
         uri,
+        "goto_definition",
     )?;
     let lookup_pos = request.token_end_position(pos);
     let analysis = request.analysis();

@@ -17,6 +17,7 @@ use crate::language::java::symbols::collect_java_symbols;
 use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::language::rope_utils::rope_line_col_to_offset;
 use crate::language::{ClassifiedToken, ParseEnv};
+use crate::request_metrics::RequestMetrics;
 use crate::semantic::{CursorLocation, SemanticContext};
 use crate::workspace::SourceFile;
 use ropey::Rope;
@@ -294,12 +295,23 @@ impl Language for JavaLanguage {
         &self,
         file: &SourceFile,
         range: Range,
-        _env: &ParseEnv,
+        env: &ParseEnv,
         index: &IndexView,
     ) -> Option<Vec<InlayHint>> {
         let root = file.root_node()?;
         let byte_range = lsp_range_to_byte_range(&file.rope, range, file.text().len())?;
-        let hints = collect_java_inlay_hints(file.text(), &file.rope, root, index, byte_range);
+        let hints = collect_java_inlay_hints(
+            file.text(),
+            &file.rope,
+            root,
+            index,
+            byte_range,
+            env.metrics.clone(),
+            env.workspace.as_deref(),
+            env.workspace
+                .as_ref()
+                .and_then(|workspace| workspace.get_or_update_salsa_file(file.uri.as_ref())),
+        );
 
         Some(
             hints
@@ -403,22 +415,36 @@ fn byte_offset_to_position(rope: &Rope, offset: usize) -> Position {
 }
 
 pub struct JavaContextExtractor {
-    source: String,
+    source: Arc<str>,
     pub rope: Rope,
     pub offset: usize,
     name_table: Option<Arc<NameTable>>,
     view: Option<IndexView>,
     workspace: Option<Arc<crate::workspace::Workspace>>,
     file_uri: Option<Arc<str>>,
+    metrics: Option<Arc<RequestMetrics>>,
+}
+
+fn maybe_record_extract_phase(
+    metrics: Option<&Arc<RequestMetrics>>,
+    phase: &'static str,
+    offset: usize,
+    started: std::time::Instant,
+) {
+    if let Some(metrics) = metrics
+        && metrics.request_kind() == "inlay_hints"
+    {
+        metrics.record_phase_duration_at(phase, Some(offset), started.elapsed());
+    }
 }
 
 impl JavaContextExtractor {
     pub fn new(
-        source: impl Into<String>,
+        source: impl Into<Arc<str>>,
         offset: usize,
         name_table: Option<Arc<NameTable>>,
     ) -> Self {
-        let source = source.into();
+        let source: Arc<str> = source.into();
         let rope = Rope::from_str(&source);
         Self {
             source,
@@ -428,6 +454,7 @@ impl JavaContextExtractor {
             view: None,
             workspace: None,
             file_uri: None,
+            metrics: None,
         }
     }
 
@@ -437,11 +464,12 @@ impl JavaContextExtractor {
     }
 
     pub(crate) fn with_rope(
-        source: String,
+        source: impl Into<Arc<str>>,
         offset: usize,
         rope: Rope,
         name_table: Option<Arc<NameTable>>,
     ) -> Self {
+        let source: Arc<str> = source.into();
         Self {
             source,
             rope,
@@ -450,6 +478,7 @@ impl JavaContextExtractor {
             view: None,
             workspace: None,
             file_uri: None,
+            metrics: None,
         }
     }
 
@@ -467,6 +496,11 @@ impl JavaContextExtractor {
     /// Set the file URI for incremental parsing
     pub fn with_file_uri(mut self, uri: Arc<str>) -> Self {
         self.file_uri = Some(uri);
+        self
+    }
+
+    pub fn with_metrics(mut self, metrics: Arc<RequestMetrics>) -> Self {
+        self.metrics = Some(metrics);
         self
     }
 
@@ -499,15 +533,30 @@ impl JavaContextExtractor {
             return self.empty_context();
         }
 
+        let location_started = std::time::Instant::now();
         let (location, query) = location::determine_location(&self, cursor_node, trigger_char);
+        maybe_record_extract_phase(
+            self.metrics.as_ref(),
+            "inlay.extract.determine_location",
+            self.offset,
+            location_started,
+        );
 
         let semantic_extractor = &self;
         let semantic_root = root;
         let semantic_cursor_node = cursor_node;
 
+        let functional_hint_started = std::time::Instant::now();
         let functional_target_hint =
             location::infer_functional_target_hint(semantic_extractor, semantic_cursor_node);
+        maybe_record_extract_phase(
+            self.metrics.as_ref(),
+            "inlay.extract.functional_target_hint",
+            self.offset,
+            functional_hint_started,
+        );
 
+        let scope_started = std::time::Instant::now();
         let enclosing_class =
             scope::extract_enclosing_class(semantic_extractor, semantic_cursor_node).or_else(
                 || scope::extract_enclosing_class_by_offset(semantic_extractor, semantic_root),
@@ -520,6 +569,14 @@ impl JavaContextExtractor {
         )
         .or_else(|| utils::build_internal_name(&enclosing_package, &enclosing_class));
         let existing_imports = scope::extract_imports(semantic_extractor, semantic_root);
+        maybe_record_extract_phase(
+            self.metrics.as_ref(),
+            "inlay.extract.scope_context",
+            self.offset,
+            scope_started,
+        );
+
+        let type_ctx_started = std::time::Instant::now();
         let mut type_ctx = SourceTypeCtx::new(
             enclosing_package.clone(),
             existing_imports.clone(),
@@ -528,7 +585,8 @@ impl JavaContextExtractor {
         if let Some(view) = &self.view {
             type_ctx = type_ctx.with_view(view.clone());
         }
-        if let Some(workspace) = &self.workspace
+        if self.view.is_none()
+            && let Some(workspace) = &self.workspace
             && let Some(file_uri) = &self.file_uri
             && let Ok(uri) = tower_lsp::lsp_types::Url::parse(file_uri)
         {
@@ -543,12 +601,19 @@ impl JavaContextExtractor {
             type_ctx = type_ctx.with_view(view);
         }
         let type_ctx = Arc::new(type_ctx);
+        maybe_record_extract_phase(
+            self.metrics.as_ref(),
+            "inlay.extract.type_ctx",
+            self.offset,
+            type_ctx_started,
+        );
 
         // Feature flag to enable incremental extraction
         let use_incremental = std::env::var("JAVA_ANALYZER_INCREMENTAL")
             .map(|v| v == "1" || v == "true")
             .unwrap_or(false);
 
+        let locals_started = std::time::Instant::now();
         let local_variables =
             if use_incremental && self.workspace.is_some() && self.file_uri.is_some() {
                 // NEW: Incremental extraction with PSI cache
@@ -582,6 +647,14 @@ impl JavaContextExtractor {
                     Some(&type_ctx),
                 )
             };
+        maybe_record_extract_phase(
+            self.metrics.as_ref(),
+            "inlay.extract.locals",
+            self.offset,
+            locals_started,
+        );
+
+        let lambda_started = std::time::Instant::now();
         let active_lambda_param_names =
             locals::extract_active_lambda_param_names(semantic_extractor, semantic_cursor_node);
         let active_lambda_param_names = if active_lambda_param_names.is_empty() {
@@ -593,6 +666,14 @@ impl JavaContextExtractor {
         } else {
             active_lambda_param_names
         };
+        maybe_record_extract_phase(
+            self.metrics.as_ref(),
+            "inlay.extract.lambda_params",
+            self.offset,
+            lambda_started,
+        );
+
+        let flow_started = std::time::Instant::now();
         let statement_labels =
             scope::extract_enclosing_statement_labels(semantic_extractor, semantic_cursor_node);
         let flow_type_overrides = flow::extract_instanceof_true_branch_overrides(
@@ -605,7 +686,14 @@ impl JavaContextExtractor {
             scope::extract_static_imports(semantic_extractor, semantic_root);
         let is_class_member_position =
             scope::is_cursor_in_class_member_position(semantic_cursor_node);
+        maybe_record_extract_phase(
+            self.metrics.as_ref(),
+            "inlay.extract.flow_and_labels",
+            self.offset,
+            flow_started,
+        );
 
+        let members_started = std::time::Instant::now();
         let current_class_members =
             if use_incremental && self.workspace.is_some() && self.file_uri.is_some() {
                 // NEW: Incremental extraction with PSI cache
@@ -675,11 +763,25 @@ impl JavaContextExtractor {
                     })
                     .unwrap_or_default()
             };
+        maybe_record_extract_phase(
+            self.metrics.as_ref(),
+            "inlay.extract.class_members",
+            self.offset,
+            members_started,
+        );
+
+        let enclosing_member_started = std::time::Instant::now();
         let enclosing_class_member = semantic_cursor_node
             .and_then(|n| utils::find_ancestor(n, "method_declaration"))
             .or_else(|| find_node_by_offset(semantic_root, "method_declaration", self.offset))
             .or_else(|| utils::find_enclosing_method_in_error(semantic_root, self.offset))
             .and_then(|m| members::parse_method_node(semantic_extractor, &type_ctx, m));
+        maybe_record_extract_phase(
+            self.metrics.as_ref(),
+            "inlay.extract.enclosing_member",
+            self.offset,
+            enclosing_member_started,
+        );
         let char_after_cursor = self.source[self.offset..]
             .chars()
             .find(|c| !(c.is_alphanumeric() || *c == '_'));
@@ -865,6 +967,7 @@ mod tests {
                     name_table: None,
                     view: None,
                     workspace: None,
+                    metrics: None,
                 },
             )
             .expect("parse_completion_context_with_tree returned None")
@@ -1109,6 +1212,7 @@ mod tests {
                     name_table: Some(view.build_name_table()),
                     view: Some(view.clone()),
                     workspace: None,
+                    metrics: None,
                 },
             )
             .expect("parse_completion_context_with_tree returned None");
@@ -4044,6 +4148,7 @@ mod tests {
                     name_table: Some(view.build_name_table()),
                     view: Some(view.clone()),
                     workspace: None,
+                    metrics: None,
                 },
             )
             .expect("parse_completion_context_with_tree returned None");
@@ -4156,6 +4261,7 @@ mod tests {
                     name_table: Some(view.build_name_table()),
                     view: Some(view.clone()),
                     workspace: None,
+                    metrics: None,
                 },
             )
             .expect("parse_completion_context_with_tree returned None");
@@ -4277,6 +4383,7 @@ mod tests {
                     name_table: Some(view.build_name_table()),
                     view: Some(view.clone()),
                     workspace: None,
+                    metrics: None,
                 },
             )
             .expect("parse_completion_context_with_tree returned None");
@@ -4995,6 +5102,7 @@ mod tests {
                     name_table: Some(view.build_name_table()),
                     view: Some(view.clone()),
                     workspace: None,
+                    metrics: None,
                 },
             )
             .expect("parse_completion_context_with_tree returned None");
@@ -5803,6 +5911,7 @@ mod tests {
                         name_table: Some(view.build_name_table()),
                         view: Some(view.clone()),
                         workspace: None,
+                        metrics: None,
                     },
                 )
                 .expect("type ctx")
@@ -5854,6 +5963,7 @@ mod tests {
                         name_table: Some(view.build_name_table()),
                         view: Some(view.clone()),
                         workspace: None,
+                        metrics: None,
                     },
                 )
                 .expect("ctor ctx")
@@ -5902,6 +6012,7 @@ mod tests {
                         name_table: Some(view.build_name_table()),
                         view: Some(view.clone()),
                         workspace: None,
+                        metrics: None,
                     },
                 )
                 .expect("decl ctx")

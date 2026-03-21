@@ -10,6 +10,8 @@ use crate::language::java::completion_context::ContextEnricher;
 use crate::language::java::expression_typing;
 use crate::language::java::render;
 use crate::language::java::type_ctx::SourceTypeCtx;
+use crate::language::java::{flow, locals, scope, utils};
+use crate::request_metrics::RequestMetrics;
 use crate::semantic::context::{
     CurrentClassMember, ExpectedTypeConfidence, FunctionalMethodCallHint,
 };
@@ -21,7 +23,7 @@ use crate::semantic::types::{
 use crate::semantic::{LocalVar, SemanticContext};
 use crate::{
     language::java::completion_context::resolve_source_like_type_with_scope,
-    semantic::types::symbol_resolver::SymbolResolver,
+    semantic::types::symbol_resolver::SymbolResolver, workspace::Workspace,
 };
 
 #[derive(Debug, Clone)]
@@ -140,6 +142,222 @@ pub(crate) fn semantic_context_at_offset(
     let mut ctx = extractor.extract(root, None);
     ContextEnricher::new(view).enrich(&mut ctx);
     Some(ctx)
+}
+
+pub(crate) struct JavaSemanticRequestContext<'a> {
+    source: Arc<str>,
+    rope: Rope,
+    root: Node<'a>,
+    view: &'a IndexView,
+    enricher: ContextEnricher<'a>,
+    metrics: Option<Arc<RequestMetrics>>,
+}
+
+impl<'a> JavaSemanticRequestContext<'a> {
+    pub(crate) fn new(
+        source: &str,
+        rope: &Rope,
+        root: Node<'a>,
+        view: &'a IndexView,
+        metrics: Option<Arc<RequestMetrics>>,
+    ) -> Self {
+        Self {
+            source: Arc::from(source),
+            rope: rope.clone(),
+            root,
+            view,
+            enricher: ContextEnricher::new(view),
+            metrics,
+        }
+    }
+
+    pub(crate) fn view(&self) -> &'a IndexView {
+        self.view
+    }
+
+    pub(crate) fn metrics(&self) -> Option<&Arc<RequestMetrics>> {
+        self.metrics.as_ref()
+    }
+
+    pub(crate) fn semantic_context_at_offset(&self, offset: usize) -> Option<SemanticContext> {
+        if let Some(metrics) = self.metrics.as_ref() {
+            metrics.record_semantic_context_lookup("inlay_semantic_context", offset);
+        }
+        let extract_started = std::time::Instant::now();
+        let mut extractor = JavaContextExtractor::with_rope(
+            Arc::clone(&self.source),
+            offset.min(self.source.len()),
+            self.rope.clone(),
+            None,
+        )
+        .with_view(self.view.clone());
+        if let Some(metrics) = self.metrics.as_ref() {
+            extractor = extractor.with_metrics(Arc::clone(metrics));
+        }
+        if extractor.is_in_comment() {
+            return None;
+        }
+
+        let mut ctx = extractor.extract(self.root, None);
+        if let Some(metrics) = self.metrics.as_ref() {
+            metrics.record_phase_duration_at(
+                "inlay.extract_semantic_context",
+                Some(offset),
+                extract_started.elapsed(),
+            );
+        }
+
+        let enrich_started = std::time::Instant::now();
+        self.enricher.enrich(&mut ctx);
+        if let Some(metrics) = self.metrics.as_ref() {
+            metrics.record_phase_duration_at(
+                "inlay.enrich_semantic_context",
+                Some(offset),
+                enrich_started.elapsed(),
+            );
+        }
+        Some(ctx)
+    }
+
+    pub(crate) fn inlay_context_at_offset(
+        &self,
+        workspace: &Workspace,
+        salsa_file: crate::salsa_db::SourceFile,
+        offset: usize,
+    ) -> Option<SemanticContext> {
+        if let Some(metrics) = self.metrics.as_ref() {
+            metrics.record_semantic_context_lookup("inlay_scope_context", offset);
+        }
+
+        let mut extractor = JavaContextExtractor::with_rope(
+            Arc::clone(&self.source),
+            offset.min(self.source.len()),
+            self.rope.clone(),
+            None,
+        )
+        .with_view(self.view.clone());
+        if let Some(metrics) = self.metrics.as_ref() {
+            extractor = extractor.with_metrics(Arc::clone(metrics));
+        }
+        if extractor.is_in_comment() {
+            return None;
+        }
+
+        let cursor_started = std::time::Instant::now();
+        let cursor_node = extractor.find_cursor_node(self.root);
+        if let Some(metrics) = self.metrics.as_ref() {
+            metrics.record_phase_duration_at(
+                "inlay.prepare_cursor_node",
+                Some(offset),
+                cursor_started.elapsed(),
+            );
+        }
+
+        let structure_started = std::time::Instant::now();
+        let enclosing_class = scope::extract_enclosing_class(&extractor, cursor_node)
+            .or_else(|| scope::extract_enclosing_class_by_offset(&extractor, self.root));
+        let enclosing_package = scope::extract_package(&extractor, self.root);
+        let existing_imports = scope::extract_imports(&extractor, self.root);
+        let existing_static_imports = scope::extract_static_imports(&extractor, self.root);
+        let enclosing_internal_name = scope::extract_enclosing_internal_name(
+            &extractor,
+            cursor_node,
+            enclosing_package.as_ref(),
+        )
+        .or_else(|| utils::build_internal_name(&enclosing_package, &enclosing_class));
+        if let Some(metrics) = self.metrics.as_ref() {
+            metrics.record_phase_duration_at(
+                "inlay.prepare_structure",
+                Some(offset),
+                structure_started.elapsed(),
+            );
+        }
+
+        let type_ctx_started = std::time::Instant::now();
+        let type_ctx = Arc::new(
+            SourceTypeCtx::new(enclosing_package.clone(), existing_imports.clone(), None)
+                .with_view(self.view.clone()),
+        );
+        if let Some(metrics) = self.metrics.as_ref() {
+            metrics.record_phase_duration_at(
+                "inlay.prepare_type_ctx",
+                Some(offset),
+                type_ctx_started.elapsed(),
+            );
+        }
+
+        let db = workspace.salsa_db.lock();
+        let locals_started = std::time::Instant::now();
+        let local_variables = crate::salsa_queries::extract_method_locals_incremental(
+            &*db, salsa_file, offset, workspace,
+        );
+        if let Some(metrics) = self.metrics.as_ref() {
+            metrics.record_phase_duration_at(
+                "inlay.prepare_locals",
+                Some(offset),
+                locals_started.elapsed(),
+            );
+        }
+
+        let members_started = std::time::Instant::now();
+        let current_class_members = crate::salsa_queries::extract_class_members_incremental(
+            &*db, salsa_file, offset, workspace,
+        );
+        if let Some(metrics) = self.metrics.as_ref() {
+            metrics.record_phase_duration_at(
+                "inlay.prepare_class_members",
+                Some(offset),
+                members_started.elapsed(),
+            );
+        }
+        drop(db);
+
+        let lambda_started = std::time::Instant::now();
+        let active_lambda_param_names =
+            locals::extract_active_lambda_param_names(&extractor, cursor_node);
+        if let Some(metrics) = self.metrics.as_ref() {
+            metrics.record_phase_duration_at(
+                "inlay.prepare_lambda_params",
+                Some(offset),
+                lambda_started.elapsed(),
+            );
+        }
+
+        let flow_started = std::time::Instant::now();
+        let flow_type_overrides = flow::extract_instanceof_true_branch_overrides(
+            &extractor,
+            cursor_node,
+            &type_ctx,
+            &local_variables,
+        );
+        let statement_labels = scope::extract_enclosing_statement_labels(&extractor, cursor_node);
+        let is_class_member_position = scope::is_cursor_in_class_member_position(cursor_node);
+        if let Some(metrics) = self.metrics.as_ref() {
+            metrics.record_phase_duration_at(
+                "inlay.prepare_flow_and_labels",
+                Some(offset),
+                flow_started.elapsed(),
+            );
+        }
+
+        let mut ctx = SemanticContext::new(
+            crate::semantic::CursorLocation::Unknown,
+            "",
+            local_variables,
+            enclosing_class,
+            enclosing_internal_name,
+            enclosing_package,
+            existing_imports,
+        )
+        .with_statement_labels(statement_labels)
+        .with_active_lambda_param_names(active_lambda_param_names)
+        .with_flow_type_overrides(flow_type_overrides)
+        .with_class_member_position(is_class_member_position)
+        .with_static_imports(existing_static_imports)
+        .with_extension(type_ctx);
+        ctx.current_class_members = current_class_members;
+        Some(ctx)
+    }
 }
 
 pub(crate) fn materialize_local_variable_types(
