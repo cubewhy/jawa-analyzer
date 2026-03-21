@@ -4,7 +4,7 @@ use std::sync::Arc;
 use ropey::Rope;
 use tree_sitter::Node;
 
-use crate::index::{IndexView, MethodSummary};
+use crate::index::{ClassOrigin, IndexView, MethodSummary};
 use crate::language::java::JavaContextExtractor;
 use crate::language::java::completion_context::ContextEnricher;
 use crate::language::java::expression_typing;
@@ -219,6 +219,24 @@ impl<'a> JavaSemanticRequestContext<'a> {
         Some(ctx)
     }
 
+    fn indexed_source_class_covers_file(
+        &self,
+        db: &dyn crate::salsa_queries::Db,
+        salsa_file: crate::salsa_db::SourceFile,
+        enclosing_internal_name: Option<&Arc<str>>,
+    ) -> bool {
+        let Some(enclosing_internal_name) = enclosing_internal_name else {
+            return false;
+        };
+        let Some(class_meta) = self.view.get_class(enclosing_internal_name.as_ref()) else {
+            return false;
+        };
+        matches!(
+            &class_meta.origin,
+            ClassOrigin::SourceFile(uri) if uri.as_ref() == salsa_file.file_id(db).as_str()
+        )
+    }
+
     pub(crate) fn inlay_context_at_offset(
         &self,
         workspace: &Workspace,
@@ -301,9 +319,17 @@ impl<'a> JavaSemanticRequestContext<'a> {
         }
 
         let members_started = std::time::Instant::now();
-        let current_class_members = crate::salsa_queries::extract_class_members_incremental(
-            &*db, salsa_file, offset, workspace,
-        );
+        let current_class_members = if self.indexed_source_class_covers_file(
+            &*db,
+            salsa_file,
+            enclosing_internal_name.as_ref(),
+        ) {
+            std::collections::HashMap::new()
+        } else {
+            crate::salsa_queries::extract_class_members_incremental(
+                &*db, salsa_file, offset, workspace,
+            )
+        };
         if let Some(metrics) = self.metrics.as_ref() {
             metrics.record_phase_duration_at(
                 "inlay.prepare_class_members",
@@ -793,6 +819,7 @@ mod tests {
         ClassMetadata, ClassOrigin, IndexScope, MethodParams, ModuleId, WorkspaceIndex,
     };
     use crate::language::java::make_java_parser;
+    use crate::semantic::CursorLocation;
     use rust_asm::constants::ACC_PUBLIC;
 
     fn make_view() -> crate::index::IndexView {
@@ -801,41 +828,69 @@ mod tests {
             IndexScope {
                 module: ModuleId::ROOT,
             },
-            vec![ClassMetadata {
-                package: Some(Arc::from("java/util")),
-                name: Arc::from("ArrayList"),
-                internal_name: Arc::from("java/util/ArrayList"),
-                super_name: Some(Arc::from("java/util/AbstractList")),
-                interfaces: vec![],
-                annotations: vec![],
-                methods: vec![
-                    MethodSummary {
-                        name: Arc::from("<init>"),
-                        params: MethodParams::empty(),
+            vec![
+                ClassMetadata {
+                    package: Some(Arc::from("java/util")),
+                    name: Arc::from("ArrayList"),
+                    internal_name: Arc::from("java/util/ArrayList"),
+                    super_name: Some(Arc::from("java/util/AbstractList")),
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![
+                        MethodSummary {
+                            name: Arc::from("<init>"),
+                            params: MethodParams::empty(),
+                            annotations: vec![],
+                            access_flags: ACC_PUBLIC,
+                            is_synthetic: false,
+                            generic_signature: None,
+                            return_type: None,
+                        },
+                        MethodSummary {
+                            name: Arc::from("<init>"),
+                            params: MethodParams::from([("I", "initialCapacity")]),
+                            annotations: vec![],
+                            access_flags: ACC_PUBLIC,
+                            is_synthetic: false,
+                            generic_signature: None,
+                            return_type: None,
+                        },
+                    ],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: Some(Arc::from(
+                        "<E:Ljava/lang/Object;>Ljava/util/AbstractList<TE;>;",
+                    )),
+                    origin: ClassOrigin::Jar(Arc::from("rt.jar")),
+                },
+                ClassMetadata {
+                    package: None,
+                    name: Arc::from("T"),
+                    internal_name: Arc::from("T"),
+                    super_name: Some(Arc::from("java/lang/Object")),
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![MethodSummary {
+                        name: Arc::from("rangeCheck"),
+                        params: MethodParams::from([
+                            ("I", "arrayLength"),
+                            ("I", "fromIndex"),
+                            ("I", "toIndex"),
+                        ]),
                         annotations: vec![],
                         access_flags: ACC_PUBLIC,
                         is_synthetic: false,
                         generic_signature: None,
                         return_type: None,
-                    },
-                    MethodSummary {
-                        name: Arc::from("<init>"),
-                        params: MethodParams::from([("I", "initialCapacity")]),
-                        annotations: vec![],
-                        access_flags: ACC_PUBLIC,
-                        is_synthetic: false,
-                        generic_signature: None,
-                        return_type: None,
-                    },
-                ],
-                fields: vec![],
-                access_flags: ACC_PUBLIC,
-                inner_class_of: None,
-                generic_signature: Some(Arc::from(
-                    "<E:Ljava/lang/Object;>Ljava/util/AbstractList<TE;>;",
-                )),
-                origin: ClassOrigin::Jar(Arc::from("rt.jar")),
-            }],
+                    }],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: None,
+                    origin: ClassOrigin::SourceFile(Arc::from("file:///test/T.java")),
+                },
+            ],
         );
         idx.view(IndexScope {
             module: ModuleId::ROOT,
@@ -882,5 +937,40 @@ mod tests {
             .find(|local| local.name.as_ref() == "n")
             .expect("var local");
         assert_eq!(local.type_internal.erased_internal(), "int");
+    }
+
+    #[test]
+    fn same_class_method_resolution_can_use_indexed_source_members() {
+        let view = make_view();
+        let ctx = SemanticContext::new(
+            CursorLocation::Unknown,
+            "",
+            vec![],
+            Some(Arc::from("T")),
+            Some(Arc::from("T")),
+            None,
+            vec![],
+        );
+        let type_ctx = SourceTypeCtx::from_view(None, vec![], view.clone());
+        let site = JavaInvocationSite::Method {
+            receiver_expr: "this".to_string(),
+            method_name: "rangeCheck".to_string(),
+            arg_texts: vec!["1".to_string(), "2".to_string(), "3".to_string()],
+        };
+
+        let call = resolve_invocation(&ctx, &view, &type_ctx, &site, None).expect("resolved call");
+
+        assert_eq!(
+            call.parameter_name_for_argument(0).as_deref(),
+            Some("arrayLength")
+        );
+        assert_eq!(
+            call.parameter_name_for_argument(1).as_deref(),
+            Some("fromIndex")
+        );
+        assert_eq!(
+            call.parameter_name_for_argument(2).as_deref(),
+            Some("toIndex")
+        );
     }
 }

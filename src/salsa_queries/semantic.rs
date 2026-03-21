@@ -150,8 +150,18 @@ pub fn extract_active_lambda_param_names_incremental(
     file: SourceFile,
     cursor_offset: usize,
 ) -> Vec<Arc<str>> {
-    let content = file.content(db);
-    extract_active_lambda_param_names_from_source(content, cursor_offset)
+    let language_id = file.language_id(db);
+    if language_id.as_ref() != "java" {
+        return vec![];
+    }
+
+    let Some(tree) = parse_file_tree(db, file) else {
+        return vec![];
+    };
+    let root = tree.root_node();
+    let content: Arc<str> = Arc::from(file.content(db).as_str());
+    let ctx = JavaContextExtractor::new_with_overview(Arc::clone(&content), cursor_offset, None);
+    extract_active_lambda_param_names(&ctx, ctx.find_cursor_node(root))
 }
 
 fn get_or_parse_method_locals(
@@ -748,18 +758,25 @@ fn extract_active_lambda_params_incremental(
     };
     let root = tree.root_node();
 
+    let content: Arc<str> = Arc::from(content.as_str());
+    let ctx = JavaContextExtractor::new_with_overview(Arc::clone(&content), cursor_offset, None);
+    let cursor_node = ctx.find_cursor_node(root);
+
+    if extract_active_lambda_param_names(&ctx, cursor_node).is_empty() {
+        return vec![];
+    }
+
     let name_table = resolve_name_table_for_file(db, file);
-    let ctx = JavaContextExtractor::new_with_overview(
-        content.to_string(),
+    let typed_ctx = JavaContextExtractor::new_with_overview(
+        Arc::clone(&content),
         cursor_offset,
         name_table.clone(),
     );
-    let package = scope::extract_package(&ctx, root);
-    let imports = scope::extract_imports(&ctx, root);
+    let package = scope::extract_package(&typed_ctx, root);
+    let imports = scope::extract_imports(&typed_ctx, root);
     let type_ctx = SourceTypeCtx::from_overview(package, imports, name_table);
-    let cursor_node = ctx.find_cursor_node(root);
 
-    extract_active_lambda_params(&ctx, cursor_node, Some(&type_ctx))
+    extract_active_lambda_params(&typed_ctx, cursor_node, Some(&type_ctx))
 }
 
 fn extract_active_lambda_param_names(
@@ -2192,6 +2209,27 @@ mod tests {
         for case in cases {
             assert_incremental_matches_reference(case);
         }
+    }
+
+    #[test]
+    fn test_incremental_lambda_param_names_match_source_helper() {
+        let source = indoc! {r#"
+            import java.util.function.BiFunction;
+
+            class T {
+                void m() {
+                    BiFunction<String, String, Integer> f = (left, right) -> left/*caret*/;
+                }
+            }
+        "#};
+        let (source, offset) = prepare_source(source, "/*caret*/", true);
+        let (db, _workspace, file, _name_table) = setup_case(&source);
+
+        let incremental = extract_active_lambda_param_names_incremental(&db, file, offset);
+        let from_source = extract_active_lambda_param_names_from_source(&source, offset);
+
+        assert_eq!(incremental, from_source);
+        assert_eq!(incremental, vec![Arc::from("left"), Arc::from("right")]);
     }
 
     #[test]
