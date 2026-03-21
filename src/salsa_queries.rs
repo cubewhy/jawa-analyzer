@@ -52,9 +52,9 @@ pub use completion::{
 pub use context::{
     CompletionContextData, CursorLocationData, ExpectedTypeSourceData, FunctionalExprShapeData,
     FunctionalMethodCallHintData, FunctionalTargetHintData, LocalVarData,
-    MethodRefQualifierKindData, NodeMetadata, StatementLabelData, StatementLabelKind,
-    StatementLabelTargetKindData, compute_scope_content_hash, extract_completion_context,
-    find_node_at_position, line_col_to_offset,
+    MethodRefQualifierKindData, MethodSummaryData, NodeMetadata, StatementLabelData,
+    StatementLabelKind, StatementLabelTargetKindData, compute_scope_content_hash,
+    extract_completion_context, find_node_at_position, line_col_to_offset,
 };
 pub use conversion::{FromSalsaData, convert_local_var};
 pub use hints::{

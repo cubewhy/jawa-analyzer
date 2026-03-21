@@ -160,6 +160,17 @@ pub struct FunctionalTargetHintData {
     pub expr_shape: Option<FunctionalExprShapeData>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct MethodSummaryData {
+    pub name: Arc<str>,
+    pub descriptor: Arc<str>,
+    pub param_names: Vec<Arc<str>>,
+    pub access_flags: u16,
+    pub is_synthetic: bool,
+    pub generic_signature: Option<Arc<str>>,
+    pub return_type: Option<Arc<str>>,
+}
+
 /// Local variable metadata (Salsa-compatible)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct LocalVarData {

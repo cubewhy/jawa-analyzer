@@ -6,7 +6,7 @@ use crate::salsa_db::SourceFile;
 use crate::salsa_queries::context::{
     CompletionContextData, CursorLocationData, ExpectedTypeSourceData, FunctionalExprShapeData,
     FunctionalMethodCallHintData, FunctionalTargetHintData, MethodRefQualifierKindData,
-    StatementLabelData, StatementLabelTargetKindData, line_col_to_offset,
+    MethodSummaryData, StatementLabelData, StatementLabelTargetKindData, line_col_to_offset,
 };
 use crate::salsa_queries::hints::{InlayHintData, InlayHintKindData};
 use crate::salsa_queries::symbols::{ResolvedSymbolData, SymbolKind};
@@ -17,6 +17,7 @@ use ropey::Rope;
 ///
 /// These queries handle Java-specific parsing and analysis.
 use std::sync::Arc;
+use tree_sitter_utils::traversal::find_node_by_offset;
 
 /// Parse Java source and extract class metadata with full incremental support
 ///
@@ -204,6 +205,40 @@ class User {
             }
             other => panic!("expected MemberAccess, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_extract_java_enclosing_method_preserves_static_main() {
+        let db = Database::default();
+        let uri = Url::parse("file:///test/Test.java").unwrap();
+        let content = indoc::indoc! {r#"
+            class Test {
+                static void main(String[] args) {
+                    
+                }
+            }
+        "#};
+        let file = SourceFile::new(
+            &db,
+            FileId::new(uri),
+            content.to_string(),
+            Arc::from("java"),
+        );
+        let offset = line_col_to_offset(content, 2, 4).expect("blank-line offset");
+
+        let method = extract_java_enclosing_method(&db, file, offset).expect("enclosing method");
+
+        assert_eq!(method.name.as_ref(), "main");
+        assert!(
+            method.descriptor.as_ref().starts_with("([L"),
+            "expected source method descriptor to preserve the array parameter shape, got {}",
+            method.descriptor
+        );
+        assert_ne!(
+            method.access_flags & rust_asm::constants::ACC_STATIC,
+            0,
+            "expected enclosing method to preserve static access"
+        );
     }
 }
 
@@ -555,6 +590,42 @@ pub fn find_java_enclosing_class_name(
     }
 }
 
+/// Extract the enclosing Java source method at an offset (CACHED).
+#[salsa::tracked]
+pub fn extract_java_enclosing_method(
+    db: &dyn Db,
+    file: SourceFile,
+    offset: usize,
+) -> Option<Arc<MethodSummaryData>> {
+    let content = file.content(db);
+    let tree = super::parse::parse_tree(db, file)?;
+    let root = tree.root_node();
+    let name_table = get_name_table_for_java_file(db, file);
+    let extractor = crate::language::java::JavaContextExtractor::new_with_overview(
+        content.to_string(),
+        offset.min(content.len()),
+        name_table.clone(),
+    );
+    let cursor_node = extractor.find_cursor_node(root);
+    let package = super::parse::extract_package(db, file);
+    let imports = super::parse::extract_imports(db, file);
+    let type_ctx = crate::language::java::type_ctx::SourceTypeCtx::from_overview(
+        package,
+        imports.as_ref().clone(),
+        name_table,
+    );
+
+    cursor_node
+        .and_then(|node| find_ancestor_of_kind(node, "method_declaration"))
+        .or_else(|| find_node_by_offset(root, "method_declaration", offset))
+        .or_else(|| crate::language::java::utils::find_enclosing_method_in_error(root, offset))
+        .and_then(|node| {
+            crate::language::java::members::parse_method_node(&extractor, &type_ctx, node)
+        })
+        .and_then(convert_current_member_to_method_data)
+        .map(Arc::new)
+}
+
 /// Count local variables in scope (CACHED)
 #[salsa::tracked]
 pub fn count_java_locals_in_scope(db: &dyn Db, file: SourceFile, offset: usize) -> usize {
@@ -576,6 +647,23 @@ fn build_internal_name(package: &Option<Arc<str>>, class: &Option<Arc<str>>) -> 
         (Some(pkg), Some(cls)) => Some(Arc::from(format!("{}/{}", pkg, cls))),
         (None, Some(cls)) => Some(Arc::clone(cls)),
         _ => None,
+    }
+}
+
+fn convert_current_member_to_method_data(
+    member: crate::semantic::context::CurrentClassMember,
+) -> Option<MethodSummaryData> {
+    match member {
+        crate::semantic::context::CurrentClassMember::Method(method) => Some(MethodSummaryData {
+            name: Arc::clone(&method.name),
+            descriptor: method.desc(),
+            param_names: method.params.param_names(),
+            access_flags: method.access_flags,
+            is_synthetic: method.is_synthetic,
+            generic_signature: method.generic_signature.clone(),
+            return_type: method.return_type.clone(),
+        }),
+        crate::semantic::context::CurrentClassMember::Field(_) => None,
     }
 }
 

@@ -1,15 +1,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::index::{FieldSummary, IndexView, MethodSummary};
+use crate::index::{FieldSummary, IndexView, MethodParams, MethodSummary};
 use crate::language::java::JavaContextExtractor;
+use crate::language::java::flow;
 use crate::language::java::type_ctx::SourceTypeCtx;
-use crate::language::java::{flow, members};
 use crate::salsa_db::SourceFile;
 use crate::salsa_queries::Db;
 use crate::salsa_queries::{
     CompletionContextData, CursorLocationData, ExpectedTypeSourceData, FunctionalExprShapeData,
-    FunctionalTargetHintData, MethodRefQualifierKindData, StatementLabelData,
+    FunctionalTargetHintData, MethodRefQualifierKindData, MethodSummaryData, StatementLabelData,
     StatementLabelTargetKindData,
 };
 use crate::semantic::context::{
@@ -19,7 +19,6 @@ use crate::semantic::context::{
 use crate::semantic::types::type_name::TypeName;
 use crate::semantic::{CursorLocation, LocalVar, SemanticContext};
 use crate::workspace::AnalysisContext;
-use tree_sitter_utils::traversal::{ancestor_of_kind, find_node_by_offset};
 
 #[derive(Clone)]
 pub struct RequestAnalysisState {
@@ -110,14 +109,12 @@ fn enrich_java_semantic_context(
     analysis: Option<&RequestAnalysisState>,
 ) -> SemanticContext {
     let source = file.content(db);
-    let rope = ropey::Rope::from_str(source);
     let tree = crate::salsa_queries::parse::parse_tree(db, file)
         .expect("java completion conversion parse tree");
     let root = tree.root_node();
-    let extractor = JavaContextExtractor::with_rope(
-        Arc::<str>::from(source.as_str()),
+    let extractor = JavaContextExtractor::new_with_overview(
+        source.to_string(),
         data.cursor_offset.min(source.len()),
-        rope,
         None,
     );
     let cursor_node = extractor.find_cursor_node(root);
@@ -162,13 +159,10 @@ fn enrich_java_semantic_context(
         });
 
     let static_imports = fetch_static_imports(db, file);
-    let enclosing_class_member = cursor_node
-        .and_then(|n| ancestor_of_kind(n, "method_declaration"))
-        .or_else(|| find_node_by_offset(root, "method_declaration", data.cursor_offset))
-        .or_else(|| {
-            crate::language::java::utils::find_enclosing_method_in_error(root, data.cursor_offset)
-        })
-        .and_then(|m| members::parse_method_node(&extractor, &type_ctx, m));
+    let enclosing_class_member =
+        crate::salsa_queries::java::extract_java_enclosing_method(db, file, data.cursor_offset)
+            .as_deref()
+            .map(convert_method_summary_data_to_member);
     let active_lambda_param_names = workspace
         .map(|_| {
             crate::salsa_queries::extract_active_lambda_param_names_incremental(
@@ -435,6 +429,18 @@ pub fn convert_field_summary(field: &FieldSummary) -> CurrentClassMember {
     CurrentClassMember::Field(Arc::new(field.clone()))
 }
 
+fn convert_method_summary_data_to_member(data: &MethodSummaryData) -> CurrentClassMember {
+    CurrentClassMember::Method(Arc::new(MethodSummary {
+        name: Arc::clone(&data.name),
+        params: MethodParams::from_descriptor_and_names(&data.descriptor, &data.param_names),
+        annotations: Vec::new(),
+        access_flags: data.access_flags,
+        is_synthetic: data.is_synthetic,
+        generic_signature: data.generic_signature.clone(),
+        return_type: data.return_type.clone(),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -600,5 +606,39 @@ mod tests {
             }
             other => panic!("expected lambda expr shape, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn test_java_completion_context_conversion_preserves_enclosing_static_method() {
+        let db = Database::default();
+        let uri = Url::parse("file:///test/Test.java").unwrap();
+        let source = indoc::indoc! {r#"
+            class Test {
+                static void main(String[] args) {
+                    
+                }
+            }
+        "#}
+        .to_string();
+        let line = 2u32;
+        let character = 4u32;
+        let file = SourceFile::new(&db, FileId::new(uri), source.clone(), Arc::from("java"));
+
+        let data = crate::salsa_queries::java::extract_java_completion_context(
+            &db, file, line, character, None,
+        );
+        let ctx = SemanticContext::from_salsa_data(data.as_ref().clone(), &db, file, None);
+
+        assert!(
+            ctx.is_in_static_context(),
+            "expected enclosing static method to survive conversion, got {:?}",
+            ctx.enclosing_class_member
+        );
+        assert_eq!(
+            ctx.enclosing_class_member
+                .as_ref()
+                .map(|member| member.name()),
+            Some(Arc::from("main"))
+        );
     }
 }
