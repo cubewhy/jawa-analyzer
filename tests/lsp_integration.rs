@@ -37,7 +37,9 @@ async fn open_document(workspace: &Arc<Workspace>, uri: &str, content: &str) {
     }
 
     // Index the document using Salsa
-    let salsa_file = workspace.get_or_create_salsa_file(&uri, content, "java");
+    let salsa_file = workspace
+        .get_or_update_salsa_file(&uri)
+        .expect("opened document should have a Salsa file");
     let classes = {
         let db = workspace.salsa_db.lock();
         let _result = java_analyzer::salsa_queries::index::extract_classes(&*db, salsa_file);

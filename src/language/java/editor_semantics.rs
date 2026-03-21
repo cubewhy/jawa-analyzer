@@ -10,7 +10,7 @@ use crate::language::java::completion_context::ContextEnricher;
 use crate::language::java::expression_typing;
 use crate::language::java::render;
 use crate::language::java::type_ctx::SourceTypeCtx;
-use crate::language::java::{flow, locals, scope, utils};
+use crate::language::java::{flow, scope, utils};
 use crate::request_metrics::RequestMetrics;
 use crate::semantic::context::{
     CurrentClassMember, ExpectedTypeConfidence, FunctionalMethodCallHint,
@@ -311,11 +311,13 @@ impl<'a> JavaSemanticRequestContext<'a> {
                 members_started.elapsed(),
             );
         }
-        drop(db);
 
         let lambda_started = std::time::Instant::now();
         let active_lambda_param_names =
-            locals::extract_active_lambda_param_names(&extractor, cursor_node);
+            crate::salsa_queries::extract_active_lambda_param_names_incremental(
+                &*db, salsa_file, offset,
+            );
+        drop(db);
         if let Some(metrics) = self.metrics.as_ref() {
             metrics.record_phase_duration_at(
                 "inlay.prepare_lambda_params",

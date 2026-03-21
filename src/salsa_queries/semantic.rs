@@ -103,6 +103,73 @@ pub fn extract_visible_method_locals_incremental(
     normalize_visible_locals(visible)
 }
 
+/// Extract the visible local variables at the cursor without a workspace cache.
+///
+/// This uses the same semantic extraction pipeline as the incremental Salsa path,
+/// but skips the workspace-backed memoization layer so it can be used in tests
+/// and standalone source-based helpers.
+pub fn extract_visible_method_locals_from_source(
+    source: &str,
+    cursor_offset: usize,
+    type_ctx: Option<&SourceTypeCtx>,
+) -> Vec<LocalVar> {
+    let Some(tree) = parse_tree(source, "java") else {
+        return vec![];
+    };
+    let root = tree.root_node();
+    let ctx = JavaContextExtractor::new_with_overview(source.to_string(), cursor_offset, None);
+    let cursor_node = ctx.find_cursor_node(root);
+
+    let mut visible =
+        if let Some(method_node) = find_enclosing_method_node_in_tree(root, cursor_offset) {
+            filter_visible_locals(
+                &collect_method_locals(
+                    &ctx,
+                    method_node,
+                    type_ctx,
+                    fallback_visibility_scope(method_node.end_byte()),
+                ),
+                cursor_offset,
+            )
+        } else {
+            filter_visible_locals(
+                &collect_method_locals(
+                    &ctx,
+                    root,
+                    type_ctx,
+                    fallback_visibility_scope(cursor_offset),
+                ),
+                cursor_offset,
+            )
+        };
+
+    visible.extend(extract_active_lambda_params(&ctx, cursor_node, type_ctx));
+    normalize_visible_locals(visible)
+}
+
+/// Extract the active lambda parameter names at the cursor without needing a workspace.
+pub fn extract_active_lambda_param_names_from_source(
+    source: &str,
+    cursor_offset: usize,
+) -> Vec<Arc<str>> {
+    let Some(tree) = parse_tree(source, "java") else {
+        return vec![];
+    };
+    let root = tree.root_node();
+    let ctx = JavaContextExtractor::new_with_overview(source.to_string(), cursor_offset, None);
+    extract_active_lambda_param_names(&ctx, ctx.find_cursor_node(root))
+}
+
+/// Extract the active lambda parameter names at the cursor using the Salsa-backed file snapshot.
+pub fn extract_active_lambda_param_names_incremental(
+    db: &dyn crate::salsa_queries::Db,
+    file: SourceFile,
+    cursor_offset: usize,
+) -> Vec<Arc<str>> {
+    let content = file.content(db);
+    extract_active_lambda_param_names_from_source(content, cursor_offset)
+}
+
 fn get_or_parse_method_locals(
     db: &dyn crate::salsa_queries::Db,
     file: SourceFile,
@@ -711,6 +778,34 @@ fn extract_active_lambda_params_incremental(
     extract_active_lambda_params(&ctx, cursor_node, Some(&type_ctx))
 }
 
+fn extract_active_lambda_param_names(
+    ctx: &JavaContextExtractor,
+    cursor_node: Option<Node>,
+) -> Vec<Arc<str>> {
+    let mut current = cursor_node;
+    while let Some(node) = current {
+        if node.kind() == "lambda_expression" {
+            let Some(body) = node.child_by_field_name("body") else {
+                return vec![];
+            };
+            if ctx.offset < body.start_byte() || ctx.offset > body.end_byte() {
+                return vec![];
+            }
+            let Some(params) = node.child_by_field_name("parameters") else {
+                return vec![];
+            };
+            return extract_lambda_param_names(ctx, params);
+        }
+        if matches!(node.kind(), "ERROR" | "block" | "program")
+            && let Some(names) = extract_active_lambda_names_from_error_arrow_node(ctx, node)
+        {
+            return names;
+        }
+        current = node.parent();
+    }
+    vec![]
+}
+
 fn extract_active_lambda_params(
     ctx: &JavaContextExtractor,
     cursor_node: Option<Node>,
@@ -851,6 +946,31 @@ fn extract_lambda_params_from_error_arrow_node(
     )
 }
 
+fn extract_active_lambda_names_from_error_arrow_node(
+    ctx: &JavaContextExtractor,
+    container: Node,
+) -> Option<Vec<Arc<str>>> {
+    let children: Vec<Node> = {
+        let mut walker = container.walk();
+        container.children(&mut walker).collect()
+    };
+    let arrow_idx = children
+        .iter()
+        .rposition(|node| node.kind() == "->" && node.end_byte() <= ctx.offset)?;
+    if arrow_idx == 0 {
+        return None;
+    }
+
+    let arrow_end = children[arrow_idx].end_byte();
+    if ctx.offset < arrow_end {
+        return None;
+    }
+
+    let params_node = children[arrow_idx - 1];
+    let names = extract_lambda_param_names(ctx, params_node);
+    if names.is_empty() { None } else { Some(names) }
+}
+
 fn extract_lambda_params_from_node(
     ctx: &JavaContextExtractor,
     params: Node,
@@ -907,6 +1027,36 @@ fn extract_lambda_params_from_node(
                     declaration_start: name_node.start_byte(),
                     visibility_scope,
                 });
+            }
+            vars
+        }
+        _ => vec![],
+    }
+}
+
+fn extract_lambda_param_names(ctx: &JavaContextExtractor, params: Node) -> Vec<Arc<str>> {
+    match params.kind() {
+        "identifier" => vec![Arc::from(ctx.node_text(params))],
+        "inferred_parameters" => {
+            let mut vars = Vec::new();
+            let mut walker = params.walk();
+            for node in params.named_children(&mut walker) {
+                if node.kind() == "identifier" {
+                    vars.push(Arc::from(ctx.node_text(node)));
+                }
+            }
+            vars
+        }
+        "formal_parameters" => {
+            let mut vars = Vec::new();
+            let mut walker = params.walk();
+            for node in params.named_children(&mut walker) {
+                if !matches!(node.kind(), "formal_parameter" | "spread_parameter") {
+                    continue;
+                }
+                if let Some(name_node) = node.child_by_field_name("name") {
+                    vars.push(Arc::from(ctx.node_text(name_node)));
+                }
             }
             vars
         }
@@ -1491,8 +1641,6 @@ pub fn find_enclosing_method_bounds(
     file: SourceFile,
     cursor_offset: usize,
 ) -> Option<(usize, usize)> {
-    use tree_sitter_utils::traversal::{ancestor_of_kinds, find_node_by_offset};
-
     let content = file.content(db);
     let language_id = file.language_id(db);
 
@@ -1500,23 +1648,7 @@ pub fn find_enclosing_method_bounds(
     let tree = parse_tree(content, language_id.as_ref())?;
     let root = tree.root_node();
 
-    // Find any node at the cursor position first
-    let node_at_cursor = find_node_by_offset(root, "identifier", cursor_offset)
-        .or_else(|| find_node_by_offset(root, "block", cursor_offset))
-        .or_else(|| {
-            // Fallback: find the deepest node at cursor
-            find_deepest_node_at_offset(root, cursor_offset)
-        })?;
-
-    // Walk up to find method or constructor
-    let method_node = ancestor_of_kinds(
-        node_at_cursor,
-        &[
-            "method_declaration",
-            "constructor_declaration",
-            "compact_constructor_declaration",
-        ],
-    )?;
+    let method_node = find_enclosing_method_node_in_tree(root, cursor_offset)?;
 
     let start = method_node.start_byte();
     let end = method_node.end_byte();
@@ -1530,6 +1662,26 @@ pub fn find_enclosing_method_bounds(
     );
 
     Some((start, end))
+}
+
+fn find_enclosing_method_node_in_tree<'a>(
+    root: tree_sitter::Node<'a>,
+    cursor_offset: usize,
+) -> Option<tree_sitter::Node<'a>> {
+    use tree_sitter_utils::traversal::{ancestor_of_kinds, find_node_by_offset};
+
+    let node_at_cursor = find_node_by_offset(root, "identifier", cursor_offset)
+        .or_else(|| find_node_by_offset(root, "block", cursor_offset))
+        .or_else(|| find_deepest_node_at_offset(root, cursor_offset))?;
+
+    ancestor_of_kinds(
+        node_at_cursor,
+        &[
+            "method_declaration",
+            "constructor_declaration",
+            "compact_constructor_declaration",
+        ],
+    )
 }
 
 /// Find the deepest node at a given offset (fallback when specific kinds don't match)
@@ -1767,7 +1919,7 @@ fn resolve_name_table_for_file(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::language::java::{JavaContextExtractor, locals, scope};
+    use crate::language::java::{JavaContextExtractor, scope};
     use crate::salsa_db::{Database, FileId};
     use crate::workspace::Workspace;
     use indoc::indoc;
@@ -1828,8 +1980,7 @@ mod tests {
         let package = scope::extract_package(&extractor, root);
         let imports = scope::extract_imports(&extractor, root);
         let type_ctx = SourceTypeCtx::from_overview(package, imports, Some(name_table));
-        let cursor_node = extractor.find_cursor_node(root);
-        locals::extract_locals_with_type_ctx(&extractor, root, cursor_node, Some(&type_ctx))
+        extract_visible_method_locals_from_source(source, offset, Some(&type_ctx))
     }
 
     fn locals_signature(locals: &[LocalVar]) -> Vec<(String, String, Option<String>)> {

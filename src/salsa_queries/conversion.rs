@@ -4,7 +4,7 @@ use std::sync::Arc;
 use crate::index::{FieldSummary, IndexView, MethodSummary};
 use crate::language::java::JavaContextExtractor;
 use crate::language::java::type_ctx::SourceTypeCtx;
-use crate::language::java::{flow, locals, members, scope};
+use crate::language::java::{flow, members, scope};
 use crate::salsa_db::SourceFile;
 use crate::salsa_queries::Db;
 use crate::salsa_queries::{CompletionContextData, CursorLocationData};
@@ -65,14 +65,10 @@ impl FromSalsaDataWithAnalysis<CompletionContextData> for SemanticContext {
         let imports = crate::salsa_queries::extract_imports(db, file);
         let existing_imports: Vec<Arc<str>> = imports.iter().cloned().collect();
 
-        let local_variables = workspace
-            .map(|ws| fetch_locals_from_workspace(db, file, ws, &data))
-            .unwrap_or_default();
-
         let mut ctx = SemanticContext::new(
             location,
             data.query.as_ref(),
-            local_variables,
+            vec![],
             data.enclosing_class.clone(),
             data.enclosing_internal_name.clone(),
             data.enclosing_package.clone(),
@@ -149,17 +145,15 @@ fn enrich_java_semantic_context(
     };
     let type_ctx = Arc::new(type_ctx.with_current_class_methods(method_map));
 
-    let mut local_variables = ctx.local_variables.clone();
-    for lambda_local in
-        locals::extract_active_lambda_params(&extractor, cursor_node, Some(&type_ctx))
-    {
-        if !local_variables
-            .iter()
-            .any(|existing| existing.name == lambda_local.name)
-        {
-            local_variables.push(lambda_local);
-        }
-    }
+    let local_variables = workspace
+        .map(|ws| fetch_locals_from_workspace(db, file, ws, &data))
+        .unwrap_or_else(|| {
+            crate::salsa_queries::extract_visible_method_locals_from_source(
+                source,
+                data.cursor_offset,
+                Some(&type_ctx),
+            )
+        });
 
     let static_imports = fetch_static_imports(db, file);
     let is_class_member_position = scope::is_cursor_in_class_member_position(cursor_node);
@@ -172,8 +166,20 @@ fn enrich_java_semantic_context(
         .and_then(|m| members::parse_method_node(&extractor, &type_ctx, m));
     let char_after_cursor = compute_char_after_cursor(file.content(db), data.cursor_offset);
     let statement_labels = scope::extract_enclosing_statement_labels(&extractor, cursor_node);
-    let active_lambda_param_names =
-        locals::extract_active_lambda_param_names(&extractor, cursor_node);
+    let active_lambda_param_names = workspace
+        .map(|_| {
+            crate::salsa_queries::extract_active_lambda_param_names_incremental(
+                db,
+                file,
+                data.cursor_offset,
+            )
+        })
+        .unwrap_or_else(|| {
+            crate::salsa_queries::extract_active_lambda_param_names_from_source(
+                source,
+                data.cursor_offset,
+            )
+        });
     let functional_target_hint =
         crate::language::java::location::infer_functional_target_hint(&extractor, cursor_node);
     let flow_type_overrides = flow::extract_instanceof_true_branch_overrides(

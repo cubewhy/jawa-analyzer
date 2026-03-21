@@ -3829,7 +3829,7 @@ mod tests {
     fn test_snapshot_m1_single_get_and_nums_add_provenance() {
         use crate::completion::provider::CompletionProvider;
         use crate::language::java::completion::providers::member::MemberProvider;
-        use crate::language::java::locals::extract_locals_with_type_ctx;
+        use crate::salsa_queries::extract_visible_method_locals_from_source;
         use tree_sitter::Parser;
 
         let idx = make_index_with_scoped_inner_box_get_and_list_add();
@@ -3867,7 +3867,8 @@ mod tests {
         let tree = parser.parse(src, None).expect("parsed");
         let root = tree.root_node();
         let cursor_node = extractor.find_cursor_node(root);
-        let locals = extract_locals_with_type_ctx(&extractor, root, cursor_node, Some(&type_ctx));
+        let _ = cursor_node;
+        let locals = extract_visible_method_locals_from_source(src, offset, Some(&type_ctx));
 
         let single_local = locals
             .iter()

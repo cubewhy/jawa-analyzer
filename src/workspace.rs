@@ -1,6 +1,5 @@
 use anyhow::Result;
 use parking_lot::RwLock as ParkingRwLock;
-use salsa::Setter;
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::path::PathBuf;
@@ -133,35 +132,7 @@ impl Workspace {
         uri: &str,
     ) -> Option<crate::salsa_db::SourceFile> {
         let url = Url::parse(uri).ok()?;
-
-        // Check if already exists
-        {
-            let files = self.salsa_files.read();
-            if let Some(file) = files.get(&url) {
-                return Some(*file);
-            }
-        }
-
-        // Create new file
-        let content = self
-            .documents
-            .with_doc(&url, |doc| doc.source().text().to_string())?;
-        let language_id = self
-            .documents
-            .with_doc(&url, |doc| doc.language_id().to_string())?;
-
-        let db = self.salsa_db.lock();
-        let file = crate::salsa_db::SourceFile::new(
-            &*db,
-            crate::salsa_db::FileId::new(url.clone()),
-            content,
-            Arc::from(language_id.as_str()),
-        );
-
-        // Cache it
-        self.salsa_files.write().insert(url, file);
-
-        Some(file)
+        self.get_or_update_salsa_file(&url)
     }
 
     /// Get or update a Salsa SourceFile for a URI
@@ -181,35 +152,28 @@ impl Workspace {
         {
             let files = self.salsa_files.read();
             if let Some(&file) = files.get(uri) {
-                // Check if content is in sync
-                let salsa_content = {
+                let (salsa_content, salsa_language_id) = {
                     let db = self.salsa_db.lock();
-                    file.content(&*db).to_string()
+                    (
+                        file.content(&*db).to_string(),
+                        file.language_id(&*db).to_string(),
+                    )
                 };
 
-                if salsa_content == content {
+                if salsa_content == content && salsa_language_id == language_id {
                     // Already in sync
                     return Some(file);
                 }
 
-                // Update content
+                // Update the existing Salsa input to match the current document snapshot.
                 drop(files); // Release read lock
-                let mut db = self.salsa_db.lock();
-                file.set_content(&mut *db).to(content);
+                self.update_existing_salsa_file(file, content, language_id);
                 return Some(file);
             }
         }
 
         // Create new file
-        let db = self.salsa_db.lock();
-        let file = crate::salsa_db::SourceFile::new(
-            &*db,
-            crate::salsa_db::FileId::new(uri.clone()),
-            content,
-            Arc::from(language_id.as_str()),
-        );
-
-        drop(db);
+        let file = self.create_salsa_file(uri.clone(), content, language_id);
         self.salsa_files.write().insert(uri.clone(), file);
         Some(file)
     }
@@ -534,23 +498,15 @@ impl Workspace {
         content: &str,
         language_id: &str,
     ) -> crate::salsa_db::SourceFile {
-        use salsa::Setter;
-
         let mut files = self.salsa_files.write();
-        let mut db = self.salsa_db.lock();
 
         if let Some(file) = files.get(uri) {
-            // Update existing file
-            file.set_content(&mut *db).to(content.to_string());
+            self.update_existing_salsa_file(*file, content.to_string(), language_id.to_string());
             *file
         } else {
             // Create new file
-            let file = crate::salsa_db::SourceFile::new(
-                &*db,
-                FileId::new(uri.clone()),
-                content.to_string(),
-                Arc::from(language_id),
-            );
+            let file =
+                self.create_salsa_file(uri.clone(), content.to_string(), language_id.to_string());
             files.insert(uri.clone(), file);
             file
         }
@@ -566,6 +522,33 @@ impl Workspace {
     pub fn remove_salsa_file(&self, uri: &Url) {
         let mut files = self.salsa_files.write();
         files.remove(uri);
+    }
+
+    fn create_salsa_file(
+        &self,
+        uri: Url,
+        content: String,
+        language_id: String,
+    ) -> crate::salsa_db::SourceFile {
+        let db = self.salsa_db.lock();
+        crate::salsa_db::SourceFile::new(&*db, FileId::new(uri), content, Arc::from(language_id))
+    }
+
+    fn update_existing_salsa_file(
+        &self,
+        file: crate::salsa_db::SourceFile,
+        content: String,
+        language_id: String,
+    ) {
+        use salsa::Setter;
+
+        let mut db = self.salsa_db.lock();
+        if file.content(&*db).as_str() != content.as_str() {
+            file.set_content(&mut *db).to(content);
+        }
+        if file.language_id(&*db).as_ref() != language_id {
+            file.set_language_id(&mut *db).to(Arc::from(language_id));
+        }
     }
 }
 
@@ -640,6 +623,7 @@ mod tests {
         DetectedBuildToolKind, JavaToolchainInfo, ModelFidelity, ModelFreshness,
         WorkspaceModelProvenance, WorkspaceModule, WorkspaceRoot, WorkspaceSourceRoot,
     };
+    use crate::workspace::document::Document;
 
     #[test]
     fn managed_workspace_prefers_imported_source_root_context() {
@@ -734,6 +718,49 @@ mod tests {
             .expect("package");
 
         assert_eq!(inferred.as_ref(), "org.example.foo");
+    }
+
+    #[test]
+    fn get_or_update_salsa_file_keeps_language_and_content_in_sync() {
+        let workspace = Workspace::new();
+        let uri = Url::parse("file:///workspace/Test.java").expect("valid uri");
+        workspace
+            .documents
+            .open(Document::new(crate::workspace::SourceFile::new(
+                uri.clone(),
+                "java",
+                1,
+                "class Test {}",
+                None,
+            )));
+
+        let file = workspace
+            .get_or_update_salsa_file(&uri)
+            .expect("salsa file should exist");
+        {
+            let db = workspace.salsa_db.lock();
+            assert_eq!(file.content(&*db), "class Test {}");
+            assert_eq!(file.language_id(&*db).as_ref(), "java");
+        }
+
+        workspace.documents.with_doc_mut(&uri, |doc| {
+            doc.update_source(crate::workspace::SourceFile::new(
+                uri.clone(),
+                "kotlin",
+                2,
+                "class Test",
+                None,
+            ));
+        });
+
+        let same_file = workspace
+            .get_or_update_salsa_file(&uri)
+            .expect("salsa file should stay addressable");
+        assert!(file == same_file);
+
+        let db = workspace.salsa_db.lock();
+        assert_eq!(same_file.content(&*db), "class Test");
+        assert_eq!(same_file.language_id(&*db).as_ref(), "kotlin");
     }
 }
 pub mod source_file;

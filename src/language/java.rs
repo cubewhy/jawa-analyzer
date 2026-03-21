@@ -37,7 +37,6 @@ pub mod expression_typing;
 pub mod flow;
 pub mod inlay_hints;
 pub mod intrinsics;
-pub mod locals;
 pub mod location;
 pub mod lombok;
 pub mod members;
@@ -639,45 +638,32 @@ impl JavaContextExtractor {
             type_ctx_started,
         );
 
-        // Feature flag to enable incremental extraction
-        let use_incremental = std::env::var("JAVA_ANALYZER_INCREMENTAL")
-            .map(|v| v == "1" || v == "true")
-            .unwrap_or(false);
-
         let locals_started = std::time::Instant::now();
-        let local_variables =
-            if use_incremental && self.workspace.is_some() && self.file_uri.is_some() {
-                // NEW: Incremental extraction with PSI cache
-                let workspace = self.workspace.as_ref().unwrap();
-                let file_uri = self.file_uri.as_ref().unwrap();
-
-                if let Some(file) = workspace.get_or_create_salsa_file_by_uri_str(file_uri.as_ref())
-                {
-                    let db = workspace.salsa_db.lock();
-                    crate::salsa_queries::extract_visible_method_locals_incremental(
-                        &*db,
-                        file,
-                        self.offset,
-                        workspace,
-                    )
-                } else {
-                    // Fallback to old method if file not found
-                    locals::extract_locals_with_type_ctx(
-                        semantic_extractor,
-                        semantic_root,
-                        semantic_cursor_node,
-                        Some(&type_ctx),
-                    )
-                }
+        let local_variables = if let (Some(workspace), Some(file_uri)) =
+            (self.workspace.as_ref(), self.file_uri.as_ref())
+        {
+            if let Some(file) = workspace.get_or_create_salsa_file_by_uri_str(file_uri.as_ref()) {
+                let db = workspace.salsa_db.lock();
+                crate::salsa_queries::extract_visible_method_locals_incremental(
+                    &*db,
+                    file,
+                    self.offset,
+                    workspace,
+                )
             } else {
-                // OLD: Direct extraction (no cache)
-                locals::extract_locals_with_type_ctx(
-                    semantic_extractor,
-                    semantic_root,
-                    semantic_cursor_node,
+                crate::salsa_queries::extract_visible_method_locals_from_source(
+                    self.source.as_ref(),
+                    self.offset,
                     Some(&type_ctx),
                 )
-            };
+            }
+        } else {
+            crate::salsa_queries::extract_visible_method_locals_from_source(
+                self.source.as_ref(),
+                self.offset,
+                Some(&type_ctx),
+            )
+        };
         maybe_record_extract_phase(
             self.metrics.as_ref(),
             "inlay.extract.locals",
@@ -686,16 +672,27 @@ impl JavaContextExtractor {
         );
 
         let lambda_started = std::time::Instant::now();
-        let active_lambda_param_names =
-            locals::extract_active_lambda_param_names(semantic_extractor, semantic_cursor_node);
-        let active_lambda_param_names = if active_lambda_param_names.is_empty() {
-            extract_lambda_params_from_error_arrow(
-                semantic_extractor,
-                semantic_cursor_node,
-                semantic_root,
-            )
+        let active_lambda_param_names = if let (Some(workspace), Some(file_uri)) =
+            (self.workspace.as_ref(), self.file_uri.as_ref())
+        {
+            if let Some(file) = workspace.get_or_create_salsa_file_by_uri_str(file_uri.as_ref()) {
+                let db = workspace.salsa_db.lock();
+                crate::salsa_queries::extract_active_lambda_param_names_incremental(
+                    &*db,
+                    file,
+                    self.offset,
+                )
+            } else {
+                crate::salsa_queries::extract_active_lambda_param_names_from_source(
+                    self.source.as_ref(),
+                    self.offset,
+                )
+            }
         } else {
-            active_lambda_param_names
+            crate::salsa_queries::extract_active_lambda_param_names_from_source(
+                self.source.as_ref(),
+                self.offset,
+            )
         };
         maybe_record_extract_phase(
             self.metrics.as_ref(),
@@ -725,50 +722,23 @@ impl JavaContextExtractor {
         );
 
         let members_started = std::time::Instant::now();
-        let current_class_members =
-            if use_incremental && self.workspace.is_some() && self.file_uri.is_some() {
-                // NEW: Incremental extraction with PSI cache
-                let workspace = self.workspace.as_ref().unwrap();
-                let file_uri = self.file_uri.as_ref().unwrap();
+        let current_class_members = if self.workspace.is_some() && self.file_uri.is_some() {
+            // NEW: Incremental extraction with PSI cache
+            let workspace = self.workspace.as_ref().unwrap();
+            let file_uri = self.file_uri.as_ref().unwrap();
 
-                if let Some(file) = workspace.get_or_create_salsa_file_by_uri_str(file_uri.as_ref())
-                {
-                    let db = workspace.salsa_db.lock();
-                    let members_map = crate::salsa_queries::extract_class_members_incremental(
-                        &*db,
-                        file,
-                        self.offset,
-                        workspace,
-                    );
-                    // Convert HashMap to Vec
-                    members_map.into_values().collect()
-                } else {
-                    // Fallback to old method
-                    semantic_cursor_node
-                        .and_then(scope::nearest_type_declaration)
-                        .map(|decl| {
-                            synthetic::extract_type_members_with_synthetics(
-                                semantic_extractor,
-                                decl,
-                                &type_ctx,
-                                enclosing_internal_name.as_deref(),
-                            )
-                        })
-                        .or_else(|| {
-                            let error_node = utils::find_top_error_node(semantic_root)?;
-                            let mut members = Vec::new();
-                            members::collect_members_from_node(
-                                semantic_extractor,
-                                error_node,
-                                &type_ctx,
-                                &mut members,
-                            );
-                            Some(members)
-                        })
-                        .unwrap_or_default()
-                }
+            if let Some(file) = workspace.get_or_create_salsa_file_by_uri_str(file_uri.as_ref()) {
+                let db = workspace.salsa_db.lock();
+                let members_map = crate::salsa_queries::extract_class_members_incremental(
+                    &*db,
+                    file,
+                    self.offset,
+                    workspace,
+                );
+                // Convert HashMap to Vec
+                members_map.into_values().collect()
             } else {
-                // OLD: Direct extraction (no cache)
+                // Fallback to old method
                 semantic_cursor_node
                     .and_then(scope::nearest_type_declaration)
                     .map(|decl| {
@@ -780,8 +750,6 @@ impl JavaContextExtractor {
                         )
                     })
                     .or_else(|| {
-                        // Fallback: find top-level ERROR node anywhere under program
-                        // Use two-phase approach: valid members + error recovery
                         let error_node = utils::find_top_error_node(semantic_root)?;
                         let mut members = Vec::new();
                         members::collect_members_from_node(
@@ -793,7 +761,34 @@ impl JavaContextExtractor {
                         Some(members)
                     })
                     .unwrap_or_default()
-            };
+            }
+        } else {
+            // OLD: Direct extraction (no cache)
+            semantic_cursor_node
+                .and_then(scope::nearest_type_declaration)
+                .map(|decl| {
+                    synthetic::extract_type_members_with_synthetics(
+                        semantic_extractor,
+                        decl,
+                        &type_ctx,
+                        enclosing_internal_name.as_deref(),
+                    )
+                })
+                .or_else(|| {
+                    // Fallback: find top-level ERROR node anywhere under program
+                    // Use two-phase approach: valid members + error recovery
+                    let error_node = utils::find_top_error_node(semantic_root)?;
+                    let mut members = Vec::new();
+                    members::collect_members_from_node(
+                        semantic_extractor,
+                        error_node,
+                        &type_ctx,
+                        &mut members,
+                    );
+                    Some(members)
+                })
+                .unwrap_or_default()
+        };
         maybe_record_extract_phase(
             self.metrics.as_ref(),
             "inlay.extract.class_members",
@@ -881,72 +876,6 @@ impl JavaContextExtractor {
             None,
             vec![],
         )
-    }
-}
-
-fn extract_lambda_params_from_error_arrow(
-    ctx: &JavaContextExtractor,
-    _cursor_node: Option<Node>,
-    root: Node,
-) -> Vec<Arc<str>> {
-    // Find the anonymous node with `->` in the root directory, where the cursor is after `->`.
-    fn find_arrow_before_cursor<'a>(node: Node<'a>, offset: usize, result: &mut Option<Node<'a>>) {
-        if node.kind() == "->" && node.end_byte() <= offset {
-            *result = Some(node);
-        }
-        let mut wc = node.walk();
-        for child in node.children(&mut wc) {
-            find_arrow_before_cursor(child, offset, result);
-        }
-    }
-
-    let mut arrow = None;
-    find_arrow_before_cursor(root, ctx.offset, &mut arrow);
-
-    let Some(arrow) = arrow else {
-        return vec![];
-    };
-
-    // Find the identifier or inferred_parameters preceding `->`
-    // params is the sibling preceding `->`
-    let Some(parent) = arrow.parent() else {
-        return vec![];
-    };
-    let mut wc = parent.walk();
-    let children: Vec<Node> = parent.children(&mut wc).collect();
-    let Some(arrow_idx) = children.iter().position(|n| n.id() == arrow.id()) else {
-        return vec![];
-    };
-    if arrow_idx == 0 {
-        return vec![];
-    }
-    let params_node = children[arrow_idx - 1];
-
-    match params_node.kind() {
-        "identifier" => vec![Arc::from(ctx.node_text(params_node))],
-        "inferred_parameters" => {
-            let mut wc2 = params_node.walk();
-            params_node
-                .named_children(&mut wc2)
-                .filter(|n| n.kind() == "identifier")
-                .map(|n| Arc::from(ctx.node_text(n)))
-                .collect()
-        }
-        "formal_parameters" => {
-            let mut wc2 = params_node.walk();
-            params_node
-                .named_children(&mut wc2)
-                .filter_map(|n| {
-                    if n.kind() == "formal_parameter" || n.kind() == "spread_parameter" {
-                        n.child_by_field_name("name")
-                            .map(|name| Arc::from(ctx.node_text(name)))
-                    } else {
-                        None
-                    }
-                })
-                .collect()
-        }
-        _ => vec![],
     }
 }
 

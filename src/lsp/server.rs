@@ -11,7 +11,6 @@ use crate::build_integration::{BuildIntegrationService, ReloadReason};
 use crate::completion::engine::CompletionEngine;
 use crate::decompiler::cache::DecompilerCache;
 use crate::index::ClassOrigin;
-use crate::index::codebase::index_source_text;
 use crate::index::jdk::JdkIndexer;
 use crate::language::LanguageRegistry;
 use crate::language::rope_utils::rope_line_col_to_offset;
@@ -146,6 +145,44 @@ impl Backend {
             .await
             .ok();
     }
+
+    fn reindex_document_from_salsa(&self, uri: &Url, reason: &'static str) -> Option<()> {
+        let salsa_file = self.workspace.get_or_update_salsa_file(uri)?;
+        let language_id = self
+            .workspace
+            .documents
+            .with_doc(uri, |doc| doc.language_id().to_owned())?;
+        let analysis = self.workspace.analysis_context_for_uri(uri);
+        let uri_str = uri.to_string();
+
+        let classes = {
+            let db = self.workspace.salsa_db.lock();
+
+            // Trigger the tracked extraction so dependent Salsa queries observe content changes.
+            let _result = crate::salsa_queries::index::extract_classes(&*db, salsa_file);
+            crate::salsa_queries::index::get_extracted_classes(&*db, salsa_file)
+        };
+
+        let origin = ClassOrigin::SourceFile(Arc::from(uri_str.as_str()));
+        tracing::debug!(
+            uri = %uri,
+            reason,
+            module = analysis.module.0,
+            classpath = ?analysis.classpath,
+            source_root = ?analysis.source_root.map(|id| id.0),
+            class_count = classes.len(),
+            language = language_id.as_str(),
+            "document indexing with Salsa"
+        );
+        self.workspace.index.write().update_source_in_context(
+            analysis.module,
+            analysis.source_root,
+            origin,
+            classes,
+        );
+
+        Some(())
+    }
 }
 
 #[tower_lsp::async_trait]
@@ -246,41 +283,7 @@ impl LanguageServer for Backend {
             doc.set_tree(tree);
         });
 
-        // Initialize Salsa database with the opened file
-        let salsa_file = self
-            .workspace
-            .get_or_create_salsa_file(&td.uri, &td.text, lang_id);
-
-        let uri_str = td.uri.to_string();
-        let analysis = self.workspace.analysis_context_for_uri(&td.uri);
-
-        // Use Salsa queries for incremental parsing
-        let classes = {
-            let db = self.workspace.salsa_db.lock();
-
-            // Trigger parse query (memoized) - this tracks changes
-            let _result = crate::salsa_queries::index::extract_classes(&*db, salsa_file);
-
-            // Get the actual classes (not memoized, but fast)
-            crate::salsa_queries::index::get_extracted_classes(&*db, salsa_file)
-        };
-
-        let origin = ClassOrigin::SourceFile(Arc::from(uri_str.as_str()));
-        tracing::debug!(
-            uri = %td.uri,
-            module = analysis.module.0,
-            classpath = ?analysis.classpath,
-            source_root = ?analysis.source_root.map(|id| id.0),
-            class_count = classes.len(),
-            language = lang.id(),
-            "did_open indexing with Salsa (incremental)"
-        );
-        self.workspace.index.write().update_source_in_context(
-            analysis.module,
-            analysis.source_root,
-            origin,
-            classes,
-        );
+        self.reindex_document_from_salsa(&td.uri, "did_open");
 
         self.client.semantic_tokens_refresh().await.ok();
         self.notify_build_file_change(&td.uri).await;
@@ -397,46 +400,11 @@ impl LanguageServer for Backend {
             return;
         }
 
-        let Some(content) = changed_text_for_index else {
+        if changed_text_for_index.is_none() {
             return;
-        };
+        }
 
-        // Update Salsa database with the new content
-        let salsa_file = self
-            .workspace
-            .get_or_create_salsa_file(uri, &content, &lang_id);
-
-        let uri_str = uri.to_string();
-        let analysis = self.workspace.analysis_context_for_uri(uri);
-
-        // Use Salsa queries for incremental parsing
-        // Salsa automatically invalidates dependent queries when content changes
-        let classes = {
-            let db = self.workspace.salsa_db.lock();
-
-            // Trigger parse query (will recompute if content changed)
-            let _result = crate::salsa_queries::index::extract_classes(&*db, salsa_file);
-
-            // Get the actual classes
-            crate::salsa_queries::index::get_extracted_classes(&*db, salsa_file)
-        };
-
-        let origin = ClassOrigin::SourceFile(Arc::from(uri_str.as_str()));
-        tracing::debug!(
-            uri = %uri,
-            module = analysis.module.0,
-            classpath = ?analysis.classpath,
-            source_root = ?analysis.source_root.map(|id| id.0),
-            class_count = classes.len(),
-            language = lang.id(),
-            "did_change indexing with Salsa (incremental)"
-        );
-        self.workspace.index.write().update_source_in_context(
-            analysis.module,
-            analysis.source_root,
-            origin,
-            classes,
-        );
+        self.reindex_document_from_salsa(uri, "did_change");
 
         self.client.semantic_tokens_refresh().await.ok();
         self.notify_build_file_change(uri).await;
@@ -488,42 +456,10 @@ impl LanguageServer for Backend {
             content_for_index = Some(cur_text);
         });
 
-        let Some(content) = content_for_index else {
+        if content_for_index.is_none() {
             return;
-        };
-
-        let uri_str = uri.to_string();
-        let analysis = self.workspace.analysis_context_for_uri(uri);
-        let name_table = self
-            .workspace
-            .index
-            .read()
-            .build_name_table_for_analysis_context(
-                analysis.module,
-                analysis.classpath,
-                analysis.source_root,
-            );
-        let visible_classpath = self
-            .workspace
-            .index
-            .read()
-            .module_classpath_jars(analysis.module, analysis.classpath);
-        let classes = index_source_text(&uri_str, &content, &lang_id, Some(name_table));
-        let origin = ClassOrigin::SourceFile(Arc::from(uri_str.as_str()));
-        tracing::debug!(
-            uri = %uri,
-            module = analysis.module.0,
-            classpath = ?analysis.classpath,
-            source_root = ?analysis.source_root.map(|id| id.0),
-            visible_classpath_len = visible_classpath.len(),
-            "did_save indexing with analysis context"
-        );
-        self.workspace.index.write().update_source_in_context(
-            analysis.module,
-            analysis.source_root,
-            origin,
-            classes,
-        );
+        }
+        self.reindex_document_from_salsa(uri, "did_save");
 
         self.client.semantic_tokens_refresh().await.ok();
         self.notify_build_file_change(uri).await;
