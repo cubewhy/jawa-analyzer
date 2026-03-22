@@ -3415,7 +3415,7 @@ mod tests {
         );
 
         let add = MemberProvider
-            .provide(scope, &ctx, &view, None)
+            .provide_test(scope, &ctx, &view, None)
             .candidates
             .into_iter()
             .find(|c| c.label.as_ref() == "add")
@@ -3500,7 +3500,7 @@ mod tests {
         );
 
         let provider = MemberProvider;
-        let results = provider.provide(scope, &ctx, &view, None).candidates;
+        let results = provider.provide_test(scope, &ctx, &view, None).candidates;
         let add = results
             .iter()
             .find(|c| c.label.as_ref() == "add")
@@ -3787,7 +3787,7 @@ mod tests {
             .with_extension(type_ctx);
             ContextEnricher::new(&view).enrich(&mut member_ctx);
             let add_detail_from_provider = MemberProvider
-                .provide(scope, &member_ctx, &view, None)
+                .provide_test(scope, &member_ctx, &view, None)
                 .candidates
                 .into_iter()
                 .find(|c| c.label.as_ref() == "add")
@@ -3947,7 +3947,7 @@ mod tests {
             .find(|lv| lv.name.as_ref() == "nums")
             .map(|lv| lv.type_internal.to_internal_with_generics());
         let nums_add_detail = MemberProvider
-            .provide(scope, &nums_ctx, &view, None)
+            .provide_test(scope, &nums_ctx, &view, None)
             .candidates
             .into_iter()
             .find(|c| c.label.as_ref() == "add")
@@ -4043,7 +4043,7 @@ mod tests {
                     .map(|s| s.to_string())
             });
         let member_labels: Vec<String> = MemberProvider
-            .provide(scope, &ctx, &view, None)
+            .provide_test(scope, &ctx, &view, None)
             .candidates
             .into_iter()
             .map(|c| c.label.to_string())
@@ -4791,7 +4791,7 @@ mod tests {
         });
         ContextEnricher::new(&view).enrich(&mut ctx_trim);
         let mut trim_labels: Vec<String> = MemberProvider
-            .provide(scope, &ctx_trim, &view, None)
+            .provide_test(scope, &ctx_trim, &view, None)
             .candidates
             .into_iter()
             .map(|c| c.label.to_string())
@@ -4863,7 +4863,7 @@ mod tests {
         });
         ContextEnricher::new(&view).enrich(&mut ctx_ctor);
         let mut ctor_labels: Vec<String> = MemberProvider
-            .provide(scope, &ctx_ctor, &view, None)
+            .provide_test(scope, &ctx_ctor, &view, None)
             .candidates
             .into_iter()
             .map(|c| c.label.to_string())
@@ -5723,7 +5723,7 @@ mod tests {
         }
 
         let labels: Vec<String> = MemberProvider
-            .provide(scope, &ctx, &view, None)
+            .provide_test(scope, &ctx, &view, None)
             .candidates
             .into_iter()
             .map(|c| c.label.to_string())

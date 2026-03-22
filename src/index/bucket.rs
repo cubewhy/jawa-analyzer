@@ -1,8 +1,10 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 
-use nucleo::Nucleo;
-use nucleo::pattern::{CaseMatching, Normalization};
+use nucleo_matcher::{
+    Config as MatcherConfig, Matcher, Utf32Str,
+    pattern::{CaseMatching, Normalization, Pattern},
+};
 use parking_lot::RwLock;
 use rustc_hash::FxHashSet;
 
@@ -21,7 +23,6 @@ struct BucketState {
     owner_index: HashMap<OwnerKey, Vec<Arc<ClassMetadata>>>,
     name_table: Arc<NameTable>,
     mro_cache: MroCacheMap,
-    fuzzy_matcher: Nucleo<Arc<str>>,
 }
 
 pub struct BucketIndex {
@@ -30,7 +31,6 @@ pub struct BucketIndex {
 
 impl BucketIndex {
     pub fn new() -> Self {
-        let waker = Arc::new(|| {});
         let state = BucketState {
             classes: HashMap::with_capacity(100_000),
             by_origin: HashMap::new(),
@@ -39,7 +39,6 @@ impl BucketIndex {
             owner_index: HashMap::with_capacity(50_000),
             name_table: Arc::new(NameTable(FxHashSet::default())),
             mro_cache: HashMap::new(),
-            fuzzy_matcher: Nucleo::new(nucleo::Config::DEFAULT, waker, None, 1),
         };
 
         Self {
@@ -49,7 +48,6 @@ impl BucketIndex {
 
     pub fn add_classes(&self, classes: Vec<ClassMetadata>) {
         let mut inner = self.inner.write();
-        let injector = inner.fuzzy_matcher.injector();
 
         for mut class in classes {
             Self::intern_class(&mut class);
@@ -92,10 +90,6 @@ impl BucketIndex {
             Arc::make_mut(&mut inner.name_table)
                 .0
                 .insert(Arc::clone(&internal));
-
-            injector.push(simple, |item: &Arc<str>, cols| {
-                cols[0] = item.as_ref().into();
-            });
         }
 
         inner.mro_cache.clear();
@@ -314,22 +308,38 @@ impl BucketIndex {
     }
 
     pub fn fuzzy_autocomplete(&self, query: &str, limit: usize) -> Vec<Arc<str>> {
-        let mut inner = self.inner.write();
-        inner.fuzzy_matcher.pattern.reparse(
-            0,
-            query,
-            CaseMatching::Smart,
-            Normalization::Smart,
-            false,
-        );
-        let _status = inner.fuzzy_matcher.tick(10);
-        let snapshot = inner.fuzzy_matcher.snapshot();
-        let count = snapshot.matched_item_count();
-        let end_bound = (limit as u32).min(count);
-        snapshot
-            .matched_items(..end_bound)
-            .map(|item| Arc::clone(item.data))
-            .collect()
+        if limit == 0 {
+            return vec![];
+        }
+
+        let inner = self.inner.read();
+        if query.is_empty() {
+            let mut names: Vec<_> = inner.simple_name_index.keys().cloned().collect();
+            names.sort_unstable_by(|a, b| a.as_ref().cmp(b.as_ref()));
+            names.truncate(limit);
+            return names;
+        }
+
+        let pattern = Pattern::parse(query, CaseMatching::Smart, Normalization::Smart);
+        let mut matcher = Matcher::new(MatcherConfig::DEFAULT);
+        let mut utf32_buf = Vec::new();
+        let mut scored = Vec::new();
+
+        for name in inner.simple_name_index.keys() {
+            utf32_buf.clear();
+            let haystack = Utf32Str::new(name.as_ref(), &mut utf32_buf);
+            if let Some(score) = pattern.score(haystack, &mut matcher) {
+                scored.push((Arc::clone(name), score));
+            }
+        }
+
+        scored.sort_unstable_by(|(left_name, left_score), (right_name, right_score)| {
+            right_score
+                .cmp(left_score)
+                .then_with(|| left_name.as_ref().cmp(right_name.as_ref()))
+        });
+        scored.truncate(limit);
+        scored.into_iter().map(|(name, _)| name).collect()
     }
 
     pub fn fuzzy_search_classes(&self, query: &str, limit: usize) -> Vec<Arc<ClassMetadata>> {
@@ -405,20 +415,7 @@ impl BucketIndex {
         }
 
         inner.mro_cache.clear();
-        Self::rebuild_fuzzy_locked(&mut inner);
         Self::rebuild_name_table_locked(&mut inner);
-    }
-
-    fn rebuild_fuzzy_locked(inner: &mut BucketState) {
-        let waker = Arc::new(|| {});
-        inner.fuzzy_matcher = Nucleo::new(nucleo::Config::DEFAULT, waker, None, 1);
-        let injector = inner.fuzzy_matcher.injector();
-        for name in inner.simple_name_index.keys() {
-            let n = Arc::clone(name);
-            injector.push(n, |item: &Arc<str>, cols| {
-                cols[0] = item.as_ref().into();
-            });
-        }
     }
 
     fn rebuild_name_table_locked(inner: &mut BucketState) {

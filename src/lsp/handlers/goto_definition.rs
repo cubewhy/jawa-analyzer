@@ -1,11 +1,15 @@
 use std::sync::Arc;
 
 use crate::index::{ClassOrigin, IndexView};
+use crate::language::LanguageRegistry;
 use crate::language::java::class_parser::find_symbol_range;
-use crate::lsp::request_context::PreparedRequest;
+use crate::lsp::request_context::{PreparedRequest, RequestContext};
 use crate::lsp::server::Backend;
 use crate::semantic::context::CursorLocation;
 use crate::semantic::types::symbol_resolver::{ResolvedSymbol, SymbolResolver};
+use crate::workspace::Workspace;
+use tower_lsp::jsonrpc;
+use tower_lsp::jsonrpc::Result as LspResult;
 use tower_lsp::lsp_types::*;
 use tracing::instrument;
 
@@ -13,20 +17,50 @@ use tracing::instrument;
 pub async fn handle_goto_definition(
     backend: &Backend,
     params: GotoDefinitionParams,
-) -> Option<GotoDefinitionResponse> {
+    request: Arc<RequestContext>,
+) -> LspResult<Option<GotoDefinitionResponse>> {
+    let task = tokio::task::spawn_blocking({
+        let workspace = Arc::clone(&backend.workspace);
+        let registry = Arc::clone(&backend.registry);
+        let request = Arc::clone(&request);
+        move || handle_goto_definition_blocking(workspace, registry, params, request)
+    });
+
+    let prepared = match task.await {
+        Ok(result) => result.map_err(|cancelled| cancelled.into_lsp_error())?,
+        Err(error) => {
+            tracing::error!(%error, "goto definition worker panicked");
+            return Err(jsonrpc::Error::internal_error());
+        }
+    };
+
+    finish_goto_definition(backend, prepared, &request)
+        .await
+        .map_err(|cancelled| cancelled.into_lsp_error())
+}
+
+fn handle_goto_definition_blocking(
+    workspace: Arc<Workspace>,
+    registry: Arc<LanguageRegistry>,
+    params: GotoDefinitionParams,
+    request: Arc<RequestContext>,
+) -> crate::lsp::request_cancellation::RequestResult<GotoPrepared> {
     let uri = &params.text_document_position_params.text_document.uri;
     let pos = params.text_document_position_params.position;
 
-    let request = PreparedRequest::prepare(
-        Arc::clone(&backend.workspace),
-        backend.registry.as_ref(),
+    let Some(prepared) = PreparedRequest::prepare(
+        Arc::clone(&workspace),
+        registry.as_ref(),
         uri,
-        "goto_definition",
-    )?;
-    let lookup_pos = request.token_end_position(pos);
-    let analysis = request.analysis();
-    let scope = request.scope();
-    let view = request.view();
+        Arc::clone(&request),
+    )?
+    else {
+        return Ok(GotoPrepared::Ready(None));
+    };
+    let lookup_pos = prepared.token_end_position(pos);
+    let analysis = prepared.analysis();
+    let scope = prepared.scope();
+    let view = prepared.view().clone();
 
     let request_analysis_t0 = std::time::Instant::now();
 
@@ -40,7 +74,9 @@ pub async fn handle_goto_definition(
         "goto: request analysis prepared"
     );
 
-    let ctx = request.semantic_context(lookup_pos, None)?;
+    let Some(ctx) = prepared.semantic_context(lookup_pos, None)? else {
+        return Ok(GotoPrepared::Ready(None));
+    };
 
     tracing::debug!(
         module = scope.module.0,
@@ -67,44 +103,62 @@ pub async fn handle_goto_definition(
     {
         tracing::debug!(token = %token, "goto: local variable jump");
 
-        let range = backend.workspace.documents.with_doc(uri, |doc| {
+        let range = workspace.documents.with_doc(uri, |doc| {
             find_local_var_decl(doc.source().text(), lv.name.as_ref())
         });
 
-        return Some(GotoDefinitionResponse::Scalar(Location {
-            uri: uri.clone(),
-            range: range.flatten().unwrap_or_default(),
-        }));
+        return Ok(GotoPrepared::Ready(Some(GotoDefinitionResponse::Scalar(
+            Location {
+                uri: uri.clone(),
+                range: range.flatten().unwrap_or_default(),
+            },
+        ))));
     }
 
     if let CursorLocation::Import { prefix } = &ctx.location {
         let raw = prefix.trim().trim_end_matches(".*").trim();
         let internal = raw.replace('.', "/");
         if view.get_class(&internal).is_some() {
-            return goto_resolved_symbol(backend, view, ResolvedSymbol::Class(Arc::from(internal)))
-                .await;
+            return goto_resolved_symbol_blocking(
+                Arc::clone(&workspace),
+                &view,
+                ResolvedSymbol::Class(Arc::from(internal)),
+                &request,
+            );
         }
-        return None;
+        return Ok(GotoPrepared::Ready(None));
     }
 
-    let resolver = SymbolResolver::new(view);
+    let resolver = SymbolResolver::new(&view);
     let symbol = match resolver.resolve(&ctx) {
         Some(s) => s,
         None => {
             tracing::debug!(location = ?ctx.location, "goto: resolver returned None");
-            return None;
+            return Ok(GotoPrepared::Ready(None));
         }
     };
     tracing::debug!(symbol = ?symbol, "goto: resolved symbol");
 
-    goto_resolved_symbol(backend, view, symbol).await
+    goto_resolved_symbol_blocking(workspace, &view, symbol, &request)
 }
 
-async fn goto_resolved_symbol(
+async fn finish_goto_definition(
     backend: &Backend,
+    prepared: GotoPrepared,
+    request: &RequestContext,
+) -> crate::lsp::request_cancellation::RequestResult<Option<GotoDefinitionResponse>> {
+    match prepared {
+        GotoPrepared::Ready(response) => Ok(response),
+        GotoPrepared::Decompile(plan) => goto_decompile(plan, backend, request).await,
+    }
+}
+
+fn goto_resolved_symbol_blocking(
+    workspace: Arc<Workspace>,
     view: &IndexView,
     symbol: ResolvedSymbol,
-) -> Option<GotoDefinitionResponse> {
+    request: &RequestContext,
+) -> crate::lsp::request_cancellation::RequestResult<GotoPrepared> {
     let (target_internal, member_name, descriptor, decl_kind) = match &symbol {
         ResolvedSymbol::Class(name) => {
             let simple_name = name.rsplit('/').next().unwrap_or(name.as_ref());
@@ -129,14 +183,18 @@ async fn goto_resolved_symbol(
         ),
     };
 
-    let meta = view.get_class(&target_internal)?;
+    request.check_cancelled("goto.before_origin_lookup")?;
+    let Some(meta) = view.get_class(&target_internal) else {
+        return Ok(GotoPrepared::Ready(None));
+    };
     match &meta.origin {
         ClassOrigin::SourceFile(uri_str) => {
-            let target_uri = Url::parse(uri_str).ok()?;
+            let Some(target_uri) = Url::parse(uri_str).ok() else {
+                return Ok(GotoPrepared::Ready(None));
+            };
 
             let range = member_name.as_ref().and_then(|name| {
-                let content = backend
-                    .workspace
+                let content = workspace
                     .documents
                     .with_doc(&target_uri, |d| d.source().text().to_owned())
                     .or_else(|| {
@@ -156,52 +214,23 @@ async fn goto_resolved_symbol(
                 .or_else(|| find_declaration_range(&content, name, decl_kind))
             });
 
-            Some(GotoDefinitionResponse::Scalar(Location {
-                uri: target_uri,
-                range: range.unwrap_or_default(),
-            }))
+            Ok(GotoPrepared::Ready(Some(GotoDefinitionResponse::Scalar(
+                Location {
+                    uri: target_uri,
+                    range: range.unwrap_or_default(),
+                },
+            ))))
         }
 
         ClassOrigin::Jar(jar_path) => {
-            let bytes = extract_class_bytes(jar_path, &target_internal).ok()?;
-            let cache_path = backend.decompiler_cache.resolve(&target_internal, &bytes);
-
-            if !cache_path.exists() {
-                tracing::info!(class = %target_internal, "goto: cache miss, decompiling");
-                let config = backend.config.read().await;
-                let decompiler_jar = config.decompiler_path.clone()?;
-                let java_bin = config.get_java_bin();
-                let decompiler = config.decompiler_backend.get_decompiler();
-                drop(config);
-
-                if let Err(e) = decompiler
-                    .decompile(&java_bin, &decompiler_jar, &bytes, &cache_path)
-                    .await
-                {
-                    tracing::error!(error = %e, class = %target_internal, "goto: decompile failed");
-                    return None;
-                }
-                backend
-                    .decompiler_cache
-                    .cleanup_stale(&target_internal, &cache_path);
-            }
-
-            let range = member_name.as_ref().and_then(|name| {
-                let content = std::fs::read_to_string(&cache_path).ok()?;
-                find_symbol_range(
-                    &content,
-                    &target_internal,
-                    Some(name),
-                    descriptor.as_deref(),
-                    view,
-                )
-                .or_else(|| find_declaration_range(&content, name, decl_kind))
-            });
-
-            let target_uri = Url::from_file_path(&cache_path).ok()?;
-            Some(GotoDefinitionResponse::Scalar(Location {
-                uri: target_uri,
-                range: range.unwrap_or_default(),
+            request.check_cancelled("goto.before_decompile_extract")?;
+            Ok(GotoPrepared::Decompile(DecompilePlan {
+                jar_path: Arc::clone(jar_path),
+                target_internal,
+                member_name,
+                descriptor,
+                decl_kind,
+                view: view.clone(),
             }))
         }
 
@@ -209,6 +238,7 @@ async fn goto_resolved_symbol(
             zip_path,
             entry_name,
         } => {
+            request.check_cancelled("goto.before_zip_extract")?;
             let base_cache = std::env::temp_dir().join("java_analyzer_sources");
             let cache_path = base_cache.join(entry_name.as_ref());
 
@@ -226,6 +256,7 @@ async fn goto_resolved_symbol(
                 }
             }
 
+            request.check_cancelled("goto.after_zip_extract")?;
             let range = member_name.as_ref().and_then(|name| {
                 let content = std::fs::read_to_string(&cache_path).ok()?;
                 find_symbol_range(
@@ -238,18 +269,107 @@ async fn goto_resolved_symbol(
                 .or_else(|| find_declaration_range(&content, name, decl_kind))
             });
 
-            let target_uri = Url::from_file_path(&cache_path).ok()?;
-            Some(GotoDefinitionResponse::Scalar(Location {
-                uri: target_uri,
-                range: range.unwrap_or_default(),
-            }))
+            let Some(target_uri) = Url::from_file_path(&cache_path).ok() else {
+                return Ok(GotoPrepared::Ready(None));
+            };
+            Ok(GotoPrepared::Ready(Some(GotoDefinitionResponse::Scalar(
+                Location {
+                    uri: target_uri,
+                    range: range.unwrap_or_default(),
+                },
+            ))))
         }
 
         ClassOrigin::Unknown => {
             tracing::debug!(class = %target_internal, "goto: unknown origin");
-            None
+            Ok(GotoPrepared::Ready(None))
         }
     }
+}
+
+async fn goto_decompile(
+    plan: DecompilePlan,
+    backend: &Backend,
+    request: &RequestContext,
+) -> crate::lsp::request_cancellation::RequestResult<Option<GotoDefinitionResponse>> {
+    request.check_cancelled("goto.before_decompile_extract")?;
+    let Some(bytes) = extract_class_bytes(plan.jar_path.as_ref(), &plan.target_internal).ok()
+    else {
+        return Ok(None);
+    };
+    let cache_path = backend
+        .decompiler_cache
+        .resolve(&plan.target_internal, &bytes);
+
+    if !cache_path.exists() {
+        tracing::info!(class = %plan.target_internal, "goto: cache miss, decompiling");
+        let config = backend.config.read().await;
+        let Some(decompiler_jar) = config.decompiler_path.clone() else {
+            return Ok(None);
+        };
+        let java_bin = config.get_java_bin();
+        let decompiler = config.decompiler_backend.get_decompiler();
+        drop(config);
+
+        if let Err(e) = decompiler
+            .decompile(
+                &java_bin,
+                &decompiler_jar,
+                &bytes,
+                &cache_path,
+                request.token(),
+            )
+            .await
+        {
+            if let Some(reason) = request.cancellation_reason() {
+                return Err(reason);
+            }
+            tracing::error!(
+                error = %e,
+                class = %plan.target_internal,
+                "goto: decompile failed"
+            );
+            return Ok(None);
+        }
+        backend
+            .decompiler_cache
+            .cleanup_stale(&plan.target_internal, &cache_path);
+    }
+
+    request.check_cancelled("goto.after_decompile")?;
+    let range = plan.member_name.as_ref().and_then(|name| {
+        let content = std::fs::read_to_string(&cache_path).ok()?;
+        find_symbol_range(
+            &content,
+            &plan.target_internal,
+            Some(name),
+            plan.descriptor.as_deref(),
+            &plan.view,
+        )
+        .or_else(|| find_declaration_range(&content, name, plan.decl_kind))
+    });
+
+    let Some(target_uri) = Url::from_file_path(&cache_path).ok() else {
+        return Ok(None);
+    };
+    Ok(Some(GotoDefinitionResponse::Scalar(Location {
+        uri: target_uri,
+        range: range.unwrap_or_default(),
+    })))
+}
+
+enum GotoPrepared {
+    Ready(Option<GotoDefinitionResponse>),
+    Decompile(DecompilePlan),
+}
+
+struct DecompilePlan {
+    jar_path: Arc<str>,
+    target_internal: Arc<str>,
+    member_name: Option<Arc<str>>,
+    descriptor: Option<Arc<str>>,
+    decl_kind: DeclKind,
+    view: IndexView,
 }
 
 // ── 声明类型 ──────────────────────────────────────────────────────────────────

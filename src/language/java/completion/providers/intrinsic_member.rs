@@ -16,9 +16,10 @@ impl CompletionProvider for IntrinsicMemberProvider {
         _scope: IndexScope,
         ctx: &SemanticContext,
         _index: &IndexView,
+        _request: Option<&crate::lsp::request_context::RequestContext>,
         _limit: Option<usize>,
-    ) -> ProviderCompletionResult {
-        match ctx.java_intrinsic_access.as_ref().map(|a| a.kind) {
+    ) -> crate::lsp::request_cancellation::RequestResult<ProviderCompletionResult> {
+        Ok(match ctx.java_intrinsic_access.as_ref().map(|a| a.kind) {
             Some(JavaIntrinsicAccessKind::ClassLiteral) => vec![
                 CompletionCandidate::new(
                     Arc::from("class"),
@@ -32,7 +33,7 @@ impl CompletionProvider for IntrinsicMemberProvider {
             ],
             _ => vec![],
         }
-        .into()
+        .into())
     }
 }
 
@@ -145,7 +146,7 @@ mod tests {
                 view: Some(view.clone()),
                 workspace: None,
                 file_uri: None,
-                metrics: None,
+                request: None,
             },
         )
         .expect("java semantic context with view")
@@ -166,7 +167,7 @@ mod tests {
         ));
         ContextEnricher::new(&view).enrich(&mut ctx);
         let out = IntrinsicMemberProvider
-            .provide(root_scope(), &ctx, &view, None)
+            .provide_test(root_scope(), &ctx, &view, None)
             .candidates;
         (ctx, out)
     }

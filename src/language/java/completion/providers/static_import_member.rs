@@ -26,16 +26,17 @@ impl CompletionProvider for StaticImportMemberProvider {
         scope: IndexScope,
         ctx: &SemanticContext,
         index: &IndexView,
+        _request: Option<&crate::lsp::request_context::RequestContext>,
         _limit: Option<usize>,
-    ) -> ProviderCompletionResult {
+    ) -> crate::lsp::request_cancellation::RequestResult<ProviderCompletionResult> {
         if ctx.static_imports.is_empty() {
-            return ProviderCompletionResult::default();
+            return Ok(ProviderCompletionResult::default());
         }
         let query_lower = match &ctx.location {
             CursorLocation::Expression { prefix } => prefix.to_lowercase(),
             CursorLocation::MethodArgument { prefix } => prefix.to_lowercase(),
             CursorLocation::Unknown => ctx.query.to_lowercase(),
-            _ => return ProviderCompletionResult::default(),
+            _ => return Ok(ProviderCompletionResult::default()),
         };
 
         let mut results = Vec::new();
@@ -82,7 +83,7 @@ impl CompletionProvider for StaticImportMemberProvider {
             }
         }
 
-        results.into()
+        Ok(results.into())
     }
 }
 
@@ -300,7 +301,7 @@ mod tests {
         let idx = math_index();
         let ctx = expr_ctx("", vec![Arc::from("java.lang.Math.*")]);
         let results = StaticImportMemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         let labels: Vec<_> = results.iter().map(|c| c.label.as_ref()).collect();
         assert!(labels.contains(&"abs"), "abs should appear: {:?}", labels);
@@ -313,7 +314,7 @@ mod tests {
         let idx = math_index();
         let ctx = expr_ctx("ab", vec![Arc::from("java.lang.Math.*")]);
         let results = StaticImportMemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         let labels: Vec<_> = results.iter().map(|c| c.label.as_ref()).collect();
         assert!(labels.contains(&"abs"), "abs should match prefix 'ab'");
@@ -325,7 +326,7 @@ mod tests {
         let idx = math_index();
         let ctx = expr_ctx("", vec![Arc::from("java.lang.Math.abs")]);
         let results = StaticImportMemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         let labels: Vec<_> = results.iter().map(|c| c.label.as_ref()).collect();
         assert!(
@@ -344,7 +345,7 @@ mod tests {
         let ctx = expr_ctx("ab", vec![]);
         assert!(
             StaticImportMemberProvider
-                .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+                .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
                 .candidates
                 .is_empty()
         );
@@ -367,7 +368,7 @@ mod tests {
         .with_static_imports(vec![Arc::from("java.lang.Math.*")]);
         assert!(
             StaticImportMemberProvider
-                .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+                .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
                 .candidates
                 .is_empty()
         );

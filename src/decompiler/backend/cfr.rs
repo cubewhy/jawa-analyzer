@@ -1,4 +1,6 @@
 use super::super::Decompiler;
+use crate::decompiler::wait_with_output_or_cancel;
+use crate::lsp::request_cancellation::CancellationToken;
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use std::path::Path;
@@ -17,6 +19,7 @@ impl Decompiler for CfrDecompiler {
         decompiler_jar: &Path,
         class_data: &[u8],
         output_path: &Path,
+        cancel: &CancellationToken,
     ) -> Result<()> {
         let temp_dir = tempfile::tempdir()?;
         let input_class = temp_dir.path().join("Input.class");
@@ -24,15 +27,14 @@ impl Decompiler for CfrDecompiler {
 
         tracing::info!(?decompiler_jar, "Executing CFR decompiler");
 
-        let output = Command::new(java_bin)
+        let child = Command::new(java_bin)
             .arg("-jar")
             .arg(decompiler_jar)
             .arg(&input_class)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()?
-            .wait_with_output()
-            .await?;
+            .spawn()?;
+        let output = wait_with_output_or_cancel(child, cancel).await?;
 
         if !output.status.success() {
             let err_msg = String::from_utf8_lossy(&output.stderr);

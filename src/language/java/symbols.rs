@@ -2,36 +2,41 @@ use tower_lsp::lsp_types::{DocumentSymbol, SymbolKind};
 use tree_sitter::Node;
 
 use crate::lsp::converters::ts_node_to_range;
-use tree_sitter_utils::{Handler, HandlerExt, Input, handler_fn};
 
-pub fn collect_java_symbols<'a>(root: Node<'a>, bytes: &'a [u8]) -> Vec<DocumentSymbol> {
+pub fn collect_java_symbols<'a>(
+    root: Node<'a>,
+    bytes: &'a [u8],
+    request: Option<&crate::lsp::request_context::RequestContext>,
+) -> crate::lsp::request_cancellation::RequestResult<Vec<DocumentSymbol>> {
     let mut out = Vec::new();
-    collect_type_declarations(root, bytes, &mut out);
-    out
+    collect_type_declarations(root, bytes, request, &mut out)?;
+    Ok(out)
 }
 
-fn collect_type_declarations<'a>(node: Node<'a>, bytes: &'a [u8], out: &mut Vec<DocumentSymbol>) {
-    // For each child: if it's a type declaration build a symbol; if it's a
-    // container node ("program" or "ERROR") recurse into it; otherwise skip.
-    let dispatch = (|inp: Input<&[u8]>| -> Option<Vec<DocumentSymbol>> {
-        if is_type_declaration(inp.node.kind()) {
-            Some(build_type_symbol(inp.node, inp.ctx).into_iter().collect())
-        } else {
-            None
+fn collect_type_declarations<'a>(
+    node: Node<'a>,
+    bytes: &'a [u8],
+    request: Option<&crate::lsp::request_context::RequestContext>,
+    out: &mut Vec<DocumentSymbol>,
+) -> crate::lsp::request_cancellation::RequestResult<()> {
+    let mut cursor = node.walk();
+    for (index, child) in node.children(&mut cursor).enumerate() {
+        if index % 32 == 0
+            && let Some(request) = request
+        {
+            request.check_cancelled("document_symbol.type_declarations")?;
         }
-    })
-    .or((|inp: Input<&[u8]>| -> Option<Vec<DocumentSymbol>> {
-        let mut nested = Vec::new();
-        collect_type_declarations(inp.node, inp.ctx, &mut nested);
-        Some(nested)
-    })
-    .for_kinds(&["program", "ERROR"]))
-    .for_children();
-
-    let collected = dispatch
-        .handle(Input::new(node, bytes, None))
-        .unwrap_or_default();
-    out.extend(collected.into_iter().flatten());
+        if is_type_declaration(child.kind()) {
+            if let Some(symbol) = build_type_symbol(child, bytes, request)? {
+                out.push(symbol);
+            }
+            continue;
+        }
+        if matches!(child.kind(), "program" | "ERROR") {
+            collect_type_declarations(child, bytes, request, out)?;
+        }
+    }
+    Ok(())
 }
 
 fn is_type_declaration(kind: &str) -> bool {
@@ -45,61 +50,64 @@ fn is_type_declaration(kind: &str) -> bool {
     )
 }
 
-fn build_type_symbol<'a>(node: Node<'a>, bytes: &'a [u8]) -> Option<DocumentSymbol> {
-    let (mut sym, body) = start_type_symbol(node, bytes)?;
-    let children = body
-        .map(|body_node| collect_type_members(body_node, bytes))
-        .unwrap_or_default();
+fn build_type_symbol<'a>(
+    node: Node<'a>,
+    bytes: &'a [u8],
+    request: Option<&crate::lsp::request_context::RequestContext>,
+) -> crate::lsp::request_cancellation::RequestResult<Option<DocumentSymbol>> {
+    let Some((mut sym, body)) = start_type_symbol(node, bytes) else {
+        return Ok(None);
+    };
+    let children = if let Some(body_node) = body {
+        collect_type_members(body_node, bytes, request)?
+    } else {
+        Vec::new()
+    };
     sym.children = Some(children);
-    Some(sym)
+    Ok(Some(sym))
 }
 
-fn collect_type_members<'a>(body: Node<'a>, bytes: &'a [u8]) -> Vec<DocumentSymbol> {
-    // Dispatch each child by kind using a combinator chain.
-    // Each arm returns a Vec<DocumentSymbol>; arms that produce a single
-    // symbol wrap it in a one-element vec. Arms that recurse also return
-    // a vec.  `.for_children()` collects all `Some(vec)` results;
-    // we then flatten them into the final output.
-    let dispatch = (
-        // Type declarations: recurse into nested classes/interfaces/etc.
-        |inp: Input<&[u8]>| -> Option<Vec<DocumentSymbol>> {
-            if is_type_declaration(inp.node.kind()) {
-                Some(build_type_symbol(inp.node, inp.ctx).into_iter().collect())
-            } else {
-                None
-            }
+fn collect_type_members<'a>(
+    body: Node<'a>,
+    bytes: &'a [u8],
+    request: Option<&crate::lsp::request_context::RequestContext>,
+) -> crate::lsp::request_cancellation::RequestResult<Vec<DocumentSymbol>> {
+    let mut out = Vec::new();
+    let mut cursor = body.walk();
+    for (index, child) in body.children(&mut cursor).enumerate() {
+        if index % 32 == 0
+            && let Some(request) = request
+        {
+            request.check_cancelled("document_symbol.type_members")?;
         }
-    )
-    .or(handler_fn(|inp: Input<&[u8]>| -> Vec<DocumentSymbol> {
-        parse_method_symbol(inp.node, inp.ctx).into_iter().collect()
-    })
-    .for_kinds(&[
-        "method_declaration",
-        "constructor_declaration",
-        "compact_constructor_declaration",
-    ]))
-    .or(handler_fn(|inp: Input<&[u8]>| -> Vec<DocumentSymbol> {
-        parse_enum_constant_symbol(inp.node, inp.ctx)
-            .into_iter()
-            .collect()
-    })
-    .for_kinds(&["enum_constant", "enum_constant_declaration"]))
-    .or(
-        handler_fn(|inp: Input<&[u8]>| collect_type_members(inp.node, inp.ctx))
-            .for_kinds(&["enum_body_declarations", "ERROR"]),
-    )
-    .or(
-        handler_fn(|inp: Input<&[u8]>| parse_field_symbols(inp.node, inp.ctx))
-            .for_kinds(&["field_declaration"]),
-    )
-    .for_children();
+        if is_type_declaration(child.kind()) {
+            if let Some(symbol) = build_type_symbol(child, bytes, request)? {
+                out.push(symbol);
+            }
+            continue;
+        }
 
-    dispatch
-        .handle(Input::new(body, bytes, None))
-        .unwrap_or_default()
-        .into_iter()
-        .flatten()
-        .collect()
+        match child.kind() {
+            "method_declaration"
+            | "constructor_declaration"
+            | "compact_constructor_declaration" => {
+                if let Some(symbol) = parse_method_symbol(child, bytes) {
+                    out.push(symbol);
+                }
+            }
+            "enum_constant" | "enum_constant_declaration" => {
+                if let Some(symbol) = parse_enum_constant_symbol(child, bytes) {
+                    out.push(symbol);
+                }
+            }
+            "enum_body_declarations" | "ERROR" => {
+                out.extend(collect_type_members(child, bytes, request)?);
+            }
+            "field_declaration" => out.extend(parse_field_symbols(child, bytes)),
+            _ => {}
+        }
+    }
+    Ok(out)
 }
 
 /// Generate a "type symbol (children empty for now) + body node (for continued traversal)"
@@ -233,7 +241,7 @@ mod tests {
     fn collect(src: &str) -> Vec<DocumentSymbol> {
         let mut parser = make_java_parser();
         let tree = parser.parse(src, None).expect("parse java");
-        collect_java_symbols(tree.root_node(), src.as_bytes())
+        collect_java_symbols(tree.root_node(), src.as_bytes(), None).expect("symbol collection")
     }
 
     #[test]

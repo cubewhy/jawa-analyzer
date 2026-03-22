@@ -36,10 +36,11 @@ impl CompletionProvider for MemberProvider {
         scope: IndexScope,
         ctx: &SemanticContext,
         index: &IndexView,
+        _request: Option<&crate::lsp::request_context::RequestContext>,
         _limit: Option<usize>,
-    ) -> ProviderCompletionResult {
+    ) -> crate::lsp::request_cancellation::RequestResult<ProviderCompletionResult> {
         if !matches!(&ctx.location, CursorLocation::MemberAccess { .. }) {
-            return ProviderCompletionResult::default();
+            return Ok(ProviderCompletionResult::default());
         }
 
         let receiver_semantic_type = ctx.location.member_access_receiver_semantic_type();
@@ -66,7 +67,7 @@ impl CompletionProvider for MemberProvider {
             let t_total = trace_timing.then(Instant::now);
             // static methods doesn't have `this` context
             if ctx.is_in_static_context() {
-                return ProviderCompletionResult::default();
+                return Ok(ProviderCompletionResult::default());
             }
             let has_paren_after_cursor = ctx.is_followed_by_opener();
 
@@ -137,7 +138,7 @@ impl CompletionProvider for MemberProvider {
                     "MemberProvider.this_branch_timing"
                 );
             }
-            return results.into();
+            return Ok(results.into());
         }
 
         let trace_timing = tracing::enabled!(tracing::Level::DEBUG);
@@ -160,7 +161,7 @@ impl CompletionProvider for MemberProvider {
                     receiver_expr,
                     "resolve_receiver_type returned None, returning empty"
                 );
-                return ProviderCompletionResult::default();
+                return Ok(ProviderCompletionResult::default());
             }
         };
         let resolve_elapsed_ms = t_resolve
@@ -181,7 +182,7 @@ impl CompletionProvider for MemberProvider {
         let base_class_internal = resolved_effective.erased_internal();
 
         if resolved_effective.is_array() {
-            return self
+            return Ok(self
                 .provide_array_members(
                     ctx,
                     index,
@@ -189,7 +190,7 @@ impl CompletionProvider for MemberProvider {
                     &resolved_effective,
                     &class_internal_for_substitution,
                 )
-                .into();
+                .into());
         }
 
         tracing::debug!(
@@ -280,7 +281,7 @@ impl CompletionProvider for MemberProvider {
                 "MemberProvider.phase_timing"
             );
         }
-        results.into()
+        Ok(results.into())
     }
 }
 
@@ -1250,7 +1251,7 @@ mod tests {
         );
         let ctx = ctx_with_type("com/example/Foo", "get");
         let results = MemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(results.iter().any(|c| c.label.as_ref() == "getValue"));
     }
@@ -1267,7 +1268,7 @@ mod tests {
         );
         let ctx = ctx_with_type("com/example/Foo", "");
         let results = MemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert_eq!(results.len(), 2);
     }
@@ -1320,7 +1321,7 @@ mod tests {
         .with_extension(type_ctx);
 
         let results = MemberProvider
-            .provide(root_scope(), &ctx, &view, None)
+            .provide_test(root_scope(), &ctx, &view, None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "size"),
@@ -1406,7 +1407,7 @@ mod tests {
         .with_extension(type_ctx);
 
         let results = MemberProvider
-            .provide(root_scope(), &ctx, &view, None)
+            .provide_test(root_scope(), &ctx, &view, None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "size"),
@@ -1493,7 +1494,7 @@ mod tests {
         .with_extension(type_ctx);
 
         let mut labels: Vec<String> = MemberProvider
-            .provide(root_scope(), &ctx, &view, None)
+            .provide_test(root_scope(), &ctx, &view, None)
             .candidates
             .into_iter()
             .map(|c| c.label.to_string())
@@ -1528,7 +1529,7 @@ mod tests {
 
         let ctx = ctx_this("Main", "org/cubewhy/a/Main", "org/cubewhy/a", "pr");
         let results = MemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(results.iter().any(|c| c.label.as_ref() == "pri"));
     }
@@ -1546,7 +1547,7 @@ mod tests {
             ctx_this("Main", "org/cubewhy/a/Main", "org/cubewhy/a", "").with_class_members(members);
 
         let results = MemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(results.iter().any(|c| c.label.as_ref() == "priFunc"));
         assert!(results.iter().any(|c| c.label.as_ref() == "fun"));
@@ -1572,7 +1573,7 @@ mod tests {
             .with_enclosing_member(Some(CurrentClassMember::Method(enclosing_method)));
 
         let results = MemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(results.is_empty());
     }
@@ -1628,7 +1629,7 @@ mod tests {
         );
 
         let results = MemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(results.iter().any(|c| c.label.as_ref() == "func"));
     }
@@ -1674,7 +1675,7 @@ mod tests {
         );
 
         let results = MemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(results.iter().any(|c| c.label.as_ref() == "listOnly"));
         assert!(!results.iter().any(|c| c.label.as_ref() == "legacyOnly"));
@@ -1700,7 +1701,7 @@ mod tests {
 
         let ctx = ctx_with_type("com/example/Legacy", "");
         let results = MemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(results.iter().any(|c| c.label.as_ref() == "legacyOnly"));
     }
@@ -1771,7 +1772,7 @@ mod tests {
         );
 
         let results = MemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().filter(|c| c.label.as_ref() == "add").count() >= 2,
@@ -1794,7 +1795,7 @@ mod tests {
         );
 
         let labels: Vec<String> = MemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates
             .into_iter()
             .map(|candidate| candidate.label.to_string())
@@ -1923,7 +1924,7 @@ mod tests {
         let view = idx.view(root_scope());
 
         let warmup = MemberProvider
-            .provide(root_scope(), &ctx, &view, None)
+            .provide_test(root_scope(), &ctx, &view, None)
             .candidates;
         assert!(!warmup.is_empty(), "warmup should return candidates");
 
@@ -1932,7 +1933,7 @@ mod tests {
         let mut total_candidates = 0usize;
         for _ in 0..iters {
             total_candidates += MemberProvider
-                .provide(root_scope(), &ctx, &view, None)
+                .provide_test(root_scope(), &ctx, &view, None)
                 .candidates
                 .len();
         }
@@ -2010,7 +2011,7 @@ mod tests {
         );
 
         let results = MemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "size"),
@@ -2075,7 +2076,7 @@ mod tests {
         );
 
         let results = MemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "get"),
@@ -2177,7 +2178,7 @@ mod tests {
         );
 
         let results = MemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         let add = results
             .iter()
@@ -2243,7 +2244,7 @@ mod tests {
 
         let ctx = ctx_with_type("Point", "");
         let results = MemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         let labels: Vec<&str> = results
             .iter()
@@ -2266,7 +2267,7 @@ mod tests {
 
         let ctx = ctx_with_type("Color", "");
         let labels: Vec<String> = MemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates
             .into_iter()
             .map(|candidate| candidate.label.to_string())
@@ -2304,7 +2305,7 @@ mod tests {
         ]);
 
         let results = MemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert_eq!(
             results
@@ -2372,7 +2373,7 @@ mod tests {
 
         let ctx = ctx_with_type("org/cubewhy/Child", "");
         let results = MemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert_eq!(
             results

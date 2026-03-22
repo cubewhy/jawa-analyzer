@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use tower_lsp::jsonrpc::{self, Result as LspResult};
 use tower_lsp::lsp_types::*;
 use tracing::debug;
 
@@ -6,7 +7,7 @@ use super::super::converters::candidate_to_lsp;
 use crate::completion::candidate::{CompletionCandidate, InsertTextMode, ReplacementMode};
 use crate::completion::engine::{CompletionEngine, CompletionMetadata, CompletionPolicy};
 use crate::language::LanguageRegistry;
-use crate::lsp::request_context::PreparedRequest;
+use crate::lsp::request_context::{PreparedRequest, RequestContext};
 use crate::workspace::Workspace;
 
 pub async fn handle_completion(
@@ -14,7 +15,28 @@ pub async fn handle_completion(
     engine: Arc<CompletionEngine>,
     registry: Arc<LanguageRegistry>,
     params: CompletionParams,
-) -> Option<CompletionResponse> {
+    request: Arc<RequestContext>,
+) -> LspResult<Option<CompletionResponse>> {
+    let task = tokio::task::spawn_blocking(move || {
+        handle_completion_blocking(workspace, engine, registry, params, request)
+    });
+
+    match task.await {
+        Ok(result) => result.map_err(|cancelled| cancelled.into_lsp_error()),
+        Err(error) => {
+            tracing::error!(%error, "completion worker panicked");
+            Err(jsonrpc::Error::internal_error())
+        }
+    }
+}
+
+fn handle_completion_blocking(
+    workspace: Arc<Workspace>,
+    engine: Arc<CompletionEngine>,
+    registry: Arc<LanguageRegistry>,
+    params: CompletionParams,
+    request: Arc<RequestContext>,
+) -> crate::lsp::request_cancellation::RequestResult<Option<CompletionResponse>> {
     let uri = &params.text_document_position.text_document.uri;
     let position = params.text_document_position.position;
     let trigger = params
@@ -23,12 +45,19 @@ pub async fn handle_completion(
         .and_then(|ctx| ctx.trigger_character.as_deref())
         .and_then(|s| s.chars().next());
 
-    let request =
-        PreparedRequest::prepare(Arc::clone(&workspace), registry.as_ref(), uri, "completion")?;
-    let lang = request.lang();
-    let analysis = request.analysis();
-    let scope = request.scope();
-    let view = request.view();
+    let Some(prepared) = PreparedRequest::prepare(
+        Arc::clone(&workspace),
+        registry.as_ref(),
+        uri,
+        Arc::clone(&request),
+    )?
+    else {
+        return Ok(None);
+    };
+    let lang = prepared.lang();
+    let analysis = prepared.analysis();
+    let scope = prepared.scope();
+    let view = prepared.view();
 
     let _uri_str = uri.as_str();
 
@@ -58,14 +87,16 @@ pub async fn handle_completion(
         "completion using analysis IndexView"
     );
 
-    let ctx = request.semantic_context(position, trigger)?;
+    let Some(ctx) = prepared.semantic_context(position, trigger)? else {
+        return Ok(None);
+    };
 
-    let source_for_edits = request.source_text().to_owned();
+    let source_for_edits = prepared.source_text().to_owned();
 
     tracing::debug!(location = ?ctx.location, query = %ctx.query, "parsed context");
 
     const MAX_ITEMS: usize = 100;
-    let completion = engine.complete_prepared_with_policy(
+    let completion = engine.complete_prepared_with_policy_and_request(
         scope,
         ctx.clone(),
         lang,
@@ -75,17 +106,20 @@ pub async fn handle_completion(
             final_result_limit: Some(MAX_ITEMS),
             short_prefix_len: 1,
         },
-    );
+        Some(&request),
+    )?;
     if completion.candidates.is_empty() {
         debug!("no candidates");
-        return None;
+        return Ok(None);
     }
 
     let CompletionOutputParts {
         candidates,
         metadata,
     } = CompletionOutputParts::from(completion);
+    request.check_cancelled("completion.before_lang_post_process")?;
     let candidates = lang.post_process_candidates(candidates, &ctx);
+    request.check_cancelled("completion.before_lsp_conversion")?;
     let completion_list = build_completion_list(
         metadata,
         &candidates,
@@ -104,7 +138,7 @@ pub async fn handle_completion(
         "returning completions"
     );
 
-    Some(CompletionResponse::List(completion_list))
+    Ok(Some(CompletionResponse::List(completion_list)))
 }
 
 fn build_completion_list(

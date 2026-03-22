@@ -35,18 +35,19 @@ impl CompletionProvider for KeywordProvider {
         _scope: IndexScope,
         ctx: &SemanticContext,
         _index: &IndexView,
+        _request: Option<&crate::lsp::request_context::RequestContext>,
         _limit: Option<usize>,
-    ) -> ProviderCompletionResult {
+    ) -> crate::lsp::request_cancellation::RequestResult<ProviderCompletionResult> {
         let prefix = match &ctx.location {
             CursorLocation::Expression { prefix } => prefix.as_str(),
-            _ => return ProviderCompletionResult::default(),
+            _ => return Ok(ProviderCompletionResult::default()),
         };
 
         // TODO: context based completation
 
         let prefix_lower = prefix.to_lowercase();
 
-        JAVA_KEYWORDS
+        Ok(JAVA_KEYWORDS
             .iter()
             .filter(|&&kw| kw.starts_with(&prefix_lower))
             .map(|&kw| {
@@ -58,6 +59,6 @@ impl CompletionProvider for KeywordProvider {
                 )
             })
             .collect::<Vec<_>>()
-            .into()
+            .into())
     }
 }

@@ -23,14 +23,15 @@ impl CompletionProvider for AnnotationProvider {
         _scope: IndexScope,
         ctx: &SemanticContext,
         index: &IndexView,
+        _request: Option<&crate::lsp::request_context::RequestContext>,
         _limit: Option<usize>,
-    ) -> ProviderCompletionResult {
+    ) -> crate::lsp::request_cancellation::RequestResult<ProviderCompletionResult> {
         let (prefix, et) = match &ctx.location {
             CursorLocation::Annotation {
                 prefix,
                 target_element_type,
             } => (prefix.as_str(), target_element_type),
-            _ => return ProviderCompletionResult::default(),
+            _ => return Ok(ProviderCompletionResult::default()),
         };
 
         let prefix_lower = prefix.to_lowercase();
@@ -133,7 +134,7 @@ impl CompletionProvider for AnnotationProvider {
             });
         }
 
-        results.into()
+        Ok(results.into())
     }
 }
 
@@ -294,7 +295,7 @@ mod tests {
         idx.add_classes(builtin_java_annotations());
         let ctx = annotation_ctx("Not", vec![], "com/example");
         let results = AnnotationProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results
@@ -311,7 +312,7 @@ mod tests {
         idx.add_classes(vec![make_annotation("org/junit", "Test")]);
         let ctx = annotation_ctx("Te", vec!["org.junit.Test".into()], "com/example");
         let results = AnnotationProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "Test"),
@@ -327,7 +328,7 @@ mod tests {
         idx.add_classes(builtin_java_annotations());
         let ctx = annotation_ctx("Te", vec![], "com/example");
         let results = AnnotationProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         let test_candidate = results.iter().find(|c| c.label.as_ref() == "Test");
         assert!(test_candidate.is_some(), "Test annotation should appear");
@@ -344,7 +345,7 @@ mod tests {
         idx.add_classes(builtin_java_annotations());
         let ctx = annotation_ctx("Over", vec![], "com/example");
         let results = AnnotationProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         let c = results
             .iter()
@@ -362,7 +363,7 @@ mod tests {
         idx.add_classes(builtin_java_annotations());
         let ctx = annotation_ctx("over", vec![], "com/example");
         let results = AnnotationProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "Override"),
@@ -405,7 +406,7 @@ mod tests {
             vec![],
         );
         let results = AnnotationProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(results.iter().all(|c| c.label.as_ref() != "ClassOnly"));
     }

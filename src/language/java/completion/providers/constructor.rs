@@ -30,13 +30,14 @@ impl CompletionProvider for ConstructorProvider {
         _scope: IndexScope,
         ctx: &SemanticContext,
         index: &IndexView,
+        request: Option<&crate::lsp::request_context::RequestContext>,
         limit: Option<usize>,
-    ) -> ProviderCompletionResult {
+    ) -> crate::lsp::request_cancellation::RequestResult<ProviderCompletionResult> {
         if limit == Some(0) {
-            return ProviderCompletionResult {
+            return Ok(ProviderCompletionResult {
                 candidates: Vec::new(),
                 is_incomplete: true,
-            };
+            });
         }
         let (class_prefix, expected_type) = match &ctx.location {
             CursorLocation::ConstructorCall {
@@ -44,10 +45,10 @@ impl CompletionProvider for ConstructorProvider {
                 expected_type,
             } => (class_prefix.as_str(), expected_type.as_deref()),
             _ => {
-                return ProviderCompletionResult {
+                return Ok(ProviderCompletionResult {
                     candidates: vec![],
                     is_incomplete: false,
-                };
+                });
             }
         };
         let class_prefix = normalize_top_level_generic_base(class_prefix);
@@ -74,7 +75,12 @@ impl CompletionProvider for ConstructorProvider {
         let reached_limit = |len: usize, lim: Option<usize>| {
             lim.is_some_and(|effective_limit| len >= effective_limit)
         };
-        for meta in metas {
+        for (i, meta) in metas.into_iter().enumerate() {
+            if i % 32 == 0
+                && let Some(request) = request
+            {
+                request.check_cancelled("completion.constructor.metas")?;
+            }
             if reached_limit(results.len(), limit) {
                 truncated = true;
                 break;
@@ -141,7 +147,12 @@ impl CompletionProvider for ConstructorProvider {
                 continue;
             }
 
-            for ctor in constructors {
+            for (ctor_index, ctor) in constructors.into_iter().enumerate() {
+                if ctor_index % 16 == 0
+                    && let Some(request) = request
+                {
+                    request.check_cancelled("completion.constructor.ctors")?;
+                }
                 if reached_limit(results.len(), limit) {
                     truncated = true;
                     break;
@@ -184,10 +195,10 @@ impl CompletionProvider for ConstructorProvider {
             }
         }
 
-        ProviderCompletionResult {
+        Ok(ProviderCompletionResult {
             candidates: results,
             is_incomplete: truncated,
-        }
+        })
     }
 }
 
@@ -462,7 +473,7 @@ mod tests {
         let idx = make_index_with("org/cubewhy", "RandomClass", true);
         let ctx = make_ctx("", None, vec![]);
         let results = ConstructorProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             !results.is_empty(),
@@ -475,7 +486,7 @@ mod tests {
         let idx = make_index_with("org/cubewhy", "RandomClass", true);
         let ctx = make_ctx("", None, vec![]);
         let results = ConstructorProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "RandomClass"),
@@ -489,7 +500,7 @@ mod tests {
         let idx = make_index_with("org/cubewhy", "RandomClass", true);
         let ctx = make_ctx("RandomClass", None, vec!["org.cubewhy.RandomClass".into()]);
         let results = ConstructorProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().all(|c| c.required_import.is_none()),
@@ -506,7 +517,7 @@ mod tests {
         let idx = make_index_with("org/cubewhy", "RandomClass", true);
         let ctx = make_ctx("RandomClass", None, vec!["org.cubewhy.*".into()]);
         let results = ConstructorProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().all(|c| c.required_import.is_none()),
@@ -524,7 +535,7 @@ mod tests {
         // enclosing package is org/cubewhy/a — same as Helper
         let ctx = make_ctx("Helper", None, vec![]);
         let results = ConstructorProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().all(|c| c.required_import.is_none()),
@@ -541,7 +552,7 @@ mod tests {
         let idx = make_index_with("org/cubewhy", "ArrayList", true);
         let ctx = make_ctx("ArrayList<String>", None, vec![]);
         let results = ConstructorProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "ArrayList"),
@@ -555,7 +566,7 @@ mod tests {
         let idx = make_index_with("org/cubewhy", "ArrayList", true);
         let ctx = make_ctx("ArrayList", None, vec![]);
         let results = ConstructorProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "ArrayList"),
@@ -569,7 +580,7 @@ mod tests {
         let idx = make_index_with("org/cubewhy", "RandomClass", true);
         let ctx = make_ctx("RandomClass", None, vec![]);
         let results = ConstructorProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results
@@ -615,7 +626,7 @@ mod tests {
         // expected_type = "String" → String should score higher than StringBuilder
         let ctx = make_ctx("S", Some("String"), vec![]);
         let results = ConstructorProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
 
         let string_score = results
@@ -642,7 +653,7 @@ mod tests {
         let idx = make_index_with("org/cubewhy", "RandomClass", true);
         let ctx = make_ctx("RandomClass", None, vec![]);
         let results = ConstructorProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         // score should be 0.0 (set by provider; Scorer adds on top in engine)
         assert!(
@@ -698,7 +709,7 @@ mod tests {
             )),
         );
         let results = ConstructorProvider
-            .provide(root_scope(), &ctx, &view, None)
+            .provide_test(root_scope(), &ctx, &view, None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "BoxV"),
@@ -722,7 +733,7 @@ mod tests {
             )),
         );
         let results = ConstructorProvider
-            .provide(root_scope(), &ctx, &view, None)
+            .provide_test(root_scope(), &ctx, &view, None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "Box"),
@@ -743,7 +754,7 @@ mod tests {
             )),
         );
         let results = ConstructorProvider
-            .provide(root_scope(), &ctx, &view, None)
+            .provide_test(root_scope(), &ctx, &view, None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "BoxV"),
@@ -776,7 +787,7 @@ mod tests {
             ),
         ));
         let results = ConstructorProvider
-            .provide(root_scope(), &ctx, &view, None)
+            .provide_test(root_scope(), &ctx, &view, None)
             .candidates;
         assert!(
             results.iter().all(|c| c.label.as_ref() != "Box"),
@@ -818,11 +829,12 @@ mod tests {
 
         let ctx = make_ctx("ArrayType", None, vec![]);
         let limited =
-            ConstructorProvider.provide(root_scope(), &ctx, &idx.view(root_scope()), Some(5));
+            ConstructorProvider.provide_test(root_scope(), &ctx, &idx.view(root_scope()), Some(5));
         assert_eq!(limited.candidates.len(), 5);
         assert!(limited.is_incomplete);
 
-        let full = ConstructorProvider.provide(root_scope(), &ctx, &idx.view(root_scope()), None);
+        let full =
+            ConstructorProvider.provide_test(root_scope(), &ctx, &idx.view(root_scope()), None);
         assert!(
             full.candidates.len() >= 5,
             "unbounded path should not be capped"

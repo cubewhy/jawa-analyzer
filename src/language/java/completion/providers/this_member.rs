@@ -26,8 +26,9 @@ impl CompletionProvider for ThisMemberProvider {
         _scope: IndexScope,
         ctx: &SemanticContext,
         index: &IndexView,
+        _request: Option<&crate::lsp::request_context::RequestContext>,
         _limit: Option<usize>,
-    ) -> ProviderCompletionResult {
+    ) -> crate::lsp::request_cancellation::RequestResult<ProviderCompletionResult> {
         tracing::debug!(
             "ThisMemberProvider: enclosing={:?}",
             ctx.enclosing_internal_name
@@ -35,11 +36,11 @@ impl CompletionProvider for ThisMemberProvider {
         let prefix = match &ctx.location {
             CursorLocation::Expression { prefix } => prefix.as_str(),
             CursorLocation::MethodArgument { prefix } => prefix.as_str(),
-            _ => return ProviderCompletionResult::default(),
+            _ => return Ok(ProviderCompletionResult::default()),
         };
 
         if ctx.current_class_members.is_empty() && ctx.enclosing_internal_name.is_none() {
-            return ProviderCompletionResult::default();
+            return Ok(ProviderCompletionResult::default());
         }
 
         let in_static = ctx.is_in_static_context();
@@ -227,7 +228,7 @@ impl CompletionProvider for ThisMemberProvider {
             }
         }
 
-        results.into()
+        Ok(results.into())
     }
 }
 
@@ -326,7 +327,7 @@ mod tests {
         let idx = WorkspaceIndex::new();
         let ctx = ctx_with_members("fu", members);
         let results = ThisMemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(results.iter().any(|c| c.label.as_ref() == "func"));
         assert!(results.iter().any(|c| c.label.as_ref() == "fun"));
@@ -340,7 +341,7 @@ mod tests {
         let idx = WorkspaceIndex::new();
         let ctx = ctx_with_members("vlmn", members);
         let results = ThisMemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results
@@ -358,7 +359,7 @@ mod tests {
         let idx = WorkspaceIndex::new();
         let ctx = ctx_with_members("pr", members);
         let results = ThisMemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "pri"),
@@ -373,7 +374,7 @@ mod tests {
         let idx = WorkspaceIndex::new();
         let ctx = ctx_with_members("pr", members);
         let results = ThisMemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(results.iter().any(|c| c.label.as_ref() == "pri"));
         assert!(matches!(
@@ -392,7 +393,7 @@ mod tests {
         let idx = WorkspaceIndex::new();
         let ctx = ctx_with_members("co", members);
         let results = ThisMemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         let c = results
             .iter()
@@ -408,7 +409,7 @@ mod tests {
         let idx = WorkspaceIndex::new();
         let ctx = ctx_with_members("", members);
         let results = ThisMemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].label.as_ref(), "func");
@@ -420,7 +421,7 @@ mod tests {
         let ctx = ctx_with_members("fu", vec![]);
         assert!(
             ThisMemberProvider
-                .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+                .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
                 .candidates
                 .is_empty()
         );
@@ -437,7 +438,7 @@ mod tests {
         let idx = WorkspaceIndex::new();
         let ctx = ctx_with_members("a", members);
         let results = ThisMemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "afterMethod"),
@@ -451,7 +452,7 @@ mod tests {
         let idx = WorkspaceIndex::new();
         let ctx = ctx_with_members("CO", members);
         let results = ThisMemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(matches!(
             results
@@ -482,7 +483,7 @@ mod tests {
         let idx = WorkspaceIndex::new();
         let ctx = ctx_with_members_static("he", members, enclosing);
         let results = ThisMemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results.is_empty(),
@@ -507,7 +508,7 @@ mod tests {
         let idx = WorkspaceIndex::new();
         let ctx = ctx_with_members_static("he", members, enclosing);
         let results = ThisMemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "helper"),
@@ -538,7 +539,7 @@ mod tests {
             arguments: None,
         };
         let results = ThisMemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results.is_empty(),
@@ -582,7 +583,7 @@ mod tests {
         .with_enclosing_member(Some(enclosing_method));
 
         let results = ThisMemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
 
         assert!(
@@ -636,7 +637,7 @@ mod tests {
         .with_enclosing_member(Some(enclosing_method));
 
         let results = ThisMemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "pri"),
@@ -675,7 +676,7 @@ mod tests {
         .with_enclosing_member(Some(enclosing_method));
 
         let results = ThisMemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "pri"),
@@ -702,7 +703,7 @@ mod tests {
         let idx = WorkspaceIndex::new();
         let ctx = ctx_with_members_static("he", members, enclosing_method);
         let results = ThisMemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().all(|c| c.label.as_ref() != "helper"),
@@ -790,7 +791,7 @@ mod tests {
         .with_enclosing_member(Some(enclosing_method));
 
         let results = ThisMemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "funcA"),
@@ -856,7 +857,7 @@ mod tests {
         );
 
         let results = ThisMemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results
@@ -935,7 +936,7 @@ mod tests {
         .with_enclosing_member(Some(enclosing_method));
 
         let results = ThisMemberProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().all(|c| c.label.as_ref() != "superPrivate"),

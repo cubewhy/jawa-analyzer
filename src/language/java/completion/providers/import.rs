@@ -19,14 +19,18 @@ impl CompletionProvider for ImportProvider {
         scope: IndexScope,
         ctx: &SemanticContext,
         index: &IndexView,
+        request: Option<&crate::lsp::request_context::RequestContext>,
         _limit: Option<usize>,
-    ) -> ProviderCompletionResult {
+    ) -> crate::lsp::request_cancellation::RequestResult<ProviderCompletionResult> {
         // TODO: limit results
         let prefix = match &ctx.location {
             CursorLocation::Import { prefix } => prefix.as_str(),
-            _ => return ProviderCompletionResult::default(),
+            _ => return Ok(ProviderCompletionResult::default()),
         };
-        crate::completion::import_completion::candidates_for_import(prefix, scope, index)
+        let candidates = crate::completion::import_completion::candidates_for_import(
+            prefix, scope, index, request,
+        )?;
+        Ok(candidates
             .into_iter()
             .map(|c| {
                 let filter_text = c.insert_text.clone();
@@ -34,7 +38,7 @@ impl CompletionProvider for ImportProvider {
                     .with_filter_text(filter_text)
             })
             .collect::<Vec<_>>()
-            .into()
+            .into())
     }
 }
 
@@ -116,7 +120,7 @@ mod tests {
         );
         assert!(
             ImportProvider
-                .provide(scope, &ctx, &view, None)
+                .provide_test(scope, &ctx, &view, None)
                 .candidates
                 .is_empty()
         );
@@ -129,7 +133,7 @@ mod tests {
             module: ModuleId::ROOT,
         };
         let results = ImportProvider
-            .provide(scope, &import_ctx("org.cubewhy.Ma"), &view, None)
+            .provide_test(scope, &import_ctx("org.cubewhy.Ma"), &view, None)
             .candidates;
         assert!(
             results

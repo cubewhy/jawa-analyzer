@@ -2058,7 +2058,15 @@ fn resolve_name_table_for_file(
     file: SourceFile,
 ) -> Option<Arc<crate::index::NameTable>> {
     let workspace_index = db.workspace_index();
-    let index = workspace_index.read();
+    let Some(index) = workspace_index.try_read() else {
+        tracing::warn!(
+            phase = "indexing",
+            file = %file.file_id(db).as_str(),
+            purpose = "incremental source parse/discovery",
+            "workspace index busy while Salsa semantic extraction held the DB lock; skipping NameTable build to avoid lock inversion"
+        );
+        return None;
+    };
     let _ = file;
     tracing::debug!(
         phase = "indexing",
@@ -2668,6 +2676,27 @@ mod tests {
                 local_name: Arc::from("a"),
                 narrowed_type: Arc::from("Ljava/lang/StringBuilder;"),
             }]
+        );
+    }
+
+    #[test]
+    fn resolve_name_table_for_file_returns_none_when_workspace_index_is_write_locked() {
+        let workspace_index =
+            Arc::new(parking_lot::RwLock::new(crate::index::WorkspaceIndex::new()));
+        let db = Database::with_workspace_index(Arc::clone(&workspace_index));
+        let uri = Url::parse("file:///test/Test.java").unwrap();
+        let file = SourceFile::new(
+            &db,
+            FileId::new(uri),
+            "class Test {}".to_string(),
+            Arc::from("java"),
+        );
+
+        let _write_guard = workspace_index.write();
+
+        assert!(
+            resolve_name_table_for_file(&db, file).is_none(),
+            "NameTable lookup should fail fast instead of blocking behind a workspace-index write lock",
         );
     }
 }

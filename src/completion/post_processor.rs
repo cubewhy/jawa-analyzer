@@ -1,5 +1,6 @@
 use crate::completion::{CandidateKind, CompletionCandidate, scorer::Scorer};
 use crate::index::IndexView;
+use crate::lsp::{request_cancellation::RequestResult, request_context::RequestContext};
 use crate::semantic::context::SemanticContext;
 
 pub fn process(
@@ -7,17 +8,26 @@ pub fn process(
     query: &str,
     ctx: &SemanticContext,
     index: &IndexView,
-) -> Vec<CompletionCandidate> {
+    request: Option<&RequestContext>,
+) -> RequestResult<Vec<CompletionCandidate>> {
     // Score
     let scorer = Scorer::with_expected_type(query, ctx, index);
-    for c in &mut candidates {
+    for (index, c) in candidates.iter_mut().enumerate() {
+        if index % 64 == 0
+            && let Some(request) = request
+        {
+            request.check_cancelled("completion.post_process.score")?;
+        }
         c.score += scorer.score(c);
     }
 
     // Dedup
-    let mut candidates = dedup(candidates);
+    let mut candidates = dedup_with_request(candidates, request)?;
 
     // Sort results
+    if let Some(request) = request {
+        request.check_cancelled("completion.post_process.before_sort")?;
+    }
     candidates.sort_unstable_by(|a, b| {
         b.score
             .partial_cmp(&a.score)
@@ -25,10 +35,18 @@ pub fn process(
             .then_with(|| a.label.cmp(&b.label))
     });
 
-    candidates
+    Ok(candidates)
 }
 
-fn dedup(mut candidates: Vec<CompletionCandidate>) -> Vec<CompletionCandidate> {
+#[cfg(test)]
+fn dedup(candidates: Vec<CompletionCandidate>) -> Vec<CompletionCandidate> {
+    dedup_with_request(candidates, None).expect("dedup without request cannot be cancelled")
+}
+
+fn dedup_with_request(
+    mut candidates: Vec<CompletionCandidate>,
+    request: Option<&RequestContext>,
+) -> RequestResult<Vec<CompletionCandidate>> {
     candidates.sort_unstable_by(|a, b| {
         a.label
             .cmp(&b.label)
@@ -46,7 +64,12 @@ fn dedup(mut candidates: Vec<CompletionCandidate>) -> Vec<CompletionCandidate> {
     });
 
     let mut result: Vec<CompletionCandidate> = Vec::with_capacity(candidates.len());
-    for c in candidates {
+    for (index, c) in candidates.into_iter().enumerate() {
+        if index % 64 == 0
+            && let Some(request) = request
+        {
+            request.check_cancelled("completion.post_process.dedup")?;
+        }
         let duplicate = result
             .iter()
             .rev()
@@ -79,7 +102,7 @@ fn dedup(mut candidates: Vec<CompletionCandidate>) -> Vec<CompletionCandidate> {
             result.push(c);
         }
     }
-    result
+    Ok(result)
 }
 
 #[cfg(test)]

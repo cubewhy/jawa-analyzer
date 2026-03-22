@@ -152,6 +152,10 @@ pub fn extract_java_semantic_context_from_source_at_offset(
     offset: usize,
     view: crate::index::IndexView,
 ) -> Option<SemanticContext> {
+    if is_in_comment(source, offset.min(source.len())) {
+        return None;
+    }
+
     let db = crate::salsa_db::Database::default();
     let file = SourceFile::new(
         &db,

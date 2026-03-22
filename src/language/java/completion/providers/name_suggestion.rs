@@ -25,19 +25,20 @@ impl CompletionProvider for NameSuggestionProvider {
         _scope: IndexScope,
         ctx: &SemanticContext,
         _index: &IndexView,
+        _request: Option<&crate::lsp::request_context::RequestContext>,
         _limit: Option<usize>,
-    ) -> ProviderCompletionResult {
+    ) -> crate::lsp::request_cancellation::RequestResult<ProviderCompletionResult> {
         let type_name = match &ctx.location {
             CursorLocation::VariableName { type_name } => type_name.as_str(),
-            _ => return ProviderCompletionResult::default(),
+            _ => return Ok(ProviderCompletionResult::default()),
         };
 
         if type_name.is_empty() {
-            return ProviderCompletionResult::default();
+            return Ok(ProviderCompletionResult::default());
         }
 
         let suggestions = generate_name_suggestions(type_name);
-        suggestions
+        Ok(suggestions
             .into_iter()
             .enumerate()
             .map(|(i, name)| {
@@ -53,7 +54,7 @@ impl CompletionProvider for NameSuggestionProvider {
                 .with_score(score)
             })
             .collect::<Vec<_>>()
-            .into()
+            .into())
     }
 }
 
@@ -144,7 +145,7 @@ mod tests {
     fn test_string_builder_suggestions() {
         let idx = WorkspaceIndex::new();
         let results = NameSuggestionProvider
-            .provide(
+            .provide_test(
                 root_scope(),
                 &ctx("StringBuilder"),
                 &idx.view(root_scope()),
@@ -238,7 +239,7 @@ mod tests {
     fn test_empty_type_returns_empty() {
         let idx = WorkspaceIndex::new();
         let results = NameSuggestionProvider
-            .provide(root_scope(), &ctx(""), &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx(""), &idx.view(root_scope()), None)
             .candidates;
         assert!(results.is_empty());
     }

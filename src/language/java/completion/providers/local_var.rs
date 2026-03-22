@@ -24,20 +24,21 @@ impl CompletionProvider for LocalVarProvider {
         _scope: IndexScope,
         ctx: &SemanticContext,
         index: &IndexView,
+        _request: Option<&crate::lsp::request_context::RequestContext>,
         _limit: Option<usize>,
-    ) -> ProviderCompletionResult {
+    ) -> crate::lsp::request_cancellation::RequestResult<ProviderCompletionResult> {
         let prefix = match &ctx.location {
             CursorLocation::Expression { prefix } => prefix.as_str(),
             CursorLocation::MethodArgument { prefix } => prefix.as_str(),
             CursorLocation::TypeAnnotation { prefix } => prefix.as_str(),
-            _ => return ProviderCompletionResult::default(),
+            _ => return Ok(ProviderCompletionResult::default()),
         };
         let resolver = ContextualResolver::new(index, ctx);
 
         let scored =
             fuzzy::fuzzy_filter_sort(prefix, ctx.local_variables.iter(), |lv| lv.name.clone());
 
-        scored
+        Ok(scored
             .into_iter()
             .map(|(lv, score)| {
                 CompletionCandidate::new(
@@ -56,7 +57,7 @@ impl CompletionProvider for LocalVarProvider {
                 .with_score(50.0 + score as f32 * 0.1)
             })
             .collect::<Vec<_>>()
-            .into()
+            .into())
     }
 }
 
@@ -104,7 +105,7 @@ mod tests {
             vec![("str", "java/lang/String"), ("aVar", "java/lang/String")],
         );
         let results = LocalVarProvider
-            .provide(scope, &ctx, &idx.view(root_scope()), None)
+            .provide_test(scope, &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(results.iter().any(|c| c.label.as_ref() == "str"));
         assert!(results.iter().all(|c| c.label.as_ref() != "aVar"));
@@ -119,7 +120,7 @@ mod tests {
             vec![("aVar", "java/lang/String"), ("str", "java/lang/String")],
         );
         let results = LocalVarProvider
-            .provide(scope, &ctx, &idx.view(root_scope()), None)
+            .provide_test(scope, &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(results.iter().any(|c| c.label.as_ref() == "aVar"));
         assert!(results.iter().all(|c| c.label.as_ref() != "str"));
@@ -134,7 +135,7 @@ mod tests {
             vec![("aVar", "java/lang/String"), ("str", "java/lang/String")],
         );
         let results = LocalVarProvider
-            .provide(scope, &ctx, &idx.view(root_scope()), None)
+            .provide_test(scope, &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert_eq!(
             results.len(),
@@ -150,7 +151,7 @@ mod tests {
         let scope = root_scope();
         let ctx = make_ctx("AVAR", vec![("aVar", "java/lang/String")]);
         let results = LocalVarProvider
-            .provide(scope, &ctx, &idx.view(root_scope()), None)
+            .provide_test(scope, &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(results.iter().any(|c| c.label.as_ref() == "aVar"));
     }
@@ -175,7 +176,7 @@ mod tests {
             vec![],
         );
         let results = LocalVarProvider
-            .provide(scope, &ctx, &idx.view(root_scope()), None)
+            .provide_test(scope, &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "aVar"),
@@ -192,7 +193,7 @@ mod tests {
             vec![("aVar", "java/lang/String"), ("str", "java/lang/String")],
         );
         let results = LocalVarProvider
-            .provide(scope, &ctx, &idx.view(root_scope()), None)
+            .provide_test(scope, &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "aVar"),
@@ -207,7 +208,7 @@ mod tests {
         let scope = root_scope();
         let ctx = make_ctx("xyz", vec![("aVar", "java/lang/String")]);
         let results = LocalVarProvider
-            .provide(scope, &ctx, &idx.view(root_scope()), None)
+            .provide_test(scope, &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(results.is_empty(), "no fuzzy match should return empty");
     }
@@ -236,7 +237,7 @@ mod tests {
             vec![],
         );
         let results = LocalVarProvider
-            .provide(scope, &ctx, &idx.view(root_scope()), None)
+            .provide_test(scope, &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results.is_empty(),
@@ -265,7 +266,7 @@ mod tests {
             vec![],
         );
         let results = LocalVarProvider
-            .provide(scope, &ctx, &idx.view(root_scope()), None)
+            .provide_test(scope, &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "aVar"),
@@ -282,7 +283,7 @@ mod tests {
             vec![("numbers", "int[]"), ("parts", "java/lang/String[]")],
         );
         let results = LocalVarProvider
-            .provide(scope, &ctx, &idx.view(root_scope()), None)
+            .provide_test(scope, &ctx, &idx.view(root_scope()), None)
             .candidates;
         let numbers = results
             .iter()

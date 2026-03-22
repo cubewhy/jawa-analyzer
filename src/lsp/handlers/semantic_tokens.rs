@@ -1,8 +1,10 @@
 use std::sync::Arc;
+use tower_lsp::jsonrpc::{self, Result as LspResult};
 use tower_lsp::lsp_types::*;
 
 use crate::language::rope_utils::rope_line_col_to_offset;
 use crate::language::{LanguageRegistry, TokenCollector};
+use crate::lsp::request_context::RequestContext;
 use crate::workspace::{SourceFile, Workspace};
 
 /// Generate a unique but stable result_id for this document version.
@@ -42,19 +44,48 @@ pub async fn handle_semantic_tokens_full(
     registry: Arc<LanguageRegistry>,
     workspace: Arc<Workspace>,
     params: SemanticTokensParams,
-) -> Option<SemanticTokensResult> {
+    request: Arc<RequestContext>,
+) -> LspResult<Option<SemanticTokensResult>> {
+    let task = tokio::task::spawn_blocking(move || {
+        handle_semantic_tokens_full_blocking(registry, workspace, params, request)
+    });
+    match task.await {
+        Ok(result) => result.map_err(|cancelled| cancelled.into_lsp_error()),
+        Err(error) => {
+            tracing::error!(%error, "semantic tokens full worker panicked");
+            Err(jsonrpc::Error::internal_error())
+        }
+    }
+}
+
+fn handle_semantic_tokens_full_blocking(
+    registry: Arc<LanguageRegistry>,
+    workspace: Arc<Workspace>,
+    params: SemanticTokensParams,
+    request: Arc<RequestContext>,
+) -> crate::lsp::request_cancellation::RequestResult<Option<SemanticTokensResult>> {
     let uri = params.text_document.uri;
 
     let lang_id = workspace
         .documents
-        .with_doc(&uri, |doc| doc.language_id().to_owned())?;
+        .with_doc(&uri, |doc| doc.language_id().to_owned());
+    let Some(lang_id) = lang_id else {
+        return Ok(None);
+    };
 
-    let lang = registry.find(&lang_id)?;
-    let file = ensure_tree(&workspace, &uri, lang)?;
+    let Some(lang) = registry.find(&lang_id) else {
+        return Ok(None);
+    };
+    request.check_cancelled("semantic_tokens_full.before_ensure_tree")?;
+    let Some(file) = ensure_tree(&workspace, &uri, lang) else {
+        return Ok(None);
+    };
 
-    let root = file.root_node()?;
-    let mut collector = TokenCollector::new(&file, lang);
-    collector.collect(root);
+    let Some(root) = file.root_node() else {
+        return Ok(None);
+    };
+    let mut collector = TokenCollector::new(&file, lang, Some(&request));
+    collector.collect(root)?;
     let data = collector.finish();
 
     let result_id = make_result_id(file.version);
@@ -64,10 +95,10 @@ pub async fn handle_semantic_tokens_full(
         doc.semantic_token_cache = Some((id_clone, data_clone));
     });
 
-    Some(SemanticTokensResult::Tokens(SemanticTokens {
+    Ok(Some(SemanticTokensResult::Tokens(SemanticTokens {
         result_id: Some(result_id),
         data,
-    }))
+    })))
 }
 
 /// Backward-compat alias used by the old server call site.
@@ -75,59 +106,118 @@ pub async fn handle_semantic_tokens(
     registry: Arc<LanguageRegistry>,
     workspace: Arc<Workspace>,
     params: SemanticTokensParams,
-) -> Option<SemanticTokensResult> {
-    handle_semantic_tokens_full(registry, workspace, params).await
+    request: Arc<RequestContext>,
+) -> LspResult<Option<SemanticTokensResult>> {
+    handle_semantic_tokens_full(registry, workspace, params, request).await
 }
 
 pub async fn handle_semantic_tokens_range(
     registry: Arc<LanguageRegistry>,
     workspace: Arc<Workspace>,
     params: SemanticTokensRangeParams,
-) -> Option<SemanticTokensRangeResult> {
+    request: Arc<RequestContext>,
+) -> LspResult<Option<SemanticTokensRangeResult>> {
+    let task = tokio::task::spawn_blocking(move || {
+        handle_semantic_tokens_range_blocking(registry, workspace, params, request)
+    });
+    match task.await {
+        Ok(result) => result.map_err(|cancelled| cancelled.into_lsp_error()),
+        Err(error) => {
+            tracing::error!(%error, "semantic tokens range worker panicked");
+            Err(jsonrpc::Error::internal_error())
+        }
+    }
+}
+
+fn handle_semantic_tokens_range_blocking(
+    registry: Arc<LanguageRegistry>,
+    workspace: Arc<Workspace>,
+    params: SemanticTokensRangeParams,
+    request: Arc<RequestContext>,
+) -> crate::lsp::request_cancellation::RequestResult<Option<SemanticTokensRangeResult>> {
     let uri = params.text_document.uri;
     let range = params.range;
 
     let lang_id = workspace
         .documents
-        .with_doc(&uri, |doc| doc.language_id().to_owned())?;
+        .with_doc(&uri, |doc| doc.language_id().to_owned());
+    let Some(lang_id) = lang_id else {
+        return Ok(None);
+    };
 
-    let lang = registry.find(&lang_id)?;
-    let file = ensure_tree(&workspace, &uri, lang)?;
+    let Some(lang) = registry.find(&lang_id) else {
+        return Ok(None);
+    };
+    request.check_cancelled("semantic_tokens_range.before_ensure_tree")?;
+    let Some(file) = ensure_tree(&workspace, &uri, lang) else {
+        return Ok(None);
+    };
 
-    let root = file.root_node()?;
+    let Some(root) = file.root_node() else {
+        return Ok(None);
+    };
     let start_byte =
         rope_line_col_to_offset(&file.rope, range.start.line, range.start.character).unwrap_or(0);
     let end_byte = rope_line_col_to_offset(&file.rope, range.end.line, range.end.character)
         .unwrap_or_else(|| file.text().len());
 
-    let mut collector = TokenCollector::new(&file, lang);
-    collector.collect_range(root, start_byte, end_byte);
+    let mut collector = TokenCollector::new(&file, lang, Some(&request));
+    collector.collect_range(root, start_byte, end_byte)?;
     let data = collector.finish();
 
-    Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
+    Ok(Some(SemanticTokensRangeResult::Tokens(SemanticTokens {
         result_id: None,
         data,
-    }))
+    })))
 }
 
 pub async fn handle_semantic_tokens_full_delta(
     registry: Arc<LanguageRegistry>,
     workspace: Arc<Workspace>,
     params: SemanticTokensDeltaParams,
-) -> Option<SemanticTokensFullDeltaResult> {
+    request: Arc<RequestContext>,
+) -> LspResult<Option<SemanticTokensFullDeltaResult>> {
+    let task = tokio::task::spawn_blocking(move || {
+        handle_semantic_tokens_full_delta_blocking(registry, workspace, params, request)
+    });
+    match task.await {
+        Ok(result) => result.map_err(|cancelled| cancelled.into_lsp_error()),
+        Err(error) => {
+            tracing::error!(%error, "semantic tokens delta worker panicked");
+            Err(jsonrpc::Error::internal_error())
+        }
+    }
+}
+
+fn handle_semantic_tokens_full_delta_blocking(
+    registry: Arc<LanguageRegistry>,
+    workspace: Arc<Workspace>,
+    params: SemanticTokensDeltaParams,
+    request: Arc<RequestContext>,
+) -> crate::lsp::request_cancellation::RequestResult<Option<SemanticTokensFullDeltaResult>> {
     let uri = params.text_document.uri;
     let previous_result_id = params.previous_result_id;
 
     let lang_id = workspace
         .documents
-        .with_doc(&uri, |doc| doc.language_id().to_owned())?;
+        .with_doc(&uri, |doc| doc.language_id().to_owned());
+    let Some(lang_id) = lang_id else {
+        return Ok(None);
+    };
 
-    let lang = registry.find(&lang_id)?;
-    let file = ensure_tree(&workspace, &uri, lang)?;
+    let Some(lang) = registry.find(&lang_id) else {
+        return Ok(None);
+    };
+    request.check_cancelled("semantic_tokens_delta.before_ensure_tree")?;
+    let Some(file) = ensure_tree(&workspace, &uri, lang) else {
+        return Ok(None);
+    };
 
-    let root = file.root_node()?;
-    let mut collector = TokenCollector::new(&file, lang);
-    collector.collect(root);
+    let Some(root) = file.root_node() else {
+        return Ok(None);
+    };
+    let mut collector = TokenCollector::new(&file, lang, Some(&request));
+    collector.collect(root)?;
     let new_data = collector.finish();
 
     let new_result_id = make_result_id(file.version);
@@ -137,7 +227,10 @@ pub async fn handle_semantic_tokens_full_delta(
             .as_ref()
             .filter(|(id, _)| id == &previous_result_id)
             .map(|(_, data)| data.clone())
-    })?;
+    });
+    let Some(maybe_old_data) = maybe_old_data else {
+        return Ok(None);
+    };
 
     // Update cache.
     {
@@ -151,17 +244,19 @@ pub async fn handle_semantic_tokens_full_delta(
     match maybe_old_data {
         Some(old_data) => {
             let edits = diff_semantic_tokens(&old_data, &new_data);
-            Some(SemanticTokensFullDeltaResult::TokensDelta(
+            Ok(Some(SemanticTokensFullDeltaResult::TokensDelta(
                 SemanticTokensDelta {
                     result_id: Some(new_result_id),
                     edits,
                 },
-            ))
+            )))
         }
-        None => Some(SemanticTokensFullDeltaResult::Tokens(SemanticTokens {
-            result_id: Some(new_result_id),
-            data: new_data,
-        })),
+        None => Ok(Some(SemanticTokensFullDeltaResult::Tokens(
+            SemanticTokens {
+                result_id: Some(new_result_id),
+                data: new_data,
+            },
+        ))),
     }
 }
 

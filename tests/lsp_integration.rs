@@ -4,6 +4,8 @@
 use java_analyzer::completion::engine::CompletionEngine;
 use java_analyzer::language::LanguageRegistry;
 use java_analyzer::lsp::handlers::completion::handle_completion;
+use java_analyzer::lsp::request_cancellation::RequestFamily;
+use java_analyzer::lsp::request_context::RequestContext;
 use java_analyzer::workspace::Workspace;
 use java_analyzer::workspace::document::Document;
 use std::sync::Arc;
@@ -68,6 +70,28 @@ async fn open_document(workspace: &Arc<Workspace>, uri: &str, content: &str) {
     );
 }
 
+fn completion_request(uri: &Url) -> Arc<RequestContext> {
+    RequestContext::new(
+        "completion",
+        uri,
+        RequestFamily::Completion,
+        1,
+        Default::default(),
+    )
+}
+
+async fn run_completion(
+    workspace: Arc<Workspace>,
+    engine: Arc<CompletionEngine>,
+    registry: Arc<LanguageRegistry>,
+    params: CompletionParams,
+) -> Option<CompletionResponse> {
+    let request = completion_request(&params.text_document_position.text_document.uri);
+    handle_completion(workspace, engine, registry, params, request)
+        .await
+        .expect("completion request should succeed")
+}
+
 #[tokio::test]
 async fn test_completion_after_file_open() {
     let workspace = create_test_workspace();
@@ -109,7 +133,7 @@ public class User {
         context: None,
     };
 
-    let response = handle_completion(
+    let response = run_completion(
         Arc::clone(&workspace),
         Arc::clone(&engine),
         Arc::clone(&registry),
@@ -157,7 +181,7 @@ async fn test_completion_with_empty_workspace() {
         context: None,
     };
 
-    let response = handle_completion(
+    let response = run_completion(
         Arc::clone(&workspace),
         Arc::clone(&engine),
         Arc::clone(&registry),
@@ -217,7 +241,7 @@ public class User {
         }),
     };
 
-    let response = handle_completion(
+    let response = run_completion(
         Arc::clone(&workspace),
         Arc::clone(&engine),
         Arc::clone(&registry),
@@ -366,7 +390,7 @@ public class CacheTest {
     };
 
     let result1 =
-        handle_completion(workspace.clone(), engine.clone(), registry.clone(), params1).await;
+        run_completion(workspace.clone(), engine.clone(), registry.clone(), params1).await;
 
     assert!(result1.is_some(), "First completion should return results");
 
@@ -382,7 +406,7 @@ public class CacheTest {
     };
 
     let result2 =
-        handle_completion(workspace.clone(), engine.clone(), registry.clone(), params2).await;
+        run_completion(workspace.clone(), engine.clone(), registry.clone(), params2).await;
 
     assert!(result2.is_some(), "Second completion should return results");
 
@@ -437,7 +461,7 @@ public class InvalidationTest {
     };
 
     let result1 =
-        handle_completion(workspace.clone(), engine.clone(), registry.clone(), params1).await;
+        run_completion(workspace.clone(), engine.clone(), registry.clone(), params1).await;
 
     assert!(result1.is_some(), "First completion should return results");
 
@@ -475,7 +499,7 @@ public class InvalidationTest {
     };
 
     let result2 =
-        handle_completion(workspace.clone(), engine.clone(), registry.clone(), params2).await;
+        run_completion(workspace.clone(), engine.clone(), registry.clone(), params2).await;
 
     assert!(
         result2.is_some(),
@@ -528,7 +552,7 @@ public class PositionTest {
     };
 
     let result1 =
-        handle_completion(workspace.clone(), engine.clone(), registry.clone(), params1).await;
+        run_completion(workspace.clone(), engine.clone(), registry.clone(), params1).await;
 
     assert!(
         result1.is_some(),
@@ -550,7 +574,7 @@ public class PositionTest {
     };
 
     let result2 =
-        handle_completion(workspace.clone(), engine.clone(), registry.clone(), params2).await;
+        run_completion(workspace.clone(), engine.clone(), registry.clone(), params2).await;
 
     assert!(
         result2.is_some(),

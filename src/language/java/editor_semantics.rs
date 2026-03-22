@@ -9,6 +9,7 @@ use crate::language::java::completion_context::ContextEnricher;
 use crate::language::java::expression_typing;
 use crate::language::java::render;
 use crate::language::java::type_ctx::SourceTypeCtx;
+use crate::lsp::{request_cancellation::RequestResult, request_context::RequestContext};
 use crate::request_metrics::RequestMetrics;
 use crate::semantic::context::{
     CurrentClassMember, ExpectedTypeConfidence, FunctionalMethodCallHint,
@@ -141,7 +142,7 @@ pub(crate) struct JavaSemanticRequestContext<'a> {
     _root: Node<'a>,
     view: &'a IndexView,
     enricher: ContextEnricher<'a>,
-    metrics: Option<Arc<RequestMetrics>>,
+    request: Option<Arc<RequestContext>>,
 }
 
 impl<'a> JavaSemanticRequestContext<'a> {
@@ -150,7 +151,7 @@ impl<'a> JavaSemanticRequestContext<'a> {
         rope: &Rope,
         root: Node<'a>,
         view: &'a IndexView,
-        metrics: Option<Arc<RequestMetrics>>,
+        request: Option<Arc<RequestContext>>,
     ) -> Self {
         Self {
             source: Arc::from(source),
@@ -158,7 +159,7 @@ impl<'a> JavaSemanticRequestContext<'a> {
             _root: root,
             view,
             enricher: ContextEnricher::new(view),
-            metrics,
+            request,
         }
     }
 
@@ -167,21 +168,35 @@ impl<'a> JavaSemanticRequestContext<'a> {
     }
 
     pub(crate) fn metrics(&self) -> Option<&Arc<RequestMetrics>> {
-        self.metrics.as_ref()
+        self.request.as_ref().map(|request| request.metrics())
     }
 
-    pub(crate) fn semantic_context_at_offset(&self, offset: usize) -> Option<SemanticContext> {
-        if let Some(metrics) = self.metrics.as_ref() {
+    pub(crate) fn check_cancelled(&self, phase: &'static str) -> RequestResult<()> {
+        if let Some(request) = self.request.as_ref() {
+            request.check_cancelled(phase)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn semantic_context_at_offset(
+        &self,
+        offset: usize,
+    ) -> RequestResult<Option<SemanticContext>> {
+        self.check_cancelled("inlay.semantic_context.before_extract")?;
+        if let Some(metrics) = self.metrics() {
             metrics.record_semantic_context_lookup("inlay_semantic_context", offset);
         }
         let extract_started = std::time::Instant::now();
-        let mut ctx =
+        let Some(mut ctx) =
             crate::salsa_queries::java::extract_java_semantic_context_from_source_at_offset(
                 self.source.as_ref(),
                 offset,
                 self.view.clone(),
-            )?;
-        if let Some(metrics) = self.metrics.as_ref() {
+            )
+        else {
+            return Ok(None);
+        };
+        if let Some(metrics) = self.metrics() {
             metrics.record_phase_duration_at(
                 "inlay.extract_semantic_context",
                 Some(offset),
@@ -189,16 +204,18 @@ impl<'a> JavaSemanticRequestContext<'a> {
             );
         }
 
+        self.check_cancelled("inlay.semantic_context.before_enrich")?;
         let enrich_started = std::time::Instant::now();
         self.enricher.enrich(&mut ctx);
-        if let Some(metrics) = self.metrics.as_ref() {
+        if let Some(metrics) = self.metrics() {
             metrics.record_phase_duration_at(
                 "inlay.enrich_semantic_context",
                 Some(offset),
                 enrich_started.elapsed(),
             );
         }
-        Some(ctx)
+        self.check_cancelled("inlay.semantic_context.after_enrich")?;
+        Ok(Some(ctx))
     }
 
     fn indexed_source_class_covers_file(
@@ -224,19 +241,22 @@ impl<'a> JavaSemanticRequestContext<'a> {
         workspace: &Workspace,
         salsa_file: crate::salsa_db::SourceFile,
         offset: usize,
-    ) -> Option<SemanticContext> {
-        if let Some(metrics) = self.metrics.as_ref() {
+    ) -> RequestResult<Option<SemanticContext>> {
+        self.check_cancelled("inlay.salsa_context.before_extract")?;
+        if let Some(metrics) = self.metrics() {
             metrics.record_semantic_context_lookup("inlay_scope_context", offset);
         }
         let db = workspace.salsa_db.lock();
         let started = std::time::Instant::now();
-        let mut ctx = crate::salsa_queries::java::extract_java_semantic_context_at_offset(
+        let Some(mut ctx) = crate::salsa_queries::java::extract_java_semantic_context_at_offset(
             &*db,
             salsa_file,
             offset,
             self.view.clone(),
             Some(workspace),
-        )?;
+        ) else {
+            return Ok(None);
+        };
         if self.indexed_source_class_covers_file(
             &*db,
             salsa_file,
@@ -245,14 +265,15 @@ impl<'a> JavaSemanticRequestContext<'a> {
             ctx.current_class_members.clear();
         }
         drop(db);
-        if let Some(metrics) = self.metrics.as_ref() {
+        if let Some(metrics) = self.metrics() {
             metrics.record_phase_duration_at(
                 "inlay.prepare_semantic_context_salsa",
                 Some(offset),
                 started.elapsed(),
             );
         }
-        Some(ctx)
+        self.check_cancelled("inlay.salsa_context.after_extract")?;
+        Ok(Some(ctx))
     }
 }
 
@@ -991,6 +1012,7 @@ class Test {
         let semantic = JavaSemanticRequestContext::new(source, &rope, root, &view, None);
         let ctx = semantic
             .inlay_context_at_offset(&workspace, salsa_file, offset)
+            .expect("inlay request")
             .expect("inlay semantic context");
 
         assert_eq!(
@@ -1035,6 +1057,7 @@ class Test {
         let semantic = JavaSemanticRequestContext::new(source, &rope, root, &view, None);
         let ctx = semantic
             .inlay_context_at_offset(&workspace, salsa_file, offset)
+            .expect("inlay request")
             .expect("inlay semantic context");
 
         assert!(ctx.current_class_members.contains_key("helper"));
@@ -1074,6 +1097,7 @@ class Test {
         let semantic = JavaSemanticRequestContext::new(source, &rope, root, &view, None);
         let ctx = semantic
             .inlay_context_at_offset(&workspace, salsa_file, offset)
+            .expect("inlay request")
             .expect("inlay semantic context");
 
         match &ctx.location {
@@ -1121,6 +1145,7 @@ class Test {
         let semantic = JavaSemanticRequestContext::new(source, &rope, root, &view, None);
         let ctx = semantic
             .inlay_context_at_offset(&workspace, salsa_file, offset)
+            .expect("inlay request")
             .expect("inlay semantic context");
 
         assert!(ctx.is_in_static_context());

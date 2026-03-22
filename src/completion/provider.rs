@@ -1,5 +1,6 @@
 use super::candidate::CompletionCandidate;
 use crate::index::{IndexScope, IndexView};
+use crate::lsp::{request_cancellation::RequestResult, request_context::RequestContext};
 use crate::semantic::SemanticContext;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -48,6 +49,19 @@ pub trait CompletionProvider: Send + Sync {
         scope: IndexScope,
         ctx: &SemanticContext,
         index: &IndexView,
+        request: Option<&RequestContext>,
         _limit: Option<usize>,
-    ) -> ProviderCompletionResult;
+    ) -> RequestResult<ProviderCompletionResult>;
+
+    #[cfg(test)]
+    fn provide_test(
+        &self,
+        scope: IndexScope,
+        ctx: &SemanticContext,
+        index: &IndexView,
+        limit: Option<usize>,
+    ) -> ProviderCompletionResult {
+        self.provide(scope, ctx, index, None, limit)
+            .expect("provider result")
+    }
 }

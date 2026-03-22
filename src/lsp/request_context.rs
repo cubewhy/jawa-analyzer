@@ -4,10 +4,78 @@ use tower_lsp::lsp_types::{Position, Url};
 
 use crate::index::{IndexScope, IndexView};
 use crate::language::{Language, LanguageRegistry, ParseEnv};
+use crate::lsp::request_cancellation::{
+    CancellationToken, Cancelled, RequestFamily, RequestResult,
+};
 use crate::request_metrics::RequestMetrics;
 use crate::salsa_queries::conversion::{FromSalsaDataWithAnalysis, RequestAnalysisState};
 use crate::semantic::SemanticContext;
 use crate::workspace::{AnalysisContext, SourceFile, Workspace};
+
+pub struct RequestContext {
+    metrics: Arc<RequestMetrics>,
+    cancel: CancellationToken,
+    family: RequestFamily,
+    generation: u64,
+}
+
+impl std::fmt::Debug for RequestContext {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RequestContext")
+            .field("request_id", &self.metrics.request_id())
+            .field("request_kind", &self.metrics.request_kind())
+            .field("uri", &self.metrics.uri())
+            .field("family", &self.family)
+            .field("generation", &self.generation)
+            .finish()
+    }
+}
+
+impl RequestContext {
+    pub fn new(
+        request_kind: &'static str,
+        uri: &Url,
+        family: RequestFamily,
+        generation: u64,
+        cancel: CancellationToken,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            metrics: RequestMetrics::new(request_kind, uri),
+            cancel,
+            family,
+            generation,
+        })
+    }
+
+    pub fn metrics(&self) -> &Arc<RequestMetrics> {
+        &self.metrics
+    }
+
+    pub fn token(&self) -> &CancellationToken {
+        &self.cancel
+    }
+
+    pub fn check_cancelled(&self, phase: &'static str) -> RequestResult<()> {
+        if let Some(reason) = self.cancel.reason() {
+            tracing::debug!(
+                request_id = self.metrics.request_id(),
+                request_kind = self.metrics.request_kind(),
+                uri = %self.metrics.uri(),
+                request_family = ?self.family,
+                generation = self.generation,
+                cancel_reason = %reason.as_str(),
+                phase,
+                "observed cancelled request phase"
+            );
+            return Err(reason);
+        }
+        Ok(())
+    }
+
+    pub fn cancellation_reason(&self) -> Option<Cancelled> {
+        self.cancel.reason()
+    }
+}
 
 pub struct PreparedRequest<'a> {
     workspace: Arc<Workspace>,
@@ -18,7 +86,7 @@ pub struct PreparedRequest<'a> {
     salsa_file: crate::salsa_db::SourceFile,
     inferred_package: Option<Arc<str>>,
     request_analysis: RequestAnalysisState,
-    metrics: Arc<RequestMetrics>,
+    request: Arc<RequestContext>,
 }
 
 impl<'a> PreparedRequest<'a> {
@@ -26,22 +94,31 @@ impl<'a> PreparedRequest<'a> {
         workspace: Arc<Workspace>,
         registry: &'a LanguageRegistry,
         uri: &Url,
-        request_kind: &'static str,
-    ) -> Option<Self> {
-        let metrics = RequestMetrics::new(request_kind, uri);
+        request: Arc<RequestContext>,
+    ) -> RequestResult<Option<Self>> {
         let lang_id = workspace
             .documents
-            .with_doc(uri, |doc| doc.language_id().to_owned())?;
-        let lang = registry.find(&lang_id)?;
-        let file = ensure_tree(&workspace, uri, lang)?;
+            .with_doc(uri, |doc| doc.language_id().to_owned());
+        let Some(lang_id) = lang_id else {
+            return Ok(None);
+        };
+        let Some(lang) = registry.find(&lang_id) else {
+            return Ok(None);
+        };
+        request.check_cancelled("request_setup.before_ensure_tree")?;
+        let Some(file) = ensure_tree(&workspace, uri, lang) else {
+            return Ok(None);
+        };
+        request.check_cancelled("request_setup.after_ensure_tree")?;
 
         let analysis = workspace.analysis_context_for_uri(uri);
         let scope = analysis.scope();
         let inferred_package = workspace.infer_java_package_for_uri(uri, analysis.source_root);
 
         let view = {
+            request.check_cancelled("request_setup.before_index_view")?;
             let db = workspace.salsa_db.lock();
-            metrics.record_index_view_acquisition(
+            request.metrics().record_index_view_acquisition(
                 "request_setup",
                 scope.module.0,
                 analysis.classpath,
@@ -55,14 +132,17 @@ impl<'a> PreparedRequest<'a> {
                 analysis.source_root,
             )
         };
+        request.check_cancelled("request_setup.after_index_view")?;
         let request_analysis = RequestAnalysisState {
             analysis,
             view: view.clone(),
         };
 
-        let salsa_file = workspace.get_or_update_salsa_file(uri)?;
+        let Some(salsa_file) = workspace.get_or_update_salsa_file(uri) else {
+            return Ok(None);
+        };
 
-        Some(Self {
+        Ok(Some(Self {
             workspace,
             uri: uri.clone(),
             lang,
@@ -71,8 +151,8 @@ impl<'a> PreparedRequest<'a> {
             salsa_file,
             inferred_package,
             request_analysis,
-            metrics,
-        })
+            request,
+        }))
     }
 
     pub fn uri(&self) -> &Url {
@@ -104,7 +184,11 @@ impl<'a> PreparedRequest<'a> {
     }
 
     pub fn metrics(&self) -> &Arc<RequestMetrics> {
-        &self.metrics
+        self.request.metrics()
+    }
+
+    pub fn request(&self) -> &Arc<RequestContext> {
+        &self.request
     }
 
     pub fn salsa_file(&self) -> crate::salsa_db::SourceFile {
@@ -117,7 +201,7 @@ impl<'a> PreparedRequest<'a> {
             view: Some(self.view.clone()),
             workspace: Some(Arc::clone(&self.workspace)),
             file_uri: Some(Arc::from(self.uri.as_str())),
-            metrics: Some(Arc::clone(&self.metrics)),
+            request: Some(Arc::clone(&self.request)),
         }
     }
 
@@ -132,7 +216,7 @@ impl<'a> PreparedRequest<'a> {
         &self,
         position: Position,
         trigger: Option<char>,
-    ) -> Option<SemanticContext> {
+    ) -> RequestResult<Option<SemanticContext>> {
         tracing::debug!(
             uri = %self.uri,
             module = self.request_analysis.analysis.module.0,
@@ -141,16 +225,18 @@ impl<'a> PreparedRequest<'a> {
             path = "index_view",
             "building request semantic context without NameTable"
         );
-        let context_data = {
+        self.request
+            .check_cancelled("semantic_context.before_extract")?;
+        let Some(context_data) = ({
             let db = self.workspace.salsa_db.lock();
             if self.lang.id() == "java" {
-                crate::salsa_queries::java::extract_java_completion_context(
+                Some(crate::salsa_queries::java::extract_java_completion_context(
                     &*db,
                     self.salsa_file,
                     position.line,
                     position.character,
                     trigger,
-                )
+                ))
             } else {
                 self.lang.extract_completion_context_salsa(
                     &*db,
@@ -158,11 +244,17 @@ impl<'a> PreparedRequest<'a> {
                     position.line,
                     position.character,
                     trigger,
-                )?
+                )
             }
+        }) else {
+            return Ok(None);
         };
+        self.request
+            .check_cancelled("semantic_context.after_extract")?;
 
         let db = self.workspace.salsa_db.lock();
+        self.request
+            .check_cancelled("semantic_context.before_build")?;
         let mut ctx = if self.lang.id() == "java" {
             crate::salsa_queries::java::build_java_semantic_context(
                 &*db,
@@ -183,19 +275,21 @@ impl<'a> PreparedRequest<'a> {
                 .enrich_completion_context(&mut ctx, self.scope(), &self.view);
             ctx
         };
+        self.request
+            .check_cancelled("semantic_context.after_build")?;
 
         if let Some(pkg) = self.inferred_package.as_ref() {
             ctx = ctx.with_inferred_package(Arc::clone(pkg));
         }
 
-        Some(ctx)
+        Ok(Some(ctx))
     }
 
     pub fn semantic_context_at_token_end(
         &self,
         position: Position,
         trigger: Option<char>,
-    ) -> Option<SemanticContext> {
+    ) -> RequestResult<Option<SemanticContext>> {
         self.semantic_context(self.token_end_position(position), trigger)
     }
 }
@@ -252,6 +346,7 @@ fn token_end_character(content: &str, line: u32, character: u32) -> u32 {
 mod tests {
     use super::*;
     use crate::index::ClassOrigin;
+    use crate::lsp::request_cancellation::{CancellationToken, RequestFamily};
     use crate::semantic::context::CursorLocation;
     use crate::workspace::document::Document;
     use ropey::Rope;
@@ -295,9 +390,20 @@ mod tests {
             tree,
         )));
 
-        let request =
-            PreparedRequest::prepare(Arc::clone(&workspace), &registry, &uri, "test_completion")
-                .expect("prepared request");
+        let request = PreparedRequest::prepare(
+            Arc::clone(&workspace),
+            &registry,
+            &uri,
+            RequestContext::new(
+                "test_completion",
+                &uri,
+                RequestFamily::Completion,
+                1,
+                CancellationToken::new(),
+            ),
+        )
+        .expect("request result")
+        .expect("prepared request");
 
         let byte_offset = source.find("a.").expect("member access") + 2;
         let rope = Rope::from_str(&source);
@@ -305,6 +411,7 @@ mod tests {
         let character = (byte_offset - rope.line_to_byte(line as usize)) as u32;
         let ctx = request
             .semantic_context(Position::new(line, character), Some('.'))
+            .expect("request result")
             .expect("semantic context");
 
         let local = ctx

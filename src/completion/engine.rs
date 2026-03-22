@@ -3,6 +3,7 @@ use crate::completion::post_processor;
 use crate::completion::provider::{CompletionProvider, ProviderSearchSpace};
 use crate::index::{IndexScope, IndexView};
 use crate::language::Language;
+use crate::lsp::{request_cancellation::RequestResult, request_context::RequestContext};
 use crate::semantic::{CursorLocation, SemanticContext};
 use std::time::Instant;
 
@@ -89,10 +90,45 @@ impl CompletionEngine {
         index: &IndexView,
         policy: CompletionPolicy,
     ) -> CompletionOutput {
+        self.complete_prepared_with_policy_and_request(scope, ctx, lang, index, policy, None)
+            .expect("requestless completion cannot be cancelled")
+    }
+
+    pub fn complete_with_policy_and_request(
+        &self,
+        scope: IndexScope,
+        mut ctx: SemanticContext,
+        lang: &dyn Language,
+        index: &IndexView,
+        policy: CompletionPolicy,
+        request: Option<&RequestContext>,
+    ) -> RequestResult<CompletionOutput> {
+        if let Some(request) = request {
+            request.check_cancelled("completion.before_enrich")?;
+        }
+        lang.enrich_completion_context(&mut ctx, scope, index);
+        if let Some(request) = request {
+            request.check_cancelled("completion.after_enrich")?;
+        }
+        self.complete_prepared_with_policy_and_request(scope, ctx, lang, index, policy, request)
+    }
+
+    pub fn complete_prepared_with_policy_and_request(
+        &self,
+        scope: IndexScope,
+        ctx: SemanticContext,
+        lang: &dyn Language,
+        index: &IndexView,
+        policy: CompletionPolicy,
+        request: Option<&RequestContext>,
+    ) -> RequestResult<CompletionOutput> {
         let ctx = ctx;
 
         let t_total = Instant::now();
         let broad_query = is_broad_query(&ctx, policy.short_prefix_len);
+        if let Some(request) = request {
+            request.check_cancelled("completion.before_provider_discovery")?;
+        }
 
         // Phase 4: Parallel Provider Execution
         // Execute all applicable providers in parallel using rayon
@@ -109,9 +145,12 @@ impl CompletionEngine {
             .iter()
             .filter(|p| p.is_applicable(&ctx))
             .collect();
+        if let Some(request) = request {
+            request.check_cancelled("completion.before_provider_fanout")?;
+        }
 
         // Execute language providers in parallel
-        let lang_results: Vec<_> = lang_providers
+        let lang_results: RequestResult<Vec<_>> = lang_providers
             .par_iter()
             .map(|provider| {
                 let tp = Instant::now();
@@ -119,7 +158,7 @@ impl CompletionEngine {
                     broad_query && provider.search_space(&ctx) == ProviderSearchSpace::Broad;
                 let limit = use_limit.then_some(policy.broad_provider_limit);
 
-                let result = provider.provide(scope, &ctx, index, limit);
+                let result = provider.provide(scope, &ctx, index, request, limit)?;
 
                 tracing::debug!(
                     provider = provider.name(),
@@ -129,12 +168,13 @@ impl CompletionEngine {
                     "completion provider dispatch (parallel)"
                 );
 
-                (result, use_limit)
+                Ok((result, use_limit))
             })
             .collect();
+        let lang_results = lang_results?;
 
         // Execute extra providers in parallel
-        let extra_results: Vec<_> = extra_providers
+        let extra_results: RequestResult<Vec<_>> = extra_providers
             .par_iter()
             .map(|provider| {
                 let tp = Instant::now();
@@ -142,7 +182,7 @@ impl CompletionEngine {
                     broad_query && provider.search_space(&ctx) == ProviderSearchSpace::Broad;
                 let limit = use_limit.then_some(policy.broad_provider_limit);
 
-                let result = provider.provide(scope, &ctx, index, limit);
+                let result = provider.provide(scope, &ctx, index, request, limit)?;
 
                 tracing::debug!(
                     provider = provider.name(),
@@ -152,9 +192,10 @@ impl CompletionEngine {
                     "completion extra provider dispatch (parallel)"
                 );
 
-                (result, use_limit)
+                Ok((result, use_limit))
             })
             .collect();
+        let extra_results = extra_results?;
 
         // Collect results
         let mut candidates: Vec<CompletionCandidate> = Vec::new();
@@ -163,7 +204,16 @@ impl CompletionEngine {
             ..CompletionMetadata::default()
         };
 
-        for (result, use_limit) in lang_results.into_iter().chain(extra_results.into_iter()) {
+        for (index, (result, use_limit)) in lang_results
+            .into_iter()
+            .chain(extra_results.into_iter())
+            .enumerate()
+        {
+            if index % 8 == 0
+                && let Some(request) = request
+            {
+                request.check_cancelled("completion.after_provider_result")?;
+            }
             if use_limit {
                 metadata.used_broad_provider = true;
             }
@@ -176,7 +226,10 @@ impl CompletionEngine {
             candidates = candidates.len(),
             "completion provider stage total"
         );
-        let mut candidates = post_processor::process(candidates, &ctx.query, &ctx, index);
+        if let Some(request) = request {
+            request.check_cancelled("completion.before_post_process")?;
+        }
+        let mut candidates = post_processor::process(candidates, &ctx.query, &ctx, index, request)?;
         if let Some(limit) = policy.final_result_limit
             && candidates.len() > limit
         {
@@ -184,10 +237,10 @@ impl CompletionEngine {
             metadata.final_truncated = true;
         }
 
-        CompletionOutput {
+        Ok(CompletionOutput {
             candidates,
             metadata,
-        }
+        })
     }
 }
 
@@ -331,10 +384,11 @@ mod tests {
             _scope: IndexScope,
             _ctx: &SemanticContext,
             _index: &IndexView,
+            _request: Option<&crate::lsp::request_context::RequestContext>,
             _limit: Option<usize>,
-        ) -> ProviderCompletionResult {
+        ) -> RequestResult<ProviderCompletionResult> {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            ProviderCompletionResult::default()
+            Ok(ProviderCompletionResult::default())
         }
     }
 
@@ -356,8 +410,9 @@ mod tests {
             _scope: IndexScope,
             _ctx: &SemanticContext,
             _index: &IndexView,
+            _request: Option<&crate::lsp::request_context::RequestContext>,
             limit: Option<usize>,
-        ) -> ProviderCompletionResult {
+        ) -> RequestResult<ProviderCompletionResult> {
             let all = (0..self.count)
                 .map(|i| {
                     CompletionCandidate::new(
@@ -369,16 +424,16 @@ mod tests {
                 })
                 .collect::<Vec<_>>();
             let Some(limit) = limit else {
-                return ProviderCompletionResult {
+                return Ok(ProviderCompletionResult {
                     candidates: all,
                     is_incomplete: false,
-                };
+                });
             };
             let is_incomplete = all.len() > limit;
-            ProviderCompletionResult {
+            Ok(ProviderCompletionResult {
                 candidates: all.into_iter().take(limit).collect(),
                 is_incomplete,
-            }
+            })
         }
     }
 
@@ -400,9 +455,10 @@ mod tests {
             _scope: IndexScope,
             _ctx: &SemanticContext,
             _index: &IndexView,
+            _request: Option<&crate::lsp::request_context::RequestContext>,
             _limit: Option<usize>,
-        ) -> ProviderCompletionResult {
-            (0..self.count)
+        ) -> RequestResult<ProviderCompletionResult> {
+            Ok((0..self.count)
                 .map(|i| {
                     CompletionCandidate::new(
                         Arc::from(format!("N{i}")),
@@ -412,7 +468,7 @@ mod tests {
                     )
                 })
                 .collect::<Vec<_>>()
-                .into()
+                .into())
         }
     }
 

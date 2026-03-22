@@ -14,7 +14,6 @@ use crate::language::java::completion::providers::{
 };
 use crate::language::java::inlay_hints::{JavaInlayHintKind, collect_java_inlay_hints};
 use crate::language::java::symbols::collect_java_symbols;
-use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::language::rope_utils::rope_line_col_to_offset;
 use crate::language::{ClassifiedToken, ParseEnv};
 use crate::request_metrics::RequestMetrics;
@@ -240,8 +239,11 @@ impl Language for JavaLanguage {
         &self,
         node: tree_sitter::Node<'a>,
         file: &'a SourceFile,
-    ) -> Option<Vec<tower_lsp::lsp_types::DocumentSymbol>> {
-        Some(collect_java_symbols(node, file.bytes()))
+        request: Option<&crate::lsp::request_context::RequestContext>,
+    ) -> crate::lsp::request_cancellation::RequestResult<
+        Option<Vec<tower_lsp::lsp_types::DocumentSymbol>>,
+    > {
+        Ok(Some(collect_java_symbols(node, file.bytes(), request)?))
     }
 
     fn supports_inlay_hints(&self) -> bool {
@@ -254,23 +256,27 @@ impl Language for JavaLanguage {
         range: Range,
         env: &ParseEnv,
         index: &IndexView,
-    ) -> Option<Vec<InlayHint>> {
-        let root = file.root_node()?;
-        let byte_range = lsp_range_to_byte_range(&file.rope, range, file.text().len())?;
+    ) -> crate::lsp::request_cancellation::RequestResult<Option<Vec<InlayHint>>> {
+        let Some(root) = file.root_node() else {
+            return Ok(None);
+        };
+        let Some(byte_range) = lsp_range_to_byte_range(&file.rope, range, file.text().len()) else {
+            return Ok(None);
+        };
         let hints = collect_java_inlay_hints(
             file.text(),
             &file.rope,
             root,
             index,
             byte_range,
-            env.metrics.clone(),
+            env.request.clone(),
             env.workspace.as_deref(),
             env.workspace
                 .as_ref()
                 .and_then(|workspace| workspace.get_or_update_salsa_file(file.uri.as_ref())),
-        );
+        )?;
 
-        Some(
+        Ok(Some(
             hints
                 .into_iter()
                 .map(|hint| InlayHint {
@@ -287,7 +293,7 @@ impl Language for JavaLanguage {
                     data: None,
                 })
                 .collect(),
-        )
+        ))
     }
 
     // ========================================================================
@@ -582,6 +588,7 @@ mod tests {
             java::class_parser::{
                 parse_java_source_via_tree_for_test, parse_java_source_with_test_jdk,
             },
+            java::type_ctx::SourceTypeCtx,
             rope_utils::line_col_to_offset,
         },
         semantic::{
@@ -629,7 +636,7 @@ mod tests {
                 view: Some(view.clone()),
                 workspace: None,
                 file_uri: None,
-                metrics: None,
+                request: None,
             },
         )
         .expect("java semantic context with view")

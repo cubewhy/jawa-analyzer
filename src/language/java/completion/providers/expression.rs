@@ -42,14 +42,15 @@ impl CompletionProvider for ExpressionProvider {
         _scope: IndexScope,
         ctx: &SemanticContext,
         index: &IndexView,
+        request: Option<&crate::lsp::request_context::RequestContext>,
         limit: Option<usize>,
-    ) -> ProviderCompletionResult {
+    ) -> crate::lsp::request_cancellation::RequestResult<ProviderCompletionResult> {
         let trace_enabled = tracing::enabled!(tracing::Level::DEBUG);
         if limit == Some(0) {
-            return ProviderCompletionResult {
+            return Ok(ProviderCompletionResult {
                 candidates: Vec::new(),
                 is_incomplete: true,
-            };
+            });
         }
 
         if let CursorLocation::MemberAccess {
@@ -68,16 +69,21 @@ impl CompletionProvider for ExpressionProvider {
                 .or_else(|| receiver_type.clone())
                 .or_else(|| resolver.resolve_type_name(ctx, receiver_expr));
             let Some(owner_internal) = owner else {
-                return ProviderCompletionResult {
+                return Ok(ProviderCompletionResult {
                     candidates: vec![],
                     is_incomplete: false,
-                };
+                });
             };
 
             let mut out = Vec::new();
             let member_prefix_lower =
                 (!member_prefix.is_empty()).then(|| member_prefix.to_lowercase());
-            for inner in index.direct_inner_classes_of(&owner_internal) {
+            for (i, inner) in index
+                .direct_inner_classes_of(&owner_internal)
+                .into_iter()
+                .enumerate()
+            {
+                maybe_check_cancelled(request, "completion.expression.member_access", i)?;
                 let Some(score) =
                     fuzzy_score_if_matches(member_prefix_lower.as_deref(), inner.name.as_ref())
                 else {
@@ -109,10 +115,10 @@ impl CompletionProvider for ExpressionProvider {
                     "completion provider timing"
                 );
             }
-            return ProviderCompletionResult {
+            return Ok(ProviderCompletionResult {
                 candidates: out,
                 is_incomplete: false,
-            };
+            });
         }
 
         if let CursorLocation::StaticAccess {
@@ -124,7 +130,12 @@ impl CompletionProvider for ExpressionProvider {
             let mut out = Vec::new();
             let member_prefix_lower =
                 (!member_prefix.is_empty()).then(|| member_prefix.to_lowercase());
-            for inner in index.direct_inner_classes_of(class_internal_name.as_ref()) {
+            for (i, inner) in index
+                .direct_inner_classes_of(class_internal_name.as_ref())
+                .into_iter()
+                .enumerate()
+            {
+                maybe_check_cancelled(request, "completion.expression.static_access", i)?;
                 let Some(score) =
                     fuzzy_score_if_matches(member_prefix_lower.as_deref(), inner.name.as_ref())
                 else {
@@ -154,10 +165,10 @@ impl CompletionProvider for ExpressionProvider {
                     "completion provider timing"
                 );
             }
-            return ProviderCompletionResult {
+            return Ok(ProviderCompletionResult {
                 candidates: out,
                 is_incomplete: false,
-            };
+            });
         }
 
         let prefix = match &ctx.location {
@@ -165,17 +176,17 @@ impl CompletionProvider for ExpressionProvider {
             CursorLocation::TypeAnnotation { prefix } => prefix.as_str(),
             CursorLocation::MethodArgument { prefix } => prefix.as_str(),
             _ => {
-                return ProviderCompletionResult {
+                return Ok(ProviderCompletionResult {
                     candidates: vec![],
                     is_incomplete: false,
-                };
+                });
             }
         };
 
         let t0 = Instant::now();
 
         if prefix.contains('.') {
-            let results = provide_qualified_type_prefix(prefix, ctx, index, self.name());
+            let results = provide_qualified_type_prefix(prefix, ctx, index, self.name(), request)?;
             if trace_enabled {
                 tracing::debug!(
                     provider = self.name(),
@@ -187,10 +198,10 @@ impl CompletionProvider for ExpressionProvider {
                     "completion provider timing"
                 );
             }
-            return ProviderCompletionResult {
+            return Ok(ProviderCompletionResult {
                 candidates: results,
                 is_incomplete: false,
-            };
+            });
         }
 
         let prefix_lower = prefix.to_lowercase();
@@ -204,7 +215,8 @@ impl CompletionProvider for ExpressionProvider {
 
         let t_imports = Instant::now();
         let imported = index.resolve_imports(&ctx.existing_imports);
-        for meta in &imported {
+        for (i, meta) in imported.iter().enumerate() {
+            maybe_check_cancelled(request, "completion.expression.imported", i)?;
             if reached_limit(seeds.len(), limit) {
                 break;
             }
@@ -255,7 +267,8 @@ impl CompletionProvider for ExpressionProvider {
                     .collect()
             };
 
-            for meta in iter {
+            for (i, meta) in iter.into_iter().enumerate() {
+                maybe_check_cancelled(request, "completion.expression.same_package", i)?;
                 if reached_limit(seeds.len(), limit) {
                     break;
                 }
@@ -287,7 +300,8 @@ impl CompletionProvider for ExpressionProvider {
 
         let t_global = Instant::now();
         if !prefix.is_empty() {
-            for meta in fuzzy_pool {
+            for (i, meta) in fuzzy_pool.into_iter().enumerate() {
+                maybe_check_cancelled(request, "completion.expression.global", i)?;
                 if reached_limit(seeds.len(), limit) {
                     break;
                 }
@@ -322,7 +336,8 @@ impl CompletionProvider for ExpressionProvider {
 
         let t_decorate = Instant::now();
         let mut results = Vec::with_capacity(seeds.len());
-        for seed in seeds {
+        for (i, seed) in seeds.into_iter().enumerate() {
+            maybe_check_cancelled(request, "completion.expression.decorate", i)?;
             let fqn = source_fqn_of(&seed.meta, index);
             let mut candidate = CompletionCandidate::new(
                 Arc::clone(&seed.meta.name),
@@ -368,10 +383,10 @@ impl CompletionProvider for ExpressionProvider {
             );
         }
 
-        ProviderCompletionResult {
+        Ok(ProviderCompletionResult {
             candidates: results,
             is_incomplete,
-        }
+        })
     }
 }
 
@@ -444,11 +459,16 @@ fn provide_qualified_type_prefix(
     ctx: &SemanticContext,
     index: &IndexView,
     source: &'static str,
-) -> Vec<CompletionCandidate> {
+    request: Option<&crate::lsp::request_context::RequestContext>,
+) -> crate::lsp::request_cancellation::RequestResult<Vec<CompletionCandidate>> {
     let mut out = Vec::new();
     let member_prefix = prefix.rsplit('.').next().unwrap_or("").trim();
     let member_prefix_lower = (!member_prefix.is_empty()).then(|| member_prefix.to_lowercase());
-    for inner in qualified_nested_type_matches(prefix, ctx, index) {
+    for (i, inner) in qualified_nested_type_matches(prefix, ctx, index)
+        .into_iter()
+        .enumerate()
+    {
+        maybe_check_cancelled(request, "completion.expression.qualified", i)?;
         let Some(score) =
             fuzzy_score_if_matches(member_prefix_lower.as_deref(), inner.name.as_ref())
         else {
@@ -465,7 +485,20 @@ fn provide_qualified_type_prefix(
             .with_score(85.0 + score),
         );
     }
-    out
+    Ok(out)
+}
+
+fn maybe_check_cancelled(
+    request: Option<&crate::lsp::request_context::RequestContext>,
+    phase: &'static str,
+    index: usize,
+) -> crate::lsp::request_cancellation::RequestResult<()> {
+    if index % 64 == 0
+        && let Some(request) = request
+    {
+        request.check_cancelled(phase)?;
+    }
+    Ok(())
 }
 
 fn fuzzy_score_if_matches(prefix_lower: Option<&str>, candidate_name: &str) -> Option<f32> {
@@ -572,7 +605,7 @@ mod tests {
         index.add_classes(vec![make_cls("com/other", "Main")]);
         let ctx = ctx("Main", "Main", "org/cubewhy", vec![]);
         let results = ExpressionProvider
-            .provide(root_scope(), &ctx, &index.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &index.view(root_scope()), None)
             .candidates;
         // com/other/Main should appear (with auto-import)
         assert!(
@@ -589,7 +622,7 @@ mod tests {
         let index = make_index();
         let ctx = ctx("Main", "Main", "org/cubewhy", vec![]);
         let results = ExpressionProvider
-            .provide(root_scope(), &ctx, &index.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &index.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "Main"),
@@ -604,7 +637,7 @@ mod tests {
         index.add_classes(vec![make_cls("com/other", "Main")]);
         let ctx = ctx("Main", "Main", "org/cubewhy", vec![]);
         let results = ExpressionProvider
-            .provide(root_scope(), &ctx, &index.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &index.view(root_scope()), None)
             .candidates;
         // Both Main (no import) and com/other/Main (requires import) in the same package should appear.
         assert!(
@@ -629,7 +662,7 @@ mod tests {
 
         let ctx = ctx("Map", "Test", "app", vec![]);
         let results = ExpressionProvider
-            .provide(root_scope(), &ctx, &index.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &index.view(root_scope()), None)
             .candidates;
 
         // Map 应该出现，但 Map$Entry 不应该出现
@@ -647,7 +680,7 @@ mod tests {
 
         let ctx = ctx("List", "Test", "app", vec![]);
         let results = ExpressionProvider
-            .provide(root_scope(), &ctx, &index.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &index.view(root_scope()), None)
             .candidates;
 
         let list_candidates: Vec<_> = results
@@ -683,7 +716,7 @@ mod tests {
             vec![],
         );
         let results = ExpressionProvider
-            .provide(root_scope(), &ctx, &index.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &index.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "Box"),
@@ -716,7 +749,7 @@ mod tests {
             vec![],
         );
         let results = ExpressionProvider
-            .provide(root_scope(), &ctx, &index.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &index.view(root_scope()), None)
             .candidates;
         assert!(
             !results.iter().any(|c| c.label.as_ref() == "Box"),
@@ -753,7 +786,7 @@ mod tests {
             ),
         ));
         let results = ExpressionProvider
-            .provide(root_scope(), &ctx, &index.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &index.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "Box"),
@@ -799,7 +832,7 @@ mod tests {
             ),
         ));
         let results = ExpressionProvider
-            .provide(root_scope(), &ctx, &index.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &index.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "BoxV"),
@@ -834,7 +867,7 @@ mod tests {
             vec![],
         );
         let results = ExpressionProvider
-            .provide(root_scope(), &ctx, &index.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &index.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "Box"),
@@ -865,7 +898,7 @@ mod tests {
         );
         assert!(ExpressionProvider.is_applicable(&ctx));
         let results = ExpressionProvider
-            .provide(root_scope(), &ctx, &index.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &index.view(root_scope()), None)
             .candidates;
         assert!(
             results.iter().any(|c| c.label.as_ref() == "Box"),
@@ -920,7 +953,7 @@ mod tests {
 
         let t_fast = Instant::now();
         let fast_candidates = ExpressionProvider
-            .provide(root_scope(), &ctx, &view, None)
+            .provide_test(root_scope(), &ctx, &view, None)
             .candidates;
         let fast_ms = t_fast.elapsed().as_secs_f64() * 1000.0;
         eprintln!(
@@ -956,7 +989,7 @@ mod tests {
 
         assert!(ExpressionProvider.is_applicable(&ctx));
         let results = ExpressionProvider
-            .provide(root_scope(), &ctx, &view, None)
+            .provide_test(root_scope(), &ctx, &view, None)
             .candidates;
         assert!(
             !results.is_empty(),
@@ -1002,7 +1035,7 @@ mod tests {
             ],
         );
 
-        let results = ExpressionProvider.provide(root_scope(), &ctx, &view, Some(256));
+        let results = ExpressionProvider.provide_test(root_scope(), &ctx, &view, Some(256));
         assert!(
             !results.candidates.is_empty(),
             "broad path should still produce candidates"

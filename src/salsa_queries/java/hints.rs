@@ -42,6 +42,7 @@ pub fn compute_java_inlay_hints(
             None,
             None,
         )
+        .unwrap_or_default()
         .into_iter()
         .map(|hint| InlayHintData {
             offset: hint.offset,

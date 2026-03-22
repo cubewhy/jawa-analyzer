@@ -25,10 +25,11 @@ impl CompletionProvider for StatementLabelProvider {
         _scope: IndexScope,
         ctx: &SemanticContext,
         _index: &IndexView,
+        _request: Option<&crate::lsp::request_context::RequestContext>,
         _limit: Option<usize>,
-    ) -> ProviderCompletionResult {
+    ) -> crate::lsp::request_cancellation::RequestResult<ProviderCompletionResult> {
         let CursorLocation::StatementLabel { kind, ref prefix } = ctx.location else {
-            return ProviderCompletionResult::default();
+            return Ok(ProviderCompletionResult::default());
         };
 
         let mut scored = Vec::new();
@@ -48,7 +49,7 @@ impl CompletionProvider for StatementLabelProvider {
 
         scored.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)));
 
-        scored
+        Ok(scored
             .into_iter()
             .map(|(_, label, score)| {
                 CompletionCandidate::new(
@@ -61,7 +62,7 @@ impl CompletionProvider for StatementLabelProvider {
                 .with_score(55.0 + score as f32 * 0.1)
             })
             .collect::<Vec<_>>()
-            .into()
+            .into())
     }
 }
 
@@ -118,7 +119,7 @@ mod tests {
         );
 
         let labels: Vec<String> = StatementLabelProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates
             .into_iter()
             .map(|c| c.label.to_string())
@@ -140,7 +141,7 @@ mod tests {
         );
 
         let labels: Vec<String> = StatementLabelProvider
-            .provide(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates
             .into_iter()
             .map(|c| c.label.to_string())

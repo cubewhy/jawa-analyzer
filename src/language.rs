@@ -3,7 +3,11 @@ use std::sync::Arc;
 use crate::{
     completion::{CompletionCandidate, provider::CompletionProvider},
     index::{IndexScope, IndexView, NameTable},
-    lsp::semantic_tokens::{get_modifier_mask, get_type_idx},
+    lsp::{
+        request_cancellation::RequestResult,
+        request_context::RequestContext,
+        semantic_tokens::{get_modifier_mask, get_type_idx},
+    },
     request_metrics::RequestMetrics,
     semantic::SemanticContext,
 };
@@ -101,8 +105,9 @@ pub trait Language: Send + Sync + std::fmt::Debug {
         &self,
         _node: Node<'a>,
         _file: &'a SourceFile,
-    ) -> Option<Vec<DocumentSymbol>> {
-        None
+        _request: Option<&RequestContext>,
+    ) -> RequestResult<Option<Vec<DocumentSymbol>>> {
+        Ok(None)
     }
 
     fn supports_inlay_hints(&self) -> bool {
@@ -115,8 +120,8 @@ pub trait Language: Send + Sync + std::fmt::Debug {
         _range: Range,
         _env: &ParseEnv,
         _index: &IndexView,
-    ) -> Option<Vec<InlayHint>> {
-        None
+    ) -> RequestResult<Option<Vec<InlayHint>>> {
+        Ok(None)
     }
 
     // ========================================================================
@@ -184,7 +189,13 @@ pub struct ParseEnv {
     pub view: Option<IndexView>,
     pub workspace: Option<Arc<crate::workspace::Workspace>>,
     pub file_uri: Option<Arc<str>>,
-    pub metrics: Option<Arc<RequestMetrics>>,
+    pub request: Option<Arc<RequestContext>>,
+}
+
+impl ParseEnv {
+    pub fn metrics(&self) -> Option<&Arc<RequestMetrics>> {
+        self.request.as_ref().map(|request| request.metrics())
+    }
 }
 
 pub struct LanguageRegistry {
@@ -219,6 +230,8 @@ impl Default for LanguageRegistry {
 pub struct TokenCollector<'a> {
     file: &'a SourceFile,
     lang: &'a dyn Language,
+    request: Option<&'a RequestContext>,
+    visited_nodes: usize,
 
     data: Vec<SemanticToken>,
     last_line: u32,
@@ -226,10 +239,16 @@ pub struct TokenCollector<'a> {
 }
 
 impl<'a> TokenCollector<'a> {
-    pub fn new(file: &'a SourceFile, lang: &'a dyn Language) -> Self {
+    pub fn new(
+        file: &'a SourceFile,
+        lang: &'a dyn Language,
+        request: Option<&'a RequestContext>,
+    ) -> Self {
         Self {
             file,
             lang,
+            request,
+            visited_nodes: 0,
             data: Vec::new(),
             last_line: 0,
             last_col_utf16: 0,
@@ -295,17 +314,29 @@ impl<'a> TokenCollector<'a> {
         self.last_col_utf16 = col;
     }
 
+    fn check_cancelled(&mut self, phase: &'static str) -> RequestResult<()> {
+        self.visited_nodes += 1;
+        if self.visited_nodes % 64 == 0
+            && let Some(request) = self.request
+        {
+            request.check_cancelled(phase)?;
+        }
+        Ok(())
+    }
+
     /// DFS 遍历，交给语言侧 classify 来决定是否为 token
-    pub fn collect(&mut self, node: Node) {
+    pub fn collect(&mut self, node: Node) -> RequestResult<()> {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
+            self.check_cancelled("semantic_tokens.collect")?;
             if let Some(classified) = self.lang.classify_semantic_token(child, self.file) {
                 self.push_token(child, classified.ty, &classified.modifiers);
             }
             if child.child_count() > 0 {
-                self.collect(child);
+                self.collect(child)?;
             }
         }
+        Ok(())
     }
 
     pub fn finish(self) -> Vec<SemanticToken> {
@@ -318,13 +349,19 @@ impl<'a> TokenCollector<'a> {
     /// so callers must re-encode it if they want absolute positions — but
     /// since the spec says range results use the same encoding as full
     /// results, we return a self-contained delta sequence starting from 0.
-    pub fn collect_range(&mut self, node: Node, range_start_byte: usize, range_end_byte: usize) {
+    pub fn collect_range(
+        &mut self,
+        node: Node,
+        range_start_byte: usize,
+        range_end_byte: usize,
+    ) -> RequestResult<()> {
         // Prune subtrees that are entirely outside the range
         if node.end_byte() <= range_start_byte || node.start_byte() >= range_end_byte {
-            return;
+            return Ok(());
         }
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
+            self.check_cancelled("semantic_tokens.collect_range")?;
             // Skip children wholly outside the range
             if child.end_byte() <= range_start_byte || child.start_byte() >= range_end_byte {
                 continue;
@@ -333,9 +370,10 @@ impl<'a> TokenCollector<'a> {
                 self.push_token(child, classified.ty, &classified.modifiers);
             }
             if child.child_count() > 0 {
-                self.collect_range(child, range_start_byte, range_end_byte);
+                self.collect_range(child, range_start_byte, range_end_byte)?;
             }
         }
+        Ok(())
     }
 }
 
@@ -357,7 +395,8 @@ pub(crate) mod test_helpers {
     use tower_lsp::lsp_types::Url;
 
     use crate::index::ClassOrigin;
-    use crate::lsp::request_context::PreparedRequest;
+    use crate::lsp::request_cancellation::{CancellationToken, RequestFamily};
+    use crate::lsp::request_context::{PreparedRequest, RequestContext};
     use crate::semantic::SemanticContext;
     use crate::workspace::document::Document;
     use crate::workspace::{SourceFile, Workspace};
@@ -382,7 +421,7 @@ pub(crate) mod test_helpers {
                     view: None,
                     workspace: None,
                     file_uri: None,
-                    metrics: None,
+                    request: None,
                 },
             )
             .expect("java semantic context");
@@ -418,14 +457,26 @@ pub(crate) mod test_helpers {
             tree,
         )));
 
-        let request =
-            PreparedRequest::prepare(Arc::clone(&workspace), &registry, &uri, "test_completion")
-                .expect("prepared request");
+        let request = PreparedRequest::prepare(
+            Arc::clone(&workspace),
+            &registry,
+            &uri,
+            RequestContext::new(
+                "test_completion",
+                &uri,
+                RequestFamily::Completion,
+                1,
+                CancellationToken::new(),
+            ),
+        )
+        .expect("request result")
+        .expect("prepared request");
         request
             .semantic_context(
                 tower_lsp::lsp_types::Position::new(line, character),
                 trigger_char,
             )
+            .expect("request result")
             .expect("semantic context")
     }
 

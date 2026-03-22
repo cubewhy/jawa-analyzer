@@ -20,6 +20,8 @@ use crate::lsp::handlers::inlay_hints::handle_inlay_hints;
 use crate::lsp::handlers::semantic_tokens::{
     handle_semantic_tokens, handle_semantic_tokens_full_delta, handle_semantic_tokens_range,
 };
+use crate::lsp::request_cancellation::{RequestCancellationManager, RequestFamily, RequestGuard};
+use crate::lsp::request_context::RequestContext;
 use crate::workspace::{Workspace, document::Document};
 
 pub struct Backend {
@@ -29,6 +31,7 @@ pub struct Backend {
     pub registry: Arc<LanguageRegistry>,
     pub config: tokio::sync::RwLock<JavaAnalyzerConfig>,
     pub decompiler_cache: crate::decompiler::cache::DecompilerCache,
+    request_cancellation: Arc<RequestCancellationManager>,
     build_services: tokio::sync::RwLock<Vec<BuildIntegrationService>>,
 }
 
@@ -46,8 +49,26 @@ impl Backend {
             registry: Arc::new(LanguageRegistry::new()),
             config: tokio::sync::RwLock::new(JavaAnalyzerConfig::default()),
             decompiler_cache: DecompilerCache::new(cache_dir),
+            request_cancellation: Arc::new(RequestCancellationManager::new()),
             build_services: tokio::sync::RwLock::new(Vec::new()),
         }
+    }
+
+    fn begin_request(
+        &self,
+        family: RequestFamily,
+        request_kind: &'static str,
+        uri: &Url,
+    ) -> (RequestGuard, Arc<RequestContext>) {
+        let guard = self.request_cancellation.begin(family, uri);
+        let request = RequestContext::new(
+            request_kind,
+            uri,
+            guard.family(),
+            guard.generation(),
+            guard.token().clone(),
+        );
+        (guard, request)
     }
 
     async fn configure_workspace_root(&self, root: std::path::PathBuf) {
@@ -238,12 +259,20 @@ impl LanguageServer for Backend {
     }
 
     async fn inlay_hint(&self, params: InlayHintParams) -> LspResult<Option<Vec<InlayHint>>> {
-        Ok(handle_inlay_hints(
+        let (guard, request) = self.begin_request(
+            RequestFamily::InlayHints,
+            "inlay_hints",
+            &params.text_document.uri,
+        );
+        let response = handle_inlay_hints(
             Arc::clone(&self.workspace),
             Arc::clone(&self.registry),
             params,
+            request,
         )
-        .await)
+        .await;
+        guard.finish();
+        response
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
@@ -486,14 +515,21 @@ impl LanguageServer for Backend {
     }
 
     async fn completion(&self, params: CompletionParams) -> LspResult<Option<CompletionResponse>> {
+        let (guard, request) = self.begin_request(
+            RequestFamily::Completion,
+            "completion",
+            &params.text_document_position.text_document.uri,
+        );
         let response = handle_completion(
             Arc::clone(&self.workspace),
             Arc::clone(&self.engine),
             Arc::clone(&self.registry),
             params,
+            request,
         )
         .await;
-        Ok(response)
+        guard.finish();
+        response
     }
 
     // ── 预留：hover ───────────────────────────────────────────────────────────
@@ -507,66 +543,100 @@ impl LanguageServer for Backend {
         params: GotoDefinitionParams,
     ) -> LspResult<Option<GotoDefinitionResponse>> {
         info!("LSP goto_definition request received");
+        let (guard, request) = self.begin_request(
+            RequestFamily::GotoDefinition,
+            "goto_definition",
+            &params.text_document_position_params.text_document.uri,
+        );
 
-        let result = handle_goto_definition(self, params).await;
+        let result = handle_goto_definition(self, params, request).await;
+        guard.finish();
 
-        if result.is_none() {
+        if result.as_ref().ok().is_some_and(|value| value.is_none()) {
             tracing::warn!("Goto definition could not resolve any target");
         }
 
-        Ok(result)
+        result
     }
 
     async fn semantic_tokens_full(
         &self,
         params: SemanticTokensParams,
     ) -> LspResult<Option<SemanticTokensResult>> {
+        let (guard, request) = self.begin_request(
+            RequestFamily::SemanticTokensFull,
+            "semantic_tokens_full",
+            &params.text_document.uri,
+        );
         let response = handle_semantic_tokens(
             Arc::clone(&self.registry),
             Arc::clone(&self.workspace),
             params,
+            request,
         )
         .await;
-        Ok(response)
+        guard.finish();
+        response
     }
 
     async fn semantic_tokens_full_delta(
         &self,
         params: SemanticTokensDeltaParams,
     ) -> LspResult<Option<SemanticTokensFullDeltaResult>> {
+        let (guard, request) = self.begin_request(
+            RequestFamily::SemanticTokensFull,
+            "semantic_tokens_full_delta",
+            &params.text_document.uri,
+        );
         let response = handle_semantic_tokens_full_delta(
             Arc::clone(&self.registry),
             Arc::clone(&self.workspace),
             params,
+            request,
         )
         .await;
-        Ok(response)
+        guard.finish();
+        response
     }
 
     async fn semantic_tokens_range(
         &self,
         params: SemanticTokensRangeParams,
     ) -> LspResult<Option<SemanticTokensRangeResult>> {
+        let (guard, request) = self.begin_request(
+            RequestFamily::SemanticTokensRange,
+            "semantic_tokens_range",
+            &params.text_document.uri,
+        );
         let response = handle_semantic_tokens_range(
             Arc::clone(&self.registry),
             Arc::clone(&self.workspace),
             params,
+            request,
         )
         .await;
-        Ok(response)
+        guard.finish();
+        response
     }
 
     async fn document_symbol(
         &self,
         params: DocumentSymbolParams,
     ) -> LspResult<Option<DocumentSymbolResponse>> {
+        let (guard, request) = self.begin_request(
+            RequestFamily::DocumentSymbol,
+            "document_symbol",
+            &params.text_document.uri,
+        );
         let response = super::handlers::symbols::handle_document_symbol(
             self.registry.clone(),
             self.workspace.clone(),
             params,
+            request,
         )
         .await;
-        Ok(response)
+        guard.finish();
+        response
     }
 }
 

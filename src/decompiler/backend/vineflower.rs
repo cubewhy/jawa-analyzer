@@ -1,3 +1,4 @@
+use crate::decompiler::wait_with_output_or_cancel;
 use anyhow::{Context, Result};
 use rust_asm::class_reader::ClassReader;
 use std::path::Path;
@@ -5,6 +6,7 @@ use std::process::Stdio;
 use tokio::process::Command;
 
 use crate::decompiler::Decompiler;
+use crate::lsp::request_cancellation::CancellationToken;
 
 pub struct VineflowerDecompiler;
 
@@ -16,6 +18,7 @@ impl Decompiler for VineflowerDecompiler {
         decompiler_jar: &Path,
         class_data: &[u8],
         output_path: &Path,
+        cancel: &CancellationToken,
     ) -> Result<()> {
         // parse class metadata
         let cr = ClassReader::new(class_data);
@@ -29,7 +32,7 @@ impl Decompiler for VineflowerDecompiler {
         let out_dir = temp_dir.path().join("out");
         std::fs::create_dir_all(&out_dir)?;
 
-        let output = Command::new(java_bin)
+        let child = Command::new(java_bin)
             .arg("-jar")
             .arg(decompiler_jar)
             .arg(&input_class)
@@ -37,9 +40,8 @@ impl Decompiler for VineflowerDecompiler {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
-            .context("Failed to spawn Vineflower process")?
-            .wait_with_output()
-            .await?;
+            .context("Failed to spawn Vineflower process")?;
+        let output = wait_with_output_or_cancel(child, cancel).await?;
 
         if !output.status.success() {
             let err = String::from_utf8_lossy(&output.stderr);
