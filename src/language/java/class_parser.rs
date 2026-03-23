@@ -1,9 +1,6 @@
 use rust_asm::constants::{ACC_ANNOTATION, ACC_ENUM, ACC_INTERFACE, ACC_PUBLIC, ACC_SUPER};
-use std::{
-    sync::{Arc, OnceLock},
-    time::Instant,
-};
-use tree_sitter::{Node, Query, Tree};
+use std::{sync::Arc, time::Instant};
+use tree_sitter::{Node, Tree};
 use tree_sitter_utils::{
     Handler, Input, NodePredicate,
     constructors::Always,
@@ -17,37 +14,19 @@ use crate::language::java::type_ctx::{SourceTypeCtx, build_java_descriptor};
 use crate::language::java::utils::extract_generic_signature;
 use crate::{
     index::{IndexView, intern_str},
-    language::{
-        java::{
-            JavaContextExtractor, make_java_parser,
-            members::{
-                collect_members_from_node, extract_class_members_from_body, extract_javadoc,
-                parse_annotations_in_node,
-            },
-            scope,
-            scope::extract_package,
-            synthetic::{self, SyntheticDefinitionKind},
-            utils::{find_top_error_node, parse_java_modifiers},
+    language::java::{
+        JavaContextExtractor, make_java_parser,
+        members::{
+            collect_members_from_node, extract_class_members_from_body, extract_javadoc,
+            parse_annotations_in_node,
         },
-        ts_utils::{capture_text, run_query},
+        scope,
+        scope::extract_package,
+        synthetic::{self, SyntheticDefinitionKind},
+        utils::{find_top_error_node, parse_java_modifiers},
     },
     semantic::{context::CurrentClassMember, types::generics::parse_class_type_parameters},
 };
-
-fn interface_type_query() -> &'static (Query, u32) {
-    static QUERY: OnceLock<(Query, u32)> = OnceLock::new();
-    QUERY.get_or_init(|| {
-        let query = Query::new(
-            &tree_sitter_java::LANGUAGE.into(),
-            r#"(type_identifier) @t"#,
-        )
-        .expect("interface type query must compile");
-        let idx = query
-            .capture_index_for_name("t")
-            .expect("interface type query capture must exist");
-        (query, idx)
-    })
-}
 
 #[cfg_attr(
     not(test),
@@ -405,6 +384,359 @@ fn recover_error_type_decl(
     None
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TypeDeclarationKind {
+    Class,
+    Interface,
+    Enum,
+    Record,
+    Annotation,
+}
+
+impl TypeDeclarationKind {
+    pub fn default_super_name(&self) -> Option<&str> {
+        match self {
+            TypeDeclarationKind::Class | TypeDeclarationKind::Annotation => {
+                Some("java/lang/Object")
+            }
+            TypeDeclarationKind::Enum => Some("java/lang/Enum"),
+            TypeDeclarationKind::Record => Some("java/lang/Record"),
+            TypeDeclarationKind::Interface => None,
+        }
+    }
+
+    pub fn default_interfaces(&self) -> &[&str] {
+        if matches!(self, TypeDeclarationKind::Annotation) {
+            return &["java/lang/annotation/Annotation"];
+        }
+
+        &[]
+    }
+}
+
+fn declaration_kind(node: Node, recovered_kind: Option<&str>) -> Option<TypeDeclarationKind> {
+    match recovered_kind.unwrap_or(node.kind()) {
+        "class" | "class_declaration" => Some(TypeDeclarationKind::Class),
+        "interface" | "interface_declaration" => Some(TypeDeclarationKind::Interface),
+        "enum" | "enum_declaration" => Some(TypeDeclarationKind::Enum),
+        "record" | "record_declaration" => Some(TypeDeclarationKind::Record),
+        "annotation_type_declaration" => Some(TypeDeclarationKind::Annotation),
+        _ => None,
+    }
+}
+
+fn extract_super_name_and_interfaces(
+    ctx: &JavaContextExtractor,
+    type_ctx: &SourceTypeCtx,
+    node: Node,
+    recovered_kind: Option<&str>,
+) -> (Option<Arc<str>>, Vec<Arc<str>>) {
+    let decl_kind = declaration_kind(node, recovered_kind);
+    let mut super_name = None;
+    let mut interfaces = Vec::new();
+
+    match decl_kind {
+        Some(TypeDeclarationKind::Class) => {
+            super_name = node
+                .child_by_field_name("superclass")
+                .and_then(|clause| extract_single_type_from_clause(ctx, clause));
+            interfaces = node
+                .child_by_field_name("interfaces")
+                .map(|clause| extract_type_list_from_clause(ctx, clause))
+                .unwrap_or_default();
+        }
+        Some(TypeDeclarationKind::Interface) => {
+            interfaces = first_child_of_kind(node, "extends_interfaces")
+                .map(|clause| extract_type_list_from_clause(ctx, clause))
+                .unwrap_or_default();
+        }
+        Some(TypeDeclarationKind::Enum) | Some(TypeDeclarationKind::Record) => {
+            interfaces = node
+                .child_by_field_name("interfaces")
+                .map(|clause| extract_type_list_from_clause(ctx, clause))
+                .unwrap_or_default();
+        }
+        Some(TypeDeclarationKind::Annotation) | None => {}
+    }
+
+    if super_name.is_none() || interfaces.is_empty() {
+        let header = declaration_header_text(ctx, node);
+        if !header.is_empty() {
+            let (fallback_super, fallback_interfaces) =
+                parse_inheritance_from_header(header, decl_kind);
+            if super_name.is_none() {
+                super_name = fallback_super;
+            }
+            if interfaces.is_empty() {
+                interfaces = fallback_interfaces;
+            }
+        }
+    }
+
+    let super_name = super_name
+        .map(|super_name_simple| {
+            type_ctx
+                .resolve_simple_strict(&super_name_simple)
+                .map(|resolved| intern_str(&resolved))
+                .unwrap_or(super_name_simple)
+        })
+        .or_else(|| match decl_kind {
+            Some(kind) => kind.default_super_name().map(intern_str),
+            None => None,
+        });
+
+    if let Some(kind) = decl_kind {
+        interfaces.extend(kind.default_interfaces().iter().map(|s| intern_str(s)));
+    }
+
+    let interfaces = interfaces
+        .into_iter()
+        .map(|interface_simple| {
+            type_ctx
+                .resolve_simple_strict(&interface_simple)
+                .map(|resolved| intern_str(&resolved))
+                .unwrap_or(interface_simple)
+        })
+        .collect();
+
+    (super_name, interfaces)
+}
+
+fn extract_single_type_from_clause(
+    ctx: &JavaContextExtractor,
+    clause_node: Node,
+) -> Option<Arc<str>> {
+    if clause_node.kind() == "type_list" {
+        return collect_type_list_from_node(ctx, clause_node)
+            .into_iter()
+            .next();
+    }
+
+    let mut cursor = clause_node.walk();
+    for child in clause_node.named_children(&mut cursor) {
+        if child.kind() == "type_list" {
+            return collect_type_list_from_node(ctx, child).into_iter().next();
+        }
+        if let Some(name) = normalize_inheritance_type_text(ctx.node_text(child)) {
+            return Some(name);
+        }
+    }
+    None
+}
+
+fn extract_type_list_from_clause(ctx: &JavaContextExtractor, clause_node: Node) -> Vec<Arc<str>> {
+    if clause_node.kind() == "type_list" {
+        return collect_type_list_from_node(ctx, clause_node);
+    }
+
+    if let Some(type_list) = first_child_of_kind(clause_node, "type_list") {
+        let items = collect_type_list_from_node(ctx, type_list);
+        if !items.is_empty() {
+            return items;
+        }
+    }
+
+    extract_single_type_from_clause(ctx, clause_node)
+        .into_iter()
+        .collect()
+}
+
+fn collect_type_list_from_node(ctx: &JavaContextExtractor, list_node: Node) -> Vec<Arc<str>> {
+    let mut items = Vec::new();
+    let mut cursor = list_node.walk();
+    for child in list_node.named_children(&mut cursor) {
+        if let Some(name) = normalize_inheritance_type_text(ctx.node_text(child)) {
+            items.push(name);
+        }
+    }
+    items
+}
+
+fn normalize_inheritance_type_text(text: &str) -> Option<Arc<str>> {
+    let text = text.trim();
+    if text.is_empty() {
+        None
+    } else {
+        Some(intern_str(text))
+    }
+}
+
+fn declaration_header_text<'a>(ctx: &'a JavaContextExtractor, node: Node) -> &'a str {
+    let start = node.start_byte();
+    let mut end = node
+        .child_by_field_name("body")
+        .map(|body| body.start_byte())
+        .unwrap_or_else(|| {
+            ctx.source[start..node.end_byte()]
+                .find('{')
+                .map(|pos| start + pos)
+                .unwrap_or(node.end_byte())
+        });
+    end = end.min(node.end_byte());
+    ctx.source.get(start..end).unwrap_or("")
+}
+
+fn parse_inheritance_from_header(
+    header: &str,
+    decl_kind: Option<TypeDeclarationKind>,
+) -> (Option<Arc<str>>, Vec<Arc<str>>) {
+    match decl_kind {
+        Some(TypeDeclarationKind::Class) => (
+            extract_header_clause_single_type(header, "extends", &["implements", "permits"]),
+            extract_header_clause_type_list(header, "implements", &["permits"]),
+        ),
+        Some(TypeDeclarationKind::Interface) => (
+            None,
+            extract_header_clause_type_list(header, "extends", &["permits"]),
+        ),
+        Some(TypeDeclarationKind::Enum) | Some(TypeDeclarationKind::Record) => (
+            None,
+            extract_header_clause_type_list(header, "implements", &["permits"]),
+        ),
+        Some(TypeDeclarationKind::Annotation) | None => (None, Vec::new()),
+    }
+}
+
+fn extract_header_clause_single_type(
+    header: &str,
+    keyword: &str,
+    stop_keywords: &[&str],
+) -> Option<Arc<str>> {
+    extract_header_clause_payload(header, keyword, stop_keywords)
+        .and_then(|payload| split_top_level_type_list(payload).into_iter().next())
+}
+
+fn extract_header_clause_type_list(
+    header: &str,
+    keyword: &str,
+    stop_keywords: &[&str],
+) -> Vec<Arc<str>> {
+    extract_header_clause_payload(header, keyword, stop_keywords)
+        .map(split_top_level_type_list)
+        .unwrap_or_default()
+}
+
+fn extract_header_clause_payload<'a>(
+    header: &'a str,
+    keyword: &str,
+    stop_keywords: &[&str],
+) -> Option<&'a str> {
+    let start = find_top_level_keyword(header, keyword)?;
+    let payload_start = skip_ascii_whitespace(header, start + keyword.len());
+    let payload_end = find_top_level_clause_end(header, payload_start, stop_keywords);
+    let payload = header[payload_start..payload_end].trim();
+    if payload.is_empty() {
+        None
+    } else {
+        Some(payload)
+    }
+}
+
+fn split_top_level_type_list(payload: &str) -> Vec<Arc<str>> {
+    let mut items = Vec::new();
+    let mut start = 0usize;
+    let mut angle_depth = 0usize;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+
+    for (idx, ch) in payload.char_indices() {
+        if ch == ',' && angle_depth == 0 && paren_depth == 0 && bracket_depth == 0 {
+            if let Some(item) = normalize_inheritance_type_text(&payload[start..idx]) {
+                items.push(item);
+            }
+            start = idx + ch.len_utf8();
+            continue;
+        }
+        update_type_nesting(ch, &mut angle_depth, &mut paren_depth, &mut bracket_depth);
+    }
+
+    if let Some(item) = normalize_inheritance_type_text(&payload[start..]) {
+        items.push(item);
+    }
+
+    items
+}
+
+fn find_top_level_keyword(text: &str, keyword: &str) -> Option<usize> {
+    let mut angle_depth = 0usize;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+
+    for (idx, ch) in text.char_indices() {
+        if angle_depth == 0
+            && paren_depth == 0
+            && bracket_depth == 0
+            && keyword_matches_at(text, idx, keyword)
+        {
+            return Some(idx);
+        }
+        update_type_nesting(ch, &mut angle_depth, &mut paren_depth, &mut bracket_depth);
+    }
+
+    None
+}
+
+fn find_top_level_clause_end(text: &str, start: usize, stop_keywords: &[&str]) -> usize {
+    let mut angle_depth = 0usize;
+    let mut paren_depth = 0usize;
+    let mut bracket_depth = 0usize;
+
+    for (offset, ch) in text[start..].char_indices() {
+        let idx = start + offset;
+        if angle_depth == 0 && paren_depth == 0 && bracket_depth == 0 {
+            if ch == '{' || ch == ';' {
+                return idx;
+            }
+            if stop_keywords
+                .iter()
+                .any(|keyword| keyword_matches_at(text, idx, keyword))
+            {
+                return idx;
+            }
+        }
+        update_type_nesting(ch, &mut angle_depth, &mut paren_depth, &mut bracket_depth);
+    }
+
+    text.len()
+}
+
+fn update_type_nesting(
+    ch: char,
+    angle_depth: &mut usize,
+    paren_depth: &mut usize,
+    bracket_depth: &mut usize,
+) {
+    match ch {
+        '<' => *angle_depth += 1,
+        '>' => *angle_depth = angle_depth.saturating_sub(1),
+        '(' => *paren_depth += 1,
+        ')' => *paren_depth = paren_depth.saturating_sub(1),
+        '[' => *bracket_depth += 1,
+        ']' => *bracket_depth = bracket_depth.saturating_sub(1),
+        _ => {}
+    }
+}
+
+fn keyword_matches_at(text: &str, idx: usize, keyword: &str) -> bool {
+    text[idx..].starts_with(keyword)
+        && is_keyword_boundary(text[..idx].chars().next_back())
+        && is_keyword_boundary(text[idx + keyword.len()..].chars().next())
+}
+
+fn is_keyword_boundary(ch: Option<char>) -> bool {
+    !matches!(ch, Some(c) if c.is_alphanumeric() || c == '_' || c == '$')
+}
+
+fn skip_ascii_whitespace(text: &str, mut idx: usize) -> usize {
+    while let Some(ch) = text[idx..].chars().next() {
+        if !ch.is_whitespace() {
+            break;
+        }
+        idx += ch.len_utf8();
+    }
+    idx
+}
+
 fn parse_java_error_class(
     ctx: &JavaContextExtractor,
     error_node: Node,
@@ -472,12 +804,15 @@ fn parse_java_error_class(
         }
     }
 
+    let (super_name, interfaces) =
+        extract_super_name_and_interfaces(ctx, type_ctx, error_node, Some(kind));
+
     Some(ClassMetadata {
         package: package.clone(),
         name,
         internal_name,
-        super_name: None,
-        interfaces: vec![],
+        super_name,
+        interfaces,
         annotations,
         methods,
         fields,
@@ -604,27 +939,7 @@ fn parse_java_class(
         (None, None) => Arc::clone(&name),
     };
 
-    // super class
-    let super_name = node
-        .child_by_field_name("superclass")
-        .and_then(|superclass_node| {
-            superclass_node
-                .named_children(&mut superclass_node.walk())
-                .find(|c| c.kind() == "type_identifier")
-                .map(|c| intern_str(ctx.node_text(c)))
-        });
-
-    // interfaces
-    let interfaces: Vec<Arc<str>> = node
-        .child_by_field_name("interfaces")
-        .map(|iface_node| {
-            let (q, idx) = interface_type_query();
-            run_query(q, iface_node, ctx.bytes(), None)
-                .into_iter()
-                .filter_map(|caps| capture_text(&caps, *idx, ctx.bytes()).map(intern_str))
-                .collect()
-        })
-        .unwrap_or_default();
+    let (super_name, interfaces) = extract_super_name_and_interfaces(ctx, type_ctx, node, None);
 
     // methods & fields
     let mut methods = Vec::new();
@@ -1388,6 +1703,36 @@ public class Main {
             child.super_name
         );
         assert!(child.interfaces.contains(&"Runnable".into()));
+    }
+
+    #[test]
+    fn test_interface_extends_populates_interfaces() {
+        let src = "public interface Child extends Runnable, Serializable {}";
+        let classes = parse_test_classes(src);
+        let child = classes.iter().find(|c| c.name.as_ref() == "Child").unwrap();
+        assert_eq!(child.super_name, None);
+        assert!(child.interfaces.contains(&"Runnable".into()));
+        assert!(child.interfaces.contains(&"Serializable".into()));
+    }
+
+    #[test]
+    fn test_error_recovery_extracts_super_name_and_interfaces() {
+        let src = "public class Child extends Parent implements Runnable, Serializable";
+        let classes = parse_test_classes(src);
+        let child = classes.iter().find(|c| c.name.as_ref() == "Child").unwrap();
+        assert_eq!(child.super_name.as_deref(), Some("Parent"));
+        assert!(child.interfaces.contains(&"Runnable".into()));
+        assert!(child.interfaces.contains(&"Serializable".into()));
+    }
+
+    #[test]
+    fn test_error_recovery_interface_extends_populates_interfaces() {
+        let src = "public interface Child extends Runnable, Serializable";
+        let classes = parse_test_classes(src);
+        let child = classes.iter().find(|c| c.name.as_ref() == "Child").unwrap();
+        assert_eq!(child.super_name, None);
+        assert!(child.interfaces.contains(&"Runnable".into()));
+        assert!(child.interfaces.contains(&"Serializable".into()));
     }
 
     #[test]
