@@ -5,7 +5,7 @@ use crate::semantic::context::{CursorLocation, SemanticContext};
 use crate::semantic::types::TypeResolver;
 use crate::semantic::types::type_name::TypeName;
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 #[derive(Debug, Clone)]
@@ -38,6 +38,12 @@ struct TypeNameCacheKey {
     package: Option<Arc<str>>,
 }
 
+#[derive(Clone)]
+struct MethodCandidate {
+    lookup_owner: Arc<str>,
+    summary: Arc<MethodSummary>,
+}
+
 impl<'a> SymbolResolver<'a> {
     pub fn new(view: &'a IndexView) -> Self {
         Self {
@@ -52,18 +58,24 @@ impl<'a> SymbolResolver<'a> {
                 let receiver_expr = ctx.location.member_access_expr()?;
                 let member_prefix = ctx.location.member_access_prefix()?;
                 let arguments = ctx.location.member_access_arguments();
-                let owner = ctx
+                let receiver = ctx
                     .location
-                    .member_access_receiver_owner_internal()
-                    .map(Arc::from)
+                    .member_access_receiver_semantic_type()
+                    .cloned()
+                    .or_else(|| match &ctx.location {
+                        CursorLocation::MemberAccess { receiver_type, .. } => {
+                            receiver_type.as_deref().map(TypeName::new)
+                        }
+                        _ => None,
+                    })
                     .or_else(|| self.infer_receiver_type(ctx, receiver_expr));
                 tracing::debug!(
                     receiver_expr = %receiver_expr,
                     member = %member_prefix,
-                    resolved_owner = ?owner,
+                    resolved_receiver = ?receiver.as_ref().map(TypeName::to_internal_with_generics),
                     "resolve: member access"
                 );
-                self.resolve_member(ctx, &owner?, member_prefix, arguments)
+                self.resolve_member(ctx, &receiver?, member_prefix, arguments)
             }
             CursorLocation::StaticAccess {
                 class_internal_name,
@@ -75,7 +87,12 @@ impl<'a> SymbolResolver<'a> {
                 {
                     return Some(ResolvedSymbol::Class(Arc::clone(&inner.internal_name)));
                 }
-                self.resolve_member(ctx, class_internal_name, member_prefix, None)
+                self.resolve_member(
+                    ctx,
+                    &TypeName::new(class_internal_name.as_ref()),
+                    member_prefix,
+                    None,
+                )
             }
             CursorLocation::Expression { prefix } => {
                 if prefix.is_empty() {
@@ -112,7 +129,7 @@ impl<'a> SymbolResolver<'a> {
     fn resolve_member(
         &self,
         ctx: &SemanticContext,
-        owner: &str,
+        receiver: &TypeName,
         name: &str,
         arguments: Option<&str>,
     ) -> Option<ResolvedSymbol> {
@@ -120,8 +137,7 @@ impl<'a> SymbolResolver<'a> {
             return None;
         }
 
-        let methods = self.view.lookup_methods_in_hierarchy(owner, name);
-        let named_candidates: Vec<&Arc<MethodSummary>> = methods.iter().collect();
+        let named_candidates = self.lookup_method_candidates(receiver, name);
 
         if let Some(args) = arguments {
             let arg_text = args.trim().trim_start_matches('(').trim_end_matches(')');
@@ -146,19 +162,30 @@ impl<'a> SymbolResolver<'a> {
                 .collect();
 
             if !named_candidates.is_empty() {
-                let summaries: Vec<&MethodSummary> =
-                    named_candidates.iter().map(|m| m.as_ref()).collect();
+                let summaries: Vec<&MethodSummary> = named_candidates
+                    .iter()
+                    .map(|candidate| candidate.summary.as_ref())
+                    .collect();
                 let best_summary = resolver
                     .select_overload_match(&summaries, arg_count, &arg_types)?
                     .method;
 
                 if let Some(found_arc) = named_candidates
                     .iter()
-                    .find(|m| m.desc() == best_summary.desc())
+                    .find(|candidate| candidate.summary.desc() == best_summary.desc())
                 {
+                    let owner = self
+                        .view
+                        .find_declaring_method_owner(
+                            found_arc.lookup_owner.as_ref(),
+                            found_arc.summary.name.as_ref(),
+                            found_arc.summary.desc().as_ref(),
+                        )
+                        .map(|class_meta| class_meta.internal_name.clone())
+                        .unwrap_or_else(|| Arc::clone(&found_arc.lookup_owner));
                     return Some(ResolvedSymbol::Method {
-                        owner: Arc::from(owner),
-                        summary: (*found_arc).clone(),
+                        owner,
+                        summary: Arc::clone(&found_arc.summary),
                     });
                 }
             }
@@ -167,21 +194,68 @@ impl<'a> SymbolResolver<'a> {
             return None;
         }
 
-        if let Some(f) = self.view.lookup_field_in_hierarchy(owner, name) {
+        if let Some((owner, field)) = self.lookup_field_candidate(receiver, name) {
             return Some(ResolvedSymbol::Field {
-                owner: Arc::from(owner),
-                summary: f,
+                owner,
+                summary: field,
             });
         }
 
         // 最后才尝试返回第一个匹配的同名方法
         if let Some(m) = named_candidates.first() {
+            let owner = self
+                .view
+                .find_declaring_method_owner(
+                    m.lookup_owner.as_ref(),
+                    m.summary.name.as_ref(),
+                    m.summary.desc().as_ref(),
+                )
+                .map(|class_meta| class_meta.internal_name.clone())
+                .unwrap_or_else(|| Arc::clone(&m.lookup_owner));
             return Some(ResolvedSymbol::Method {
-                owner: Arc::from(owner),
-                summary: (*m).clone(),
+                owner,
+                summary: Arc::clone(&m.summary),
             });
         }
 
+        None
+    }
+
+    fn lookup_method_candidates(&self, receiver: &TypeName, name: &str) -> Vec<MethodCandidate> {
+        let mut candidates = Vec::new();
+        let mut seen: HashSet<(Arc<str>, Arc<str>)> = HashSet::new();
+        for bound in receiver.bounds_for_lookup() {
+            let lookup_owner: Arc<str> = Arc::from(bound.erased_internal());
+            for summary in self
+                .view
+                .lookup_methods_in_hierarchy(lookup_owner.as_ref(), name)
+            {
+                let key = (Arc::clone(&lookup_owner), summary.desc());
+                if seen.insert(key) {
+                    candidates.push(MethodCandidate {
+                        lookup_owner: Arc::clone(&lookup_owner),
+                        summary,
+                    });
+                }
+            }
+        }
+        candidates
+    }
+
+    fn lookup_field_candidate(
+        &self,
+        receiver: &TypeName,
+        name: &str,
+    ) -> Option<(Arc<str>, Arc<FieldSummary>)> {
+        for bound in receiver.bounds_for_lookup() {
+            let lookup_owner: Arc<str> = Arc::from(bound.erased_internal());
+            if let Some(field) = self
+                .view
+                .lookup_field_in_hierarchy(lookup_owner.as_ref(), name)
+            {
+                return Some((lookup_owner, field));
+            }
+        }
         None
     }
 
@@ -207,7 +281,9 @@ impl<'a> SymbolResolver<'a> {
                 "resolve: bare id in enclosing class"
             );
 
-            if let Some(res) = self.resolve_member(ctx, enclosing, id, None) {
+            if let Some(res) =
+                self.resolve_member(ctx, &TypeName::new(enclosing.as_ref()), id, None)
+            {
                 return Some(res);
             }
         } else {
@@ -219,7 +295,7 @@ impl<'a> SymbolResolver<'a> {
         self.resolve_type_name(ctx, id).map(ResolvedSymbol::Class)
     }
 
-    fn infer_receiver_type(&self, ctx: &SemanticContext, expr: &str) -> Option<Arc<str>> {
+    fn infer_receiver_type(&self, ctx: &SemanticContext, expr: &str) -> Option<TypeName> {
         // handle constructor calls
         if let Some(rest) = expr.strip_prefix("new ") {
             let boundary = rest.find(['(', '<', '[', '{']).unwrap_or(rest.len());
@@ -227,66 +303,85 @@ impl<'a> SymbolResolver<'a> {
             if !ty.is_empty()
                 && let Some(internal) = self.resolve_type_name(ctx, ty)
             {
-                return Some(internal);
+                return Some(TypeName::new(internal.as_ref()));
             }
         }
 
         let as_internal = expr.replace('.', "/");
         if self.view.get_class(&as_internal).is_some() {
-            return Some(Arc::from(as_internal));
+            return Some(TypeName::new(as_internal));
         }
 
         if expr.is_empty() || expr == "this" {
-            return ctx.enclosing_internal_name.clone();
+            return ctx.enclosing_internal_name.as_deref().map(TypeName::new);
         }
         if is_super_receiver_expr(expr) {
-            return resolve_direct_super_owner(ctx, self.view);
+            return resolve_direct_super_owner(ctx, self.view)
+                .as_deref()
+                .map(TypeName::new);
         }
 
         // local variable
         if let Some(lv) = ctx.local_variables.iter().find(|v| v.name.as_ref() == expr) {
-            let t = Arc::from(lv.type_internal.erased_internal());
-            tracing::debug!(expr = %expr, type_ = %t, "resolve: receiver type from local var");
-            return Some(t);
+            tracing::debug!(
+                expr = %expr,
+                type_ = %lv.type_internal.to_internal_with_generics(),
+                "resolve: receiver type from local var"
+            );
+            return Some(lv.type_internal.clone());
         }
         if !expr.contains('.') {
             // Simple identifier: used as a type name (for accessing static fields such as System.xxx)
-            return self.resolve_type_name(ctx, expr);
+            return self
+                .resolve_type_name(ctx, expr)
+                .as_deref()
+                .map(TypeName::new);
         }
         // Chained field access: System.out -> java/lang/System -> field out -> java/io/PrintStream
         self.resolve_chained(ctx, expr)
     }
 
     /// Iterate through each field in the dotted expression and return the internal name of the final type.
-    fn resolve_chained(&self, ctx: &SemanticContext, expr: &str) -> Option<Arc<str>> {
+    fn resolve_chained(&self, ctx: &SemanticContext, expr: &str) -> Option<TypeName> {
         let mut parts = expr.split('.');
         let first = parts.next()?;
 
-        let mut current: Arc<str> = if first == "this" {
-            ctx.enclosing_internal_name.clone()?
+        let mut current: TypeName = if first == "this" {
+            TypeName::new(ctx.enclosing_internal_name.as_deref()?)
         } else if is_super_receiver_expr(first) {
-            resolve_direct_super_owner(ctx, self.view)?
+            TypeName::new(resolve_direct_super_owner(ctx, self.view)?.as_ref())
         } else if let Some(lv) = ctx
             .local_variables
             .iter()
             .find(|v| v.name.as_ref() == first)
         {
-            Arc::from(lv.type_internal.erased_internal())
+            lv.type_internal.clone()
         } else {
-            self.resolve_type_name(ctx, first)?
+            TypeName::new(self.resolve_type_name(ctx, first)?.as_ref())
         };
 
         for part in parts {
-            if let Some(inner) = self.view.resolve_direct_inner_class(&current, part) {
-                current = Arc::clone(&inner.internal_name);
+            if let Some(inner) = self
+                .view
+                .resolve_direct_inner_class(current.erased_internal(), part)
+            {
+                current = TypeName::new(inner.internal_name.as_ref());
                 continue;
             }
-            tracing::debug!(owner = %current, field = %part, "resolve: chained field lookup");
-            let field = self.view.lookup_field_in_hierarchy(&current, part)?;
-            current = descriptor_to_internal_arc(&field.descriptor)?;
+            tracing::debug!(
+                owner = %current.to_internal_with_generics(),
+                field = %part,
+                "resolve: chained field lookup"
+            );
+            let (_, field) = self.lookup_field_candidate(&current, part)?;
+            current = TypeName::new(descriptor_to_internal_arc(&field.descriptor)?.as_ref());
         }
 
-        tracing::debug!(expr = %expr, result = %current, "resolve: chained resolved");
+        tracing::debug!(
+            expr = %expr,
+            result = %current.to_internal_with_generics(),
+            "resolve: chained resolved"
+        );
         Some(current)
     }
 
@@ -740,6 +835,188 @@ mod tests {
                 assert_eq!(summary.name.as_ref(), "size");
             }
             _ => panic!("Expected method resolution"),
+        }
+    }
+
+    #[test]
+    fn test_member_access_resolve_unions_intersection_semantic_receiver_bounds() {
+        let idx = WorkspaceIndex::new();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        idx.add_jar_classes(
+            scope,
+            vec![
+                ClassMetadata {
+                    package: Some(Arc::from("org/example")),
+                    name: Arc::from("Flyable"),
+                    internal_name: Arc::from("org/example/Flyable"),
+                    super_name: None,
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![MethodSummary {
+                        name: Arc::from("fly"),
+                        params: MethodParams::empty(),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: None,
+                        return_type: None,
+                    }],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: None,
+                    origin: ClassOrigin::Unknown,
+                },
+                ClassMetadata {
+                    package: Some(Arc::from("org/example")),
+                    name: Arc::from("Swimmable"),
+                    internal_name: Arc::from("org/example/Swimmable"),
+                    super_name: None,
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![MethodSummary {
+                        name: Arc::from("swim"),
+                        params: MethodParams::empty(),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: None,
+                        return_type: None,
+                    }],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: None,
+                    origin: ClassOrigin::Unknown,
+                },
+            ],
+        );
+
+        let ctx = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: Some(TypeName::intersection(vec![
+                    TypeName::new("org/example/Flyable"),
+                    TypeName::new("org/example/Swimmable"),
+                ])),
+                receiver_type: Some(Arc::from("org/example/Flyable")),
+                receiver_expr: "animal".to_string(),
+                member_prefix: "swim".to_string(),
+                arguments: Some("()".to_string()),
+            },
+            "",
+            vec![],
+            None,
+            None,
+            None,
+            vec![],
+        );
+
+        let view = idx.view(scope);
+        let resolver = SymbolResolver::new(&view);
+        let resolved = resolver
+            .resolve(&ctx)
+            .expect("should resolve intersection method");
+        match resolved {
+            ResolvedSymbol::Method { owner, summary } => {
+                assert_eq!(owner.as_ref(), "org/example/Swimmable");
+                assert_eq!(summary.name.as_ref(), "swim");
+            }
+            other => panic!("expected method resolution, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_member_access_infers_intersection_receiver_from_local_type() {
+        let idx = WorkspaceIndex::new();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        idx.add_jar_classes(
+            scope,
+            vec![
+                ClassMetadata {
+                    package: Some(Arc::from("org/example")),
+                    name: Arc::from("Flyable"),
+                    internal_name: Arc::from("org/example/Flyable"),
+                    super_name: None,
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![MethodSummary {
+                        name: Arc::from("fly"),
+                        params: MethodParams::empty(),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: None,
+                        return_type: None,
+                    }],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: None,
+                    origin: ClassOrigin::Unknown,
+                },
+                ClassMetadata {
+                    package: Some(Arc::from("org/example")),
+                    name: Arc::from("Swimmable"),
+                    internal_name: Arc::from("org/example/Swimmable"),
+                    super_name: None,
+                    interfaces: vec![],
+                    annotations: vec![],
+                    methods: vec![MethodSummary {
+                        name: Arc::from("swim"),
+                        params: MethodParams::empty(),
+                        annotations: vec![],
+                        access_flags: ACC_PUBLIC,
+                        is_synthetic: false,
+                        generic_signature: None,
+                        return_type: None,
+                    }],
+                    fields: vec![],
+                    access_flags: ACC_PUBLIC,
+                    inner_class_of: None,
+                    generic_signature: None,
+                    origin: ClassOrigin::Unknown,
+                },
+            ],
+        );
+
+        let ctx = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_semantic_type: None,
+                receiver_type: None,
+                receiver_expr: "animal".to_string(),
+                member_prefix: "swim".to_string(),
+                arguments: Some("()".to_string()),
+            },
+            "",
+            vec![crate::semantic::LocalVar {
+                name: Arc::from("animal"),
+                type_internal: TypeName::intersection(vec![
+                    TypeName::new("org/example/Flyable"),
+                    TypeName::new("org/example/Swimmable"),
+                ]),
+                init_expr: None,
+            }],
+            None,
+            None,
+            None,
+            vec![],
+        );
+
+        let view = idx.view(scope);
+        let resolver = SymbolResolver::new(&view);
+        let resolved = resolver
+            .resolve(&ctx)
+            .expect("should resolve through local intersection type");
+        match resolved {
+            ResolvedSymbol::Method { owner, summary } => {
+                assert_eq!(owner.as_ref(), "org/example/Swimmable");
+                assert_eq!(summary.name.as_ref(), "swim");
+            }
+            other => panic!("expected method resolution, got {other:?}"),
         }
     }
 
