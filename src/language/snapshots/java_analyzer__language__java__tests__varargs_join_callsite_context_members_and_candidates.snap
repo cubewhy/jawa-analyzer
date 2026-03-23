@@ -13,3 +13,5 @@ join|method|(Ljava/lang/String;[Ljava/lang/String;)Ljava/lang/String;|static
 main|method|([Ljava/lang/String;)V|static
 printNumbers|method|([I)V|static
 candidates=
+join@member|StaticMethod { descriptor: "(LString;[LString;)LString;", defining_class: "VarargsExample" }
+join@member|StaticMethod { descriptor: "(Ljava/lang/String;[Ljava/lang/String;)Ljava/lang/String;", defining_class: "VarargsExample" }

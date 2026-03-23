@@ -13,6 +13,5 @@ pub mod package;
 pub mod snippet;
 pub mod statement_label;
 pub mod static_import_member;
-pub mod static_member;
 pub mod this_member;
 pub mod type_lookup;

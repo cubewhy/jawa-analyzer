@@ -10,7 +10,7 @@ use crate::language::java::completion::providers::{
     local_var::LocalVarProvider, member::MemberProvider, name_suggestion::NameSuggestionProvider,
     override_member::OverrideProvider, package::PackageProvider, snippet::SnippetProvider,
     statement_label::StatementLabelProvider, static_import_member::StaticImportMemberProvider,
-    static_member::StaticMemberProvider, this_member::ThisMemberProvider,
+    this_member::ThisMemberProvider,
 };
 use crate::language::java::inlay_hints::{JavaInlayHintKind, collect_java_inlay_hints};
 use crate::language::java::symbols::collect_java_symbols;
@@ -46,13 +46,12 @@ pub mod synthetic;
 pub mod type_ctx;
 pub mod utils;
 
-static JAVA_COMPLETION_PROVIDERS: [&dyn CompletionProvider; 17] = [
+static JAVA_COMPLETION_PROVIDERS: [&dyn CompletionProvider; 16] = [
     &LocalVarProvider,
     &StatementLabelProvider,
     &ThisMemberProvider,
     &IntrinsicMemberProvider,
     &MemberProvider,
-    &StaticMemberProvider,
     &ConstructorProvider,
     &PackageProvider,
     &ExpressionProvider,
