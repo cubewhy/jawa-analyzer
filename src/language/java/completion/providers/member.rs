@@ -32,6 +32,10 @@ impl CompletionProvider for MemberProvider {
         "member"
     }
 
+    fn is_applicable(&self, ctx: &SemanticContext) -> bool {
+        matches!(ctx.location, CursorLocation::MemberAccess { .. })
+    }
+
     fn provide(
         &self,
         scope: IndexScope,
@@ -40,10 +44,6 @@ impl CompletionProvider for MemberProvider {
         _request: Option<&crate::lsp::request_context::RequestContext>,
         _limit: Option<usize>,
     ) -> crate::lsp::request_cancellation::RequestResult<ProviderCompletionResult> {
-        if !matches!(&ctx.location, CursorLocation::MemberAccess { .. }) {
-            return Ok(ProviderCompletionResult::default());
-        }
-
         let receiver_semantic_type = ctx.location.member_access_receiver_semantic_type();
         let receiver_owner_internal = ctx.location.member_access_receiver_owner_internal();
         let member_prefix = ctx.location.member_access_prefix().unwrap_or("");
