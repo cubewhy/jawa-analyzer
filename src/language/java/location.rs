@@ -331,6 +331,57 @@ mod tests {
     }
 
     #[test]
+    fn test_misread_before_super_call_stays_expression() {
+        let src = indoc::indoc! {r#"
+class Child extends Base {
+    private void bar() {
+        f
+        super.foo();
+        this.foo();
+    }
+}
+"#};
+        let marker = "        f";
+        let offset = src.find(marker).unwrap() + marker.len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let (loc, query) = determine_location(&ctx, cursor_node, None);
+
+        assert!(
+            matches!(loc, CursorLocation::Expression { .. }),
+            "Expected Expression before recovered super.foo(), got {:?}",
+            loc
+        );
+        assert_eq!(query, "f");
+    }
+
+    #[test]
+    fn test_misread_before_this_call_stays_expression() {
+        let src = indoc::indoc! {r#"
+class A {
+    private void bar() {
+        f
+        this.foo();
+    }
+}
+"#};
+        let marker = "        f";
+        let offset = src.find(marker).unwrap() + marker.len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let (loc, query) = determine_location(&ctx, cursor_node, None);
+
+        assert!(
+            matches!(loc, CursorLocation::Expression { .. }),
+            "Expected Expression before recovered this.foo(), got {:?}",
+            loc
+        );
+        assert_eq!(query, "f");
+    }
+
+    #[test]
     fn test_break_routes_to_statement_label_location() {
         let src = indoc::indoc! {r#"
 class A {

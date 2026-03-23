@@ -289,14 +289,18 @@ pub(super) fn handle_import_from_text(
 /// Why it exists:
 /// - Tree-sitter may misparse `str\nfunc(...)` as a declaration (`str` type,
 ///   `func` variable name), but it's actually two statements.
+/// - Tree-sitter may also recover `expr\nsuper.foo()` / `expr\nthis.foo()` as a
+///   local declaration whose declarator name is `super`/`this` and whose tail
+///   lives under `ERROR`.
 ///
 /// Effect on behavior:
 /// - Forces the cursor location to `Expression` to avoid type completions.
 ///
 /// Trade-offs:
-/// - Only detects the specific "next token is '('" pattern.
+/// - Targets a small set of known recovery shapes rather than every malformed
+///   declaration.
 pub(super) fn is_misread_expression_in_local_decl(
-    _node: Node,
+    node: Node,
     decl_node: Node,
     ctx: &JavaContextExtractor,
 ) -> bool {
@@ -311,7 +315,51 @@ pub(super) fn is_misread_expression_in_local_decl(
         }
     }
 
-    false
+    let type_node = {
+        let mut walker = decl_node.walk();
+        decl_node
+            .named_children(&mut walker)
+            .find(|child| child.kind() != "modifiers" && child.kind() != "variable_declarator")
+    };
+    let Some(type_node) = type_node else {
+        return false;
+    };
+    if !is_descendant_of(node, type_node) {
+        return false;
+    }
+
+    let declarator = {
+        let mut walker = decl_node.walk();
+        decl_node
+            .named_children(&mut walker)
+            .find(|child| child.kind() == "variable_declarator")
+    };
+    let Some(declarator) = declarator else {
+        return false;
+    };
+    let Some(name_node) = declarator.child_by_field_name("name") else {
+        return false;
+    };
+    let declarator_name = ctx.node_text(name_node).trim();
+    if declarator_name != "super" && declarator_name != "this" {
+        return false;
+    }
+
+    let error_child = {
+        let mut walker = decl_node.walk();
+        decl_node
+            .children(&mut walker)
+            .find(|child| child.kind() == "ERROR")
+    };
+    let Some(error_child) = error_child else {
+        return false;
+    };
+
+    let mut walker = error_child.walk();
+    error_child
+        .children(&mut walker)
+        .find(|child| !child.is_extra())
+        .is_some_and(|child| child.kind() == ".")
 }
 
 /// Detects member access tail misread as local variable declaration.
