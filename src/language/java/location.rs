@@ -1171,7 +1171,7 @@ class Test {
     }
 
     #[test]
-    fn test_qualified_inner_constructor_before_new_is_expression() {
+    fn test_qualified_inner_constructor_after_dot_before_new_is_member_access() {
         let src = indoc::indoc! {r#"
 class Test {
     void f() {
@@ -1190,11 +1190,45 @@ class Test {
         let (loc, query) = determine_location(&ctx, cursor_node, None);
 
         assert!(
-            matches!(loc, CursorLocation::Expression { ref prefix } if prefix.is_empty()),
-            "Expected Expression before qualified constructor `new`, got {:?}",
+            matches!(
+                loc,
+                CursorLocation::MemberAccess {
+                    ref receiver_expr,
+                    ref member_prefix,
+                    ..
+                } if receiver_expr == "t" && member_prefix.is_empty()
+            ),
+            "Expected MemberAccess after `t.` and before `new`, got {:?}",
             loc
         );
         assert_eq!(query, "");
+    }
+
+    #[test]
+    fn test_qualified_inner_constructor_before_dot_is_expression() {
+        let src = indoc::indoc! {r#"
+class Test {
+    void f() {
+        Test t = null;
+        Test.NestedNonStatic nns = t.new NestedNonStatic();
+    }
+
+    class NestedNonStatic {}
+}
+"#};
+        let marker = "t.new NestedNonStatic";
+        let offset = src.find(marker).unwrap() + "t".len();
+        let (ctx, tree) = setup_with(src, offset);
+        let cursor_node = ctx.find_cursor_node(tree.root_node());
+
+        let (loc, query) = determine_location(&ctx, cursor_node, None);
+
+        assert!(
+            matches!(loc, CursorLocation::Expression { ref prefix } if prefix == "t"),
+            "Expected Expression before the qualifier dot, got {:?}",
+            loc
+        );
+        assert_eq!(query, "t");
     }
 
     #[test]

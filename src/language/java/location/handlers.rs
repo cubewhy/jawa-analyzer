@@ -375,9 +375,27 @@ pub(super) fn handle_constructor(
         }
     }
 
+    let type_node = node.child_by_field_name("type");
+    let qualifier_expr = constructor_qualifier_expr(ctx, node, type_node);
+
     if let Some(new_node) = tree_sitter_utils::traversal::any_child_of_kind(node, "new")
         && ctx.offset <= new_node.start_byte()
     {
+        if let Some((receiver_expr, member_prefix)) =
+            qualified_constructor_member_access_before_new(ctx, node, new_node, type_node)
+        {
+            return (
+                CursorLocation::MemberAccess {
+                    receiver_semantic_type: None,
+                    receiver_type: None,
+                    member_prefix: member_prefix.clone(),
+                    receiver_expr,
+                    arguments: None,
+                },
+                member_prefix,
+            );
+        }
+
         let prefix = extract_identifier_prefix_near_cursor(ctx, node.start_byte());
         return (
             CursorLocation::Expression {
@@ -386,9 +404,6 @@ pub(super) fn handle_constructor(
             prefix,
         );
     }
-
-    let type_node = node.child_by_field_name("type");
-    let qualifier_expr = constructor_qualifier_expr(ctx, node, type_node);
 
     if let Some(ty) = type_node
         && ctx.offset < ty.start_byte()
@@ -458,6 +473,23 @@ fn constructor_qualifier_expr(
         }
     }
     None
+}
+
+fn qualified_constructor_member_access_before_new(
+    ctx: &JavaContextExtractor,
+    node: Node,
+    new_node: Node,
+    type_node: Option<Node>,
+) -> Option<(String, String)> {
+    let receiver_expr = constructor_qualifier_expr(ctx, node, type_node)?;
+    let before_new = &ctx.source[node.start_byte()..new_node.start_byte()];
+    let separator_offset = node.start_byte() + before_new.rfind('.')?;
+    if ctx.offset < separator_offset.saturating_add(1) {
+        return None;
+    }
+
+    let member_prefix = extract_identifier_prefix_near_cursor(ctx, separator_offset + 1);
+    Some((receiver_expr, member_prefix))
 }
 
 fn infer_expected_type_from_lhs(ctx: &JavaContextExtractor, node: Node) -> Option<String> {
