@@ -893,6 +893,41 @@ mod tests {
         (ctx, candidates)
     }
 
+    #[test]
+    fn test_bare_current_class_method_completion_preserves_source_overloads() {
+        let idx = WorkspaceIndex::new();
+        let view = idx.view(root_scope());
+        let src = indoc::indoc! {r#"
+            public class Test {
+                private void foo() {
+                    foo|
+                }
+
+                private void foo(String a) {}
+            }
+        "#};
+
+        let (_ctx, candidates) = ctx_and_candidates_from_marked_source(src, &view);
+        let foo_methods: Vec<_> = candidates
+            .iter()
+            .filter(|candidate| {
+                candidate_name(candidate) == "foo"
+                    && matches!(
+                        candidate.kind,
+                        CandidateKind::Method { .. } | CandidateKind::StaticMethod { .. }
+                    )
+            })
+            .collect();
+
+        assert_eq!(foo_methods.len(), 2, "both source overloads should appear");
+        assert!(
+            foo_methods
+                .iter()
+                .all(|candidate| candidate.insertion.filter_text.as_deref() == Some("foo")),
+            "source method completions should filter on the bare method name"
+        );
+    }
+
     fn local_candidate_descriptor<'a>(
         candidates: &'a [CompletionCandidate],
         label: &str,

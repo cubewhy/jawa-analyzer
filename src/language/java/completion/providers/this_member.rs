@@ -55,8 +55,8 @@ impl CompletionProvider for ThisMemberProvider {
         // enclosing class members
         let scored = fuzzy::fuzzy_filter_sort(
             prefix,
-            ctx.current_class_members
-                .values()
+            ctx.current_class_member_list
+                .iter()
                 .filter(|m| !m.is_constructor_like())
                 .filter(|m| !in_static || m.is_static()),
             |m| m.name(),
@@ -88,19 +88,25 @@ impl CompletionProvider for ThisMemberProvider {
                 let insert_text = m.name().to_string();
                 let detail = render::source_member_detail(enclosing, m, &resolver);
 
-                let candidate =
-                    CompletionCandidate::new(Arc::clone(&m.name()), insert_text, kind, self.name())
-                        .with_detail(detail)
-                        .with_score(60.0 + score as f32 * 0.1);
-
                 if let crate::semantic::context::CurrentClassMember::Method(md) = m {
-                    candidate.with_callable_insert(
+                    CompletionCandidate::new(
+                        render::source_method_label(md, &resolver),
+                        insert_text,
+                        kind,
+                        self.name(),
+                    )
+                    .with_detail(detail)
+                    .with_filter_text(md.name.to_string())
+                    .with_score(60.0 + score as f32 * 0.1)
+                    .with_callable_insert(
                         md.name.as_ref(),
                         &md.params.param_names(),
                         ctx.is_followed_by_opener(),
                     )
                 } else {
-                    candidate
+                    CompletionCandidate::new(Arc::clone(&m.name()), insert_text, kind, self.name())
+                        .with_detail(detail)
+                        .with_score(60.0 + score as f32 * 0.1)
                 }
             })
             .collect();
@@ -248,6 +254,14 @@ mod tests {
         }
     }
 
+    fn candidate_name(candidate: &crate::completion::CompletionCandidate) -> &str {
+        candidate
+            .insertion
+            .filter_text
+            .as_deref()
+            .unwrap_or(candidate.label.as_ref())
+    }
+
     fn make_member(
         name: &str,
         is_method: bool,
@@ -329,10 +343,42 @@ mod tests {
         let results = ThisMemberProvider
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
-        assert!(results.iter().any(|c| c.label.as_ref() == "func"));
-        assert!(results.iter().any(|c| c.label.as_ref() == "fun"));
-        assert!(results.iter().all(|c| c.label.as_ref() != "other"));
-        assert!(results.iter().all(|c| c.label.as_ref() != "pri"));
+        assert!(results.iter().any(|c| candidate_name(c) == "func"));
+        assert!(results.iter().any(|c| candidate_name(c) == "fun"));
+        assert!(results.iter().all(|c| candidate_name(c) != "other"));
+        assert!(results.iter().all(|c| candidate_name(c) != "pri"));
+    }
+
+    #[test]
+    fn test_source_overloads_are_preserved_for_expression_completion() {
+        let method = |descriptor: &str| {
+            CurrentClassMember::Method(Arc::new(MethodSummary {
+                name: Arc::from("foo"),
+                params: MethodParams::from_method_descriptor(descriptor),
+                annotations: vec![],
+                access_flags: ACC_PUBLIC,
+                is_synthetic: false,
+                generic_signature: None,
+                return_type: None,
+            }))
+        };
+        let idx = WorkspaceIndex::new();
+        let ctx = ctx_with_members("fo", vec![method("()V"), method("(Ljava/lang/String;)V")]);
+        let results = ThisMemberProvider
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .candidates;
+        let foo_methods: Vec<_> = results
+            .iter()
+            .filter(|candidate| candidate_name(candidate) == "foo")
+            .collect();
+
+        assert_eq!(foo_methods.len(), 2, "both source overloads should appear");
+        assert!(
+            foo_methods
+                .iter()
+                .all(|candidate| candidate.insertion.filter_text.as_deref() == Some("foo")),
+            "source method completions should filter on the bare method name"
+        );
     }
 
     #[test]
@@ -346,9 +392,9 @@ mod tests {
         assert!(
             results
                 .iter()
-                .any(|c| c.label.as_ref() == "veryLongMemberName"),
+                .any(|c| candidate_name(c) == "veryLongMemberName"),
             "fuzzy subsequence should match this-member source field: {:?}",
-            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+            results.iter().map(candidate_name).collect::<Vec<_>>()
         );
     }
 
@@ -362,9 +408,9 @@ mod tests {
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
-            results.iter().any(|c| c.label.as_ref() == "pri"),
+            results.iter().any(|c| candidate_name(c) == "pri"),
             "private method should be visible: {:?}",
-            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+            results.iter().map(candidate_name).collect::<Vec<_>>()
         );
     }
 
@@ -376,11 +422,11 @@ mod tests {
         let results = ThisMemberProvider
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
-        assert!(results.iter().any(|c| c.label.as_ref() == "pri"));
+        assert!(results.iter().any(|c| candidate_name(c) == "pri"));
         assert!(matches!(
             results
                 .iter()
-                .find(|c| c.label.as_ref() == "pri")
+                .find(|c| candidate_name(c) == "pri")
                 .unwrap()
                 .kind,
             CandidateKind::StaticMethod { .. }
@@ -397,7 +443,7 @@ mod tests {
             .candidates;
         let c = results
             .iter()
-            .find(|c| c.label.as_ref() == "count")
+            .find(|c| candidate_name(c) == "count")
             .unwrap();
         assert!(!c.insert_text.contains('('));
         assert!(matches!(c.kind, CandidateKind::Field { .. }));
@@ -412,7 +458,7 @@ mod tests {
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].label.as_ref(), "func");
+        assert_eq!(candidate_name(&results[0]), "func");
     }
 
     #[test]
@@ -441,7 +487,7 @@ mod tests {
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
-            results.iter().any(|c| c.label.as_ref() == "afterMethod"),
+            results.iter().any(|c| candidate_name(c) == "afterMethod"),
             "method defined after cursor should still be completable"
         );
     }
@@ -457,7 +503,7 @@ mod tests {
         assert!(matches!(
             results
                 .iter()
-                .find(|c| c.label.as_ref() == "CONST")
+                .find(|c| candidate_name(c) == "CONST")
                 .unwrap()
                 .kind,
             CandidateKind::StaticField { .. }
@@ -488,7 +534,7 @@ mod tests {
         assert!(
             results.is_empty(),
             "ThisMemberProvider should return nothing inside a static method, got: {:?}",
-            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+            results.iter().map(candidate_name).collect::<Vec<_>>()
         );
     }
 
@@ -511,7 +557,7 @@ mod tests {
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
-            results.iter().any(|c| c.label.as_ref() == "helper"),
+            results.iter().any(|c| candidate_name(c) == "helper"),
             "ThisMemberProvider should work inside an instance method"
         );
     }
@@ -587,19 +633,19 @@ mod tests {
             .candidates;
 
         assert!(
-            results.iter().any(|c| c.label.as_ref() == "pri"),
+            results.iter().any(|c| candidate_name(c) == "pri"),
             "static method should be visible in static context"
         );
         assert!(
-            results.iter().any(|c| c.label.as_ref() == "CONST"),
+            results.iter().any(|c| candidate_name(c) == "CONST"),
             "static field should be visible in static context"
         );
         assert!(
-            results.iter().all(|c| c.label.as_ref() != "fun"),
+            results.iter().all(|c| candidate_name(c) != "fun"),
             "instance method should NOT be visible in static context"
         );
         assert!(
-            results.iter().all(|c| c.label.as_ref() != "count"),
+            results.iter().all(|c| candidate_name(c) != "count"),
             "instance field should NOT be visible in static context"
         );
     }
@@ -640,9 +686,9 @@ mod tests {
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
-            results.iter().any(|c| c.label.as_ref() == "pri"),
+            results.iter().any(|c| candidate_name(c) == "pri"),
             "should find static method 'pri' with prefix 'pr' in static context: {:?}",
-            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+            results.iter().map(candidate_name).collect::<Vec<_>>()
         );
     }
 
@@ -679,9 +725,9 @@ mod tests {
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
-            results.iter().any(|c| c.label.as_ref() == "pri"),
+            results.iter().any(|c| candidate_name(c) == "pri"),
             "empty prefix in method arg should return static members in static context: {:?}",
-            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+            results.iter().map(candidate_name).collect::<Vec<_>>()
         );
     }
 
@@ -706,9 +752,9 @@ mod tests {
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
-            results.iter().all(|c| c.label.as_ref() != "helper"),
+            results.iter().all(|c| candidate_name(c) != "helper"),
             "instance method should not appear in static context: {:?}",
-            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+            results.iter().map(candidate_name).collect::<Vec<_>>()
         );
         // CONST is static, so "he" cannot match "CONST", and it's normal for the result to be empty.
     }
@@ -794,9 +840,9 @@ mod tests {
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
-            results.iter().any(|c| c.label.as_ref() == "funcA"),
+            results.iter().any(|c| candidate_name(c) == "funcA"),
             "funcA inherited from BaseClass should be visible inside Main2 instance method, got: {:?}",
-            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+            results.iter().map(candidate_name).collect::<Vec<_>>()
         );
     }
 
@@ -862,9 +908,9 @@ mod tests {
         assert!(
             results
                 .iter()
-                .any(|c| c.label.as_ref() == "veryLongMemberName"),
+                .any(|c| candidate_name(c) == "veryLongMemberName"),
             "fuzzy subsequence should match inherited this-member field, got: {:?}",
-            results.iter().map(|c| c.label.as_ref()).collect::<Vec<_>>()
+            results.iter().map(candidate_name).collect::<Vec<_>>()
         );
     }
 
@@ -939,7 +985,7 @@ mod tests {
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(
-            results.iter().all(|c| c.label.as_ref() != "superPrivate"),
+            results.iter().all(|c| candidate_name(c) != "superPrivate"),
             "private super method should NOT be visible in subclass"
         );
     }

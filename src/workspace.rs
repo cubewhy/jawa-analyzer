@@ -31,7 +31,7 @@ struct SemanticCache {
     /// Cached parsed method locals per method, keyed by content hash
     method_locals: HashMap<u64, Vec<CachedMethodLocal>>,
     /// Cached class members per class, keyed by content hash
-    class_members: HashMap<u64, HashMap<Arc<str>, CurrentClassMember>>,
+    class_members: HashMap<u64, Vec<CurrentClassMember>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -104,10 +104,7 @@ impl Workspace {
     }
 
     /// Get cached class members by content hash (IntelliJ-style PSI cache)
-    pub fn get_cached_class_members(
-        &self,
-        content_hash: u64,
-    ) -> Option<HashMap<Arc<str>, CurrentClassMember>> {
+    pub fn get_cached_class_members(&self, content_hash: u64) -> Option<Vec<CurrentClassMember>> {
         self.semantic_cache
             .read()
             .class_members
@@ -116,11 +113,7 @@ impl Workspace {
     }
 
     /// Cache class members by content hash
-    pub fn cache_class_members(
-        &self,
-        content_hash: u64,
-        members: HashMap<Arc<str>, CurrentClassMember>,
-    ) {
+    pub fn cache_class_members(&self, content_hash: u64, members: Vec<CurrentClassMember>) {
         self.semantic_cache
             .write()
             .class_members

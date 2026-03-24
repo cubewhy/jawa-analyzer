@@ -767,8 +767,8 @@ impl MemberProvider {
 
         fuzzy::fuzzy_filter_sort(
             member_prefix,
-            ctx.current_class_members
-                .values()
+            ctx.current_class_member_list
+                .iter()
                 .filter(|member| !member.is_constructor_like())
                 .filter(|member| !(implicit_receiver && in_static && !member.is_static())),
             |m| m.name(),
@@ -837,8 +837,8 @@ impl MemberProvider {
 
         fuzzy::fuzzy_filter_sort(
             member_prefix,
-            ctx.current_class_members
-                .values()
+            ctx.current_class_member_list
+                .iter()
                 .filter(|member| !member.is_constructor_like() && member.is_static()),
             |m| m.name(),
         )

@@ -648,21 +648,28 @@ fn collect_method_candidates(
                 });
             }
         }
-        if ctx.enclosing_internal_name.as_deref() == Some(owner_internal)
-            && let Some(CurrentClassMember::Method(method)) =
-                ctx.current_class_members.get(method_name)
-            && method.name.as_ref() == method_name
-        {
-            let key = (
-                owner_internal.to_string(),
-                method.name.to_string(),
-                method.desc().to_string(),
-            );
-            if seen.insert(key) {
-                candidates.push(ResolvedMethodCandidate {
-                    method: method.clone(),
-                    receiver_for_substitution: receiver_for_substitution.clone(),
-                });
+        if ctx.enclosing_internal_name.as_deref() == Some(owner_internal) {
+            for method in ctx
+                .current_class_member_list
+                .iter()
+                .filter_map(|member| match member {
+                    CurrentClassMember::Method(method) if method.name.as_ref() == method_name => {
+                        Some(method)
+                    }
+                    _ => None,
+                })
+            {
+                let key = (
+                    owner_internal.to_string(),
+                    method.name.to_string(),
+                    method.desc().to_string(),
+                );
+                if seen.insert(key) {
+                    candidates.push(ResolvedMethodCandidate {
+                        method: method.clone(),
+                        receiver_for_substitution: receiver_for_substitution.clone(),
+                    });
+                }
             }
         }
     }

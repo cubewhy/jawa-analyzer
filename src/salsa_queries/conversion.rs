@@ -109,7 +109,7 @@ fn enrich_java_semantic_context(
 ) -> SemanticContext {
     let source = file.content(db);
 
-    let members = crate::salsa_queries::extract_java_current_class_members(
+    let members = crate::salsa_queries::semantic::extract_java_current_class_member_list(
         db,
         file,
         data.cursor_offset,
@@ -117,7 +117,7 @@ fn enrich_java_semantic_context(
     );
 
     let method_map: HashMap<Arc<str>, Arc<MethodSummary>> = members
-        .values()
+        .iter()
         .filter_map(|member| match member {
             CurrentClassMember::Method(method) => {
                 Some((Arc::clone(&method.name), Arc::clone(method)))
@@ -195,7 +195,7 @@ fn enrich_java_semantic_context(
 
     ctx.with_static_imports(static_imports)
         .with_class_member_position(data.is_class_member_position)
-        .with_class_members(members.into_values())
+        .with_class_members(members)
         .with_enclosing_member(enclosing_class_member)
         .with_char_after_cursor(data.char_after_cursor)
         .with_statement_labels(statement_labels)

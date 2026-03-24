@@ -73,19 +73,31 @@ pub fn materialize_current_class_members(
         .collect()
 }
 
+pub fn extract_java_current_class_member_list(
+    db: &dyn crate::salsa_queries::Db,
+    file: SourceFile,
+    cursor_offset: usize,
+    workspace: Option<&crate::workspace::Workspace>,
+) -> Vec<CurrentClassMember> {
+    if let Some(workspace) = workspace {
+        return extract_class_members_incremental(db, file, cursor_offset, workspace);
+    }
+
+    extract_java_current_class_member_list_from_source(db, file, cursor_offset)
+}
+
 pub fn extract_java_current_class_members(
     db: &dyn crate::salsa_queries::Db,
     file: SourceFile,
     cursor_offset: usize,
     workspace: Option<&crate::workspace::Workspace>,
 ) -> HashMap<Arc<str>, CurrentClassMember> {
-    if let Some(workspace) = workspace {
-        return materialize_current_class_members(
-            extract_class_members_incremental(db, file, cursor_offset, workspace).into_values(),
-        );
-    }
-
-    extract_java_current_class_members_from_source(db, file, cursor_offset)
+    materialize_current_class_members(extract_java_current_class_member_list(
+        db,
+        file,
+        cursor_offset,
+        workspace,
+    ))
 }
 
 pub fn extract_java_current_class_members_from_source(
@@ -93,12 +105,24 @@ pub fn extract_java_current_class_members_from_source(
     file: SourceFile,
     cursor_offset: usize,
 ) -> HashMap<Arc<str>, CurrentClassMember> {
+    materialize_current_class_members(extract_java_current_class_member_list_from_source(
+        db,
+        file,
+        cursor_offset,
+    ))
+}
+
+pub fn extract_java_current_class_member_list_from_source(
+    db: &dyn crate::salsa_queries::Db,
+    file: SourceFile,
+    cursor_offset: usize,
+) -> Vec<CurrentClassMember> {
     if file.language_id(db).as_ref() != "java" {
-        return HashMap::new();
+        return Vec::new();
     }
 
     let Some(tree) = parse_file_tree(db, file) else {
-        return HashMap::new();
+        return Vec::new();
     };
 
     let root = tree.root_node();
@@ -137,8 +161,7 @@ pub fn extract_java_current_class_members_from_source(
             Some(members)
         })
         .unwrap_or_default();
-
-    materialize_current_class_members(members)
+    members
 }
 
 pub fn extract_java_enclosing_super_name(
@@ -1979,14 +2002,12 @@ pub fn extract_class_members_incremental(
     file: SourceFile,
     cursor_offset: usize,
     workspace: &crate::workspace::Workspace,
-) -> std::collections::HashMap<Arc<str>, crate::semantic::context::CurrentClassMember> {
-    use std::collections::HashMap;
-
+) -> Vec<crate::semantic::context::CurrentClassMember> {
     // Step 1: Find class bounds (Salsa cached)
     let Some((class_name, class_start, class_end)) =
         find_enclosing_class_bounds(db, file, cursor_offset)
     else {
-        return HashMap::new();
+        return Vec::new();
     };
 
     // Step 2: Get metadata (Salsa cached)
@@ -2024,23 +2045,22 @@ fn parse_class_members(
     file: SourceFile,
     class_start: usize,
     _class_end: usize,
-) -> std::collections::HashMap<Arc<str>, crate::semantic::context::CurrentClassMember> {
+) -> Vec<crate::semantic::context::CurrentClassMember> {
     use crate::language::java::synthetic::extract_type_members_with_synthetics;
     use crate::language::java::type_ctx::SourceTypeCtx;
     use crate::language::java::{JavaContextExtractor, scope};
-    use std::collections::HashMap;
 
     let content = file.content(db);
     let language_id = file.language_id(db);
 
     // Only handle Java for now
     if language_id.as_ref() != "java" {
-        return HashMap::new();
+        return Vec::new();
     }
 
     // Parse tree
     let Some(tree) = parse_file_tree(db, file) else {
-        return HashMap::new();
+        return Vec::new();
     };
 
     let root = tree.root_node();
@@ -2067,7 +2087,7 @@ fn parse_class_members(
     );
 
     let Some(class_node) = class_node else {
-        return HashMap::new();
+        return Vec::new();
     };
 
     let owner_internal =
@@ -2081,9 +2101,7 @@ fn parse_class_members(
         &type_ctx,
         owner_internal.as_deref(),
     );
-
-    // Convert Vec to HashMap keyed by member name
-    members.into_iter().map(|m| (m.name(), m)).collect()
+    members
 }
 
 fn resolve_name_table_for_file(

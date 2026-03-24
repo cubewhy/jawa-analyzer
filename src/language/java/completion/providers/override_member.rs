@@ -87,7 +87,7 @@ impl CompletionProvider for OverrideProvider {
 
                 // Source-level member
                 let candidate_param_count = method.params.len();
-                let blocked_by_source = ctx.current_class_members.values().any(|m| {
+                let blocked_by_source = ctx.current_class_member_list.iter().any(|m| {
                     if !m.is_method() || m.name() != method.name {
                         return false;
                     }

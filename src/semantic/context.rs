@@ -364,6 +364,8 @@ pub struct SemanticContext {
     pub query: String,
     /// All members of the current class (parsed directly from the source file, without relying on indexes)
     pub current_class_members: HashMap<Arc<str>, CurrentClassMember>,
+    /// The full current-class member list, preserving source overloads with the same name.
+    pub current_class_member_list: Vec<CurrentClassMember>,
     /// The method/field member where the cursor is located (None indicates that it is in the field initializer or static block)
     pub enclosing_class_member: Option<CurrentClassMember>,
     pub char_after_cursor: Option<char>,
@@ -417,6 +419,7 @@ impl SemanticContext {
             static_imports: vec![],
             query: query.into(),
             current_class_members: HashMap::new(),
+            current_class_member_list: Vec::new(),
             enclosing_class_member: None,
             char_after_cursor: None,
             file_uri: None,
@@ -504,11 +507,16 @@ impl SemanticContext {
         mut self,
         members: impl IntoIterator<Item = CurrentClassMember>,
     ) -> Self {
-        self.current_class_members = members
+        let members: Vec<_> = members
             .into_iter()
             .filter(|member| !member.is_constructor_like())
+            .collect();
+        self.current_class_members = members
+            .iter()
+            .cloned()
             .map(|member| (member.name(), member))
             .collect();
+        self.current_class_member_list = members;
         self
     }
 
