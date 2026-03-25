@@ -6,6 +6,7 @@ use crate::language::java::intrinsics::access::class_literal_result_type;
 use crate::language::java::type_ctx::SourceTypeCtx;
 use crate::semantic::LocalVar;
 use crate::semantic::context::SamSignature;
+use crate::semantic::enclosing::resolve_enclosing_owner_internal;
 use crate::semantic::types::type_name::TypeName;
 use crate::semantic::types::{
     CallArgs, ChainSegment, EvalContext, TypeResolver, parse_single_type_to_internal,
@@ -1008,6 +1009,15 @@ fn resolve_constructor_type_name(
             return Some(Arc::from(strict.erased_internal()));
         }
         if let Some(enclosing_internal) = enclosing_internal {
+            if let Some(owner) = resolve_enclosing_owner_internal(
+                Some(view),
+                Some(enclosing_internal.as_ref()),
+                None,
+                &[],
+                head,
+            ) {
+                return Some(owner);
+            }
             return view
                 .resolve_scoped_inner_class(enclosing_internal, head)
                 .map(|c| c.internal_name.clone());
@@ -1738,6 +1748,85 @@ mod tests {
         assert_eq!(ty.args.len(), 2);
         assert_eq!(ty.args[0].erased_internal(), "java/io/Closeable");
         assert_eq!(ty.args[1].erased_internal(), "java/lang/Runnable");
+    }
+
+    #[test]
+    fn test_var_init_expr_resolves_qualified_nested_type_against_enclosing_owner() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![
+            ClassMetadata {
+                package: Some(Arc::from("org/example")),
+                name: Arc::from("Main"),
+                internal_name: Arc::from("org/example/Main"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/example")),
+                name: Arc::from("Test"),
+                internal_name: Arc::from("org/example/Main$Test"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: Some(Arc::from("Main")),
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("org/example")),
+                name: Arc::from("Nested"),
+                internal_name: Arc::from("org/example/Main$Test$Nested"),
+                super_name: Some(Arc::from("java/lang/Object")),
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC | rust_asm::constants::ACC_STATIC,
+                generic_signature: None,
+                inner_class_of: Some(Arc::from("Test")),
+                origin: ClassOrigin::Unknown,
+            },
+            ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("Object"),
+                internal_name: Arc::from("java/lang/Object"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                generic_signature: None,
+                inner_class_of: None,
+                origin: ClassOrigin::Unknown,
+            },
+        ]);
+
+        let view = idx.view(root_scope());
+        let type_ctx =
+            SourceTypeCtx::from_view(Some(Arc::from("org/example")), vec![], view.clone());
+        let resolver = TypeResolver::new(&view);
+        let ty = resolve_var_init_expr(
+            "new Test.Nested()",
+            &[],
+            Some(&Arc::from("org/example/Main$Test")),
+            &resolver,
+            &type_ctx,
+            &view,
+        )
+        .expect("nested type should resolve");
+
+        assert_eq!(ty.erased_internal(), "org/example/Main$Test$Nested");
     }
 
     #[test]

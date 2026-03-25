@@ -458,14 +458,7 @@ fn resolve_type_name_strict_inner(
 
     let (base_name, args_str) = split_java_generic_base(base)?;
 
-    let base_internal = if base_name.contains('/') {
-        ctx.class_exists(base_name).then(|| base_name.to_string())
-    } else if base_name.contains('.') {
-        let internal = base_name.replace('.', "/");
-        ctx.class_exists(&internal).then_some(internal)
-    } else {
-        ctx.resolve_simple_strict(base_name)
-    }?;
+    let base_internal = resolve_base_internal(ctx, base_name)?;
 
     let mut ty = if let Some(args) = args_str {
         let arg_types = split_java_generic_args(args)
@@ -576,8 +569,54 @@ fn resolve_base_internal(ctx: &SourceTypeCtx, base_name: &str) -> Option<String>
         return ctx.class_exists(base_name).then(|| base_name.to_string());
     }
     if base_name.contains('.') {
-        let internal = base_name.replace('.', "/");
-        return ctx.class_exists(&internal).then_some(internal);
+        if let Some(view) = ctx.view.as_ref() {
+            let resolve_head = |head: &str| -> Option<Arc<str>> {
+                if head.contains('/') {
+                    return ctx.class_exists(head).then(|| Arc::from(head));
+                }
+                if head.contains('.') {
+                    let internal = head.replace('.', "/");
+                    return ctx.class_exists(&internal).then(|| Arc::from(internal));
+                }
+                ctx.resolve_simple_strict(head).map(Arc::from)
+            };
+
+            if let Some(resolved) = view.resolve_qualified_type_path(base_name, &resolve_head) {
+                return Some(resolved.internal_name.to_string());
+            }
+        }
+
+        let parts: Vec<&str> = base_name
+            .split('.')
+            .filter(|segment| !segment.is_empty())
+            .collect();
+        if parts.is_empty() {
+            return None;
+        }
+
+        let direct = base_name.replace('.', "/");
+        if ctx.class_exists(&direct) {
+            return Some(direct);
+        }
+
+        for split in (1..parts.len()).rev() {
+            let owner_internal = if split == 1 {
+                ctx.resolve_simple_strict(parts[0])
+            } else {
+                let head = parts[..split].join("/");
+                ctx.class_exists(&head).then_some(head)
+            };
+            let Some(owner_internal) = owner_internal else {
+                continue;
+            };
+
+            let candidate = format!("{owner_internal}${}", parts[split..].join("$"));
+            if ctx.class_exists(&candidate) {
+                return Some(candidate);
+            }
+        }
+
+        return None;
     }
     ctx.resolve_simple_strict(base_name)
 }
@@ -864,5 +903,16 @@ mod tests {
             .expect("known bound should be preserved");
         assert_eq!(resolved.quality, TypeResolveQuality::Partial);
         assert_eq!(resolved.ty.erased_internal(), "java/io/Closeable");
+    }
+
+    #[test]
+    fn test_resolve_type_name_strict_supports_qualified_nested_type_paths() {
+        let nt = name_table(&["org/example/Outer", "org/example/Outer$Inner"]);
+        let ctx = SourceTypeCtx::new(Some(Arc::from("org/example")), vec![], Some(nt));
+
+        let resolved = ctx
+            .resolve_type_name_strict("Outer.Inner")
+            .expect("should resolve nested type");
+        assert_eq!(resolved.erased_internal(), "org/example/Outer$Inner");
     }
 }

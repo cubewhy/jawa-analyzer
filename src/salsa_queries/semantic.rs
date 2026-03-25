@@ -9,10 +9,7 @@
 use crate::language::java::{
     JavaContextExtractor, members, scope, synthetic,
     type_ctx::{SourceTypeCtx, extract_param_type},
-    utils::{
-        get_initializer_text, java_type_to_internal, split_java_generic_base,
-        strip_leading_java_type_modifiers,
-    },
+    utils::{get_initializer_text, split_java_generic_base, strip_leading_java_type_modifiers},
 };
 use crate::language::ts_utils::run_query;
 use crate::salsa_db::SourceFile;
@@ -823,11 +820,11 @@ fn resolve_declared_source_type(
         && let Some(resolved) = type_ctx.resolve_type_name_relaxed(raw_ty.trim())
     {
         if raw_ty.contains('<') && resolved.ty.args.is_empty() {
-            return TypeName::new(java_type_to_internal(raw_ty).as_str());
+            return TypeName::new(raw_ty.trim());
         }
         return resolved.ty;
     }
-    TypeName::new(java_type_to_internal(raw_ty).as_str())
+    TypeName::new(raw_ty.trim())
 }
 
 fn extract_misread_var_decls(
@@ -1423,17 +1420,34 @@ fn resolve_enclosing_owner_declared_type(
     }
 
     let (base_name, args) = split_java_generic_base(base)?;
-    if args.is_some() || base_name.contains('.') || base_name.contains('/') {
+    if args.is_some() || base_name.contains('/') {
         return None;
     }
 
-    let resolved = resolve_enclosing_owner_internal(
+    let parts: Vec<&str> = base_name
+        .split('.')
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    let head = *parts.first()?;
+    let mut resolved = resolve_enclosing_owner_internal(
         type_ctx.and_then(SourceTypeCtx::view),
         enclosing.internal_name.as_deref(),
         enclosing.package.as_deref(),
         &enclosing.class_chain,
-        base_name,
+        head,
     )?;
+
+    if parts.len() > 1 {
+        if let Some(view) = type_ctx.and_then(SourceTypeCtx::view) {
+            for segment in &parts[1..] {
+                let inner = view.resolve_direct_inner_class(resolved.as_ref(), segment)?;
+                resolved = inner.internal_name.clone();
+            }
+        } else {
+            resolved = Arc::from(format!("{}${}", resolved, parts[1..].join("$")));
+        }
+    }
+
     let mut ty = TypeName::new(resolved.as_ref());
     if dims > 0 {
         ty = ty.with_array_dims(dims);

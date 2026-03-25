@@ -759,7 +759,7 @@ fn resolve_source_base_with_scope(
         return Some(Arc::from(base_name));
     }
     if base_name.contains('.') {
-        return Some(Arc::from(base_name.replace('.', "/")));
+        return sym.resolve_type_name(ctx, base_name);
     }
     if let Some(enclosing_owner) = resolve_enclosing_owner_type_name(ctx, sym.view, base_name) {
         return Some(enclosing_owner);

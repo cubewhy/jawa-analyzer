@@ -380,6 +380,146 @@ public class User {
 }
 
 #[tokio::test]
+async fn test_completion_member_access_on_qualified_nested_local_type() {
+    let workspace = create_test_workspace();
+    let engine = Arc::new(CompletionEngine::new());
+    let registry = Arc::new(LanguageRegistry::new());
+
+    let (content, position) = strip_cursor_marker(
+        r#"
+package org.example;
+
+public class Main {
+    public class Test {
+        private void test() {
+            Test.Nested n = new Test.Nested();
+            n./*caret*/
+        }
+
+        public static class Nested {
+            public void foo() {}
+        }
+    }
+}
+"#,
+    );
+
+    open_document(&workspace, "file:///test/Main.java", &content).await;
+
+    let params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier {
+                uri: Url::parse("file:///test/Main.java").unwrap(),
+            },
+            position,
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: Some(CompletionContext {
+            trigger_kind: CompletionTriggerKind::TRIGGER_CHARACTER,
+            trigger_character: Some(".".to_string()),
+        }),
+    };
+
+    let response = run_completion(
+        Arc::clone(&workspace),
+        Arc::clone(&engine),
+        Arc::clone(&registry),
+        params,
+    )
+    .await;
+
+    assert!(
+        response.is_some(),
+        "expected completion results for qualified nested local type"
+    );
+
+    if let Some(CompletionResponse::List(list)) = response {
+        let labels: Vec<&str> = list.items.iter().map(|item| item.label.as_str()).collect();
+        assert!(
+            labels.iter().any(|label| label.starts_with("foo")),
+            "labels={labels:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn test_completion_member_access_on_qualified_nested_local_type_after_did_change() {
+    let workspace = create_test_workspace();
+    let engine = Arc::new(CompletionEngine::new());
+    let registry = Arc::new(LanguageRegistry::new());
+    let uri = "file:///test/Main.java";
+
+    let initial = r#"
+package org.example;
+
+public class Main {
+    public class Test {
+        private void test() {}
+    }
+}
+"#;
+
+    let (updated, position) = strip_cursor_marker(
+        r#"
+package org.example;
+
+public class Main {
+    public class Test {
+        private void test() {
+            Test.Nested n = new Test.Nested();
+            n./*caret*/
+        }
+
+        public static class Nested {
+            public void foo() {}
+        }
+    }
+}
+"#,
+    );
+
+    open_document(&workspace, uri, initial).await;
+    update_document_without_reindex(&workspace, uri, 2, &updated).await;
+
+    let params = CompletionParams {
+        text_document_position: TextDocumentPositionParams {
+            text_document: TextDocumentIdentifier {
+                uri: Url::parse(uri).unwrap(),
+            },
+            position,
+        },
+        work_done_progress_params: WorkDoneProgressParams::default(),
+        partial_result_params: PartialResultParams::default(),
+        context: Some(CompletionContext {
+            trigger_kind: CompletionTriggerKind::TRIGGER_CHARACTER,
+            trigger_character: Some(".".to_string()),
+        }),
+    };
+
+    let response = run_completion(
+        Arc::clone(&workspace),
+        Arc::clone(&engine),
+        Arc::clone(&registry),
+        params,
+    )
+    .await;
+
+    assert!(
+        response.is_some(),
+        "expected completion results for qualified nested local type after did_change"
+    );
+
+    if let Some(CompletionResponse::List(list)) = response {
+        let labels: Vec<&str> = list.items.iter().map(|item| item.label.as_str()).collect();
+        assert!(
+            labels.iter().any(|label| label.starts_with("foo")),
+            "labels={labels:?}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn test_completion_member_access_lombok_delegate() {
     let workspace = create_test_workspace();
     let engine = Arc::new(CompletionEngine::new());
