@@ -4,7 +4,7 @@ expression: snapshot
 ---
 location=Expression { prefix: "a" }
 locals=
-a:var
+a:unknown
 numbers:int[]
 local_candidates=
 a|descriptor=int[]|detail_has_array=true

@@ -14,8 +14,8 @@ class_generic_signature=Some("<R:Ljava/lang/Object;>Ljava/lang/Object;")
 sig_to_use=<K:Ljava/lang/Object;V:Ljava/lang/Object;>(LFunction<-TR;+TK;>;LFunction<-TR;+TV;>;)LMap<TK;LList<TV;>;>;
 base_return=LMap;
 ret_jvm=LMap<TK;LList<TV;>;>;
-substituted_return=Map<TK;TList;>
-rendered_return=Some("Map<TK;TList;>")
+substituted_return=Map<TK;LList<TV;>;>
+rendered_return=Some("Map<TK;LList<TV;>;>")
 
 render_param_tokens:
 #0: raw=LFunction<-TR;+TK;>; | substituted=Some("Function<-Ljava/util/List<Ljava/lang/String;>;+TK;>") | rendered=Some("Function<-Ljava/util/List<Ljava/lang/String;>;+TK;>")

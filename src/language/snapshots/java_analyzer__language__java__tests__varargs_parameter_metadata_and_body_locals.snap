@@ -6,7 +6,7 @@ methods=
 join|flags=137|params=["Ljava/lang/String;", "[Ljava/lang/String;"]|param_names=["separator", "parts"]
 printNumbers|flags=137|params=["[I"]|param_names=["numbers"]
 locals=
-a:var
+a:unknown
 numbers:int[]
 local_candidates=
 a|descriptor=int[]|detail_has_array=true

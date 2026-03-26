@@ -28,6 +28,27 @@ use crate::{
     semantic::{context::CurrentClassMember, types::generics::parse_class_type_parameters},
 };
 
+fn normalize_simple_object_descriptor(desc: &str, type_ctx: &SourceTypeCtx) -> Option<String> {
+    let mut normalized = String::new();
+    let mut rest = desc;
+
+    while let Some('[') = rest.chars().next() {
+        normalized.push('[');
+        rest = &rest[1..];
+    }
+
+    let stripped = rest.strip_prefix('L')?;
+    let simple = stripped.strip_suffix(';')?;
+    if simple.contains('/') {
+        return None;
+    }
+
+    normalized.push('L');
+    normalized.push_str(&type_ctx.resolve_simple(simple));
+    normalized.push(';');
+    Some(normalized)
+}
+
 #[cfg_attr(
     not(test),
     deprecated(note = "Use salsa_queries::parse::parse_tree + extract_java_classes_from_tree")
@@ -916,12 +937,10 @@ fn refine_source_metadata_with_index_view(
                 .collect();
 
             if let Some(ret) = method.return_type.clone()
-                && let Some(stripped) = ret.strip_prefix('L')
-                && let Some(simple) = stripped.strip_suffix(';')
-                && !simple.contains('/')
+                && let Some(normalized) =
+                    normalize_simple_object_descriptor(ret.as_ref(), &type_ctx)
             {
-                let internal = type_ctx.resolve_simple(simple);
-                method.return_type = Some(Arc::from(type_ctx.to_descriptor(&internal)));
+                method.return_type = Some(Arc::from(normalized));
             }
         }
     }

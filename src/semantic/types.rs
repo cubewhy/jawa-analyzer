@@ -420,8 +420,7 @@ impl<'idx> TypeResolver<'idx> {
             array_dims: ty.array_dims,
         };
 
-        if ty.is_exact_class()
-            || ty.is_primitive()
+        if ty.is_primitive()
             || ty.is_type_var()
             || ty.is_unknown()
             || ty.is_null()
@@ -432,6 +431,11 @@ impl<'idx> TypeResolver<'idx> {
 
         let base = ty.erased_internal();
         if base.is_empty() {
+            return ty;
+        }
+
+        if self.view.get_class(base).is_some() {
+            ty.kind = crate::semantic::types::type_name::TypeNameKind::Internal;
             return ty;
         }
 
@@ -449,6 +453,7 @@ impl<'idx> TypeResolver<'idx> {
             .unwrap_or(owner_internal);
         if base == owner_simple {
             ty.base_internal = Arc::from(owner_internal);
+            ty.kind = crate::semantic::types::type_name::TypeNameKind::Internal;
             return ty;
         }
 
@@ -457,6 +462,7 @@ impl<'idx> TypeResolver<'idx> {
             let candidate = format!("{outer}${base}");
             if self.view.get_class(&candidate).is_some() {
                 ty.base_internal = Arc::from(candidate);
+                ty.kind = crate::semantic::types::type_name::TypeNameKind::Internal;
                 return ty;
             }
         }
@@ -466,6 +472,7 @@ impl<'idx> TypeResolver<'idx> {
             let candidate = format!("{pkg}/{base}");
             if self.view.get_class(&candidate).is_some() {
                 ty.base_internal = Arc::from(candidate);
+                ty.kind = crate::semantic::types::type_name::TypeNameKind::Internal;
                 return ty;
             }
         }
@@ -473,12 +480,14 @@ impl<'idx> TypeResolver<'idx> {
         let java_lang_candidate = format!("java/lang/{base}");
         if self.view.get_class(&java_lang_candidate).is_some() {
             ty.base_internal = Arc::from(java_lang_candidate);
+            ty.kind = crate::semantic::types::type_name::TypeNameKind::Internal;
             return ty;
         }
 
         let globals = self.view.get_classes_by_simple_name(base);
         if globals.len() == 1 {
             ty.base_internal = Arc::clone(&globals[0].internal_name);
+            ty.kind = crate::semantic::types::type_name::TypeNameKind::Internal;
             return ty;
         }
 
