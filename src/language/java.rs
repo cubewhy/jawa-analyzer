@@ -3600,6 +3600,7 @@ mod tests {
             vec![LocalVar {
                 name: Arc::from("x"),
                 type_internal: TypeName::new("java/lang/Object"),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             }],
             None,

@@ -406,6 +406,7 @@ impl<'s> KotlinContextExtractor<'s> {
                     vars.push(LocalVar {
                         name: Arc::from(name),
                         type_internal: TypeName::new(kotlin_type_to_internal(ty)),
+                        decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                         init_expr: None,
                     });
                 }
@@ -425,6 +426,7 @@ impl<'s> KotlinContextExtractor<'s> {
                     vars.push(LocalVar {
                         name: Arc::from(name),
                         type_internal: TypeName::new("java/lang/Object"),
+                        decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                         init_expr: None,
                     });
                 }
@@ -484,6 +486,7 @@ impl<'s> KotlinContextExtractor<'s> {
                 Some(LocalVar {
                     name: Arc::from(name),
                     type_internal: TypeName::new(kotlin_type_to_internal(ty)),
+                    decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                     init_expr: None,
                 })
             })

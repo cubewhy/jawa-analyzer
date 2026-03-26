@@ -5,9 +5,25 @@ use std::sync::Arc;
 /// - Primitive types: base_internal = "int"
 /// - Arrays: array_dims > 0
 /// - With generics: args = [TypeName], rendered as "java/util/List<Ljava/lang/String;>"
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TypeNameKind {
+    Internal,
+    Primitive,
+    TypeVar,
+    SourceLike,
+    Intersection,
+    Wildcard,
+    WildcardExtends,
+    WildcardSuper,
+    Null,
+    Unknown,
+    Capture,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct TypeName {
     pub base_internal: Arc<str>,
+    pub kind: TypeNameKind,
     pub args: Vec<TypeName>,
     pub array_dims: usize,
 }
@@ -23,19 +39,79 @@ impl TypeName {
             dims += 1;
             base = stripped.trim_end();
         }
-        TypeName {
-            base_internal: Arc::from(base),
-            args: Vec::new(),
-            array_dims: dims,
-        }
+        Self::with_kind(base, Self::classify_legacy_base(base)).with_array_dims(dims)
     }
 
     pub fn with_args(base_internal: impl Into<Arc<str>>, args: Vec<TypeName>) -> Self {
+        let raw: Arc<str> = base_internal.into();
+        let kind = Self::classify_legacy_base(raw.as_ref());
+        Self::with_args_and_kind(raw, kind, args)
+    }
+
+    pub fn with_kind(base_internal: impl Into<Arc<str>>, kind: TypeNameKind) -> Self {
         TypeName {
             base_internal: base_internal.into(),
+            kind,
+            args: Vec::new(),
+            array_dims: 0,
+        }
+    }
+
+    pub fn with_args_and_kind(
+        base_internal: impl Into<Arc<str>>,
+        kind: TypeNameKind,
+        args: Vec<TypeName>,
+    ) -> Self {
+        TypeName {
+            base_internal: base_internal.into(),
+            kind,
             args,
             array_dims: 0,
         }
+    }
+
+    pub fn internal(base_internal: impl Into<Arc<str>>) -> Self {
+        Self::with_kind(base_internal, TypeNameKind::Internal)
+    }
+
+    pub fn primitive(base_internal: impl Into<Arc<str>>) -> Self {
+        Self::with_kind(base_internal, TypeNameKind::Primitive)
+    }
+
+    pub fn type_var(base_internal: impl Into<Arc<str>>) -> Self {
+        Self::with_kind(base_internal, TypeNameKind::TypeVar)
+    }
+
+    pub fn source_like(base_internal: impl Into<Arc<str>>) -> Self {
+        Self::with_kind(base_internal, TypeNameKind::SourceLike)
+    }
+
+    pub fn unknown() -> Self {
+        Self::with_kind("unknown", TypeNameKind::Unknown)
+    }
+
+    pub fn null() -> Self {
+        Self::with_kind("null", TypeNameKind::Null)
+    }
+
+    pub fn wildcard() -> Self {
+        Self::with_kind("*", TypeNameKind::Wildcard)
+    }
+
+    pub fn internal_with_args(base_internal: impl Into<Arc<str>>, args: Vec<TypeName>) -> Self {
+        Self::with_args_and_kind(base_internal, TypeNameKind::Internal, args)
+    }
+
+    pub fn wildcard_extends(inner: TypeName) -> Self {
+        Self::with_args_and_kind("+", TypeNameKind::WildcardExtends, vec![inner])
+    }
+
+    pub fn wildcard_super(inner: TypeName) -> Self {
+        Self::with_args_and_kind("-", TypeNameKind::WildcardSuper, vec![inner])
+    }
+
+    pub fn capture() -> Self {
+        Self::with_kind("capture", TypeNameKind::Capture)
     }
 
     pub fn intersection(bounds: Vec<TypeName>) -> Self {
@@ -48,12 +124,16 @@ impl TypeName {
             }
         }
         match flattened.len() {
-            0 => TypeName::new(Self::INTERSECTION_INTERNAL),
+            0 => TypeName::with_kind(Self::INTERSECTION_INTERNAL, TypeNameKind::Intersection),
             1 => flattened
                 .into_iter()
                 .next()
-                .unwrap_or_else(|| TypeName::new("unknown")),
-            _ => TypeName::with_args(Self::INTERSECTION_INTERNAL, flattened),
+                .unwrap_or_else(TypeName::unknown),
+            _ => TypeName::with_args_and_kind(
+                Self::INTERSECTION_INTERNAL,
+                TypeNameKind::Intersection,
+                flattened,
+            ),
         }
     }
 
@@ -67,17 +147,64 @@ impl TypeName {
     }
 
     pub fn is_primitive(&self) -> bool {
-        if self.is_intersection() {
-            return false;
-        }
-        matches!(
-            self.base_internal.as_ref(),
-            "int" | "long" | "short" | "byte" | "char" | "float" | "double" | "boolean" | "void"
-        )
+        self.kind == TypeNameKind::Primitive
     }
 
     pub fn is_intersection(&self) -> bool {
-        self.base_internal.as_ref() == Self::INTERSECTION_INTERNAL
+        self.kind == TypeNameKind::Intersection
+    }
+
+    pub fn is_internal(&self) -> bool {
+        self.kind == TypeNameKind::Internal
+    }
+
+    pub fn is_type_var(&self) -> bool {
+        self.kind == TypeNameKind::TypeVar
+    }
+
+    pub fn is_source_like(&self) -> bool {
+        self.kind == TypeNameKind::SourceLike
+    }
+
+    pub fn is_unknown(&self) -> bool {
+        self.kind == TypeNameKind::Unknown
+    }
+
+    pub fn is_null(&self) -> bool {
+        self.kind == TypeNameKind::Null
+    }
+
+    pub fn is_wildcard(&self) -> bool {
+        self.kind == TypeNameKind::Wildcard
+    }
+
+    pub fn is_wildcard_extends(&self) -> bool {
+        self.kind == TypeNameKind::WildcardExtends
+    }
+
+    pub fn is_wildcard_super(&self) -> bool {
+        self.kind == TypeNameKind::WildcardSuper
+    }
+
+    pub fn is_capture(&self) -> bool {
+        self.kind == TypeNameKind::Capture
+    }
+
+    pub fn is_wildcard_like(&self) -> bool {
+        matches!(
+            self.kind,
+            TypeNameKind::Wildcard
+                | TypeNameKind::WildcardExtends
+                | TypeNameKind::WildcardSuper
+                | TypeNameKind::Capture
+        )
+    }
+
+    pub fn is_exact_class(&self) -> bool {
+        if self.is_intersection() {
+            return self.primary_bound().is_some_and(TypeName::is_exact_class);
+        }
+        self.kind == TypeNameKind::Internal
     }
 
     pub fn has_generics(&self) -> bool {
@@ -117,7 +244,7 @@ impl TypeName {
     }
 
     pub fn wildcard_upper_bound(&self) -> Option<&TypeName> {
-        if self.base_internal.as_ref() == "+" {
+        if self.is_wildcard_extends() {
             return self.args.first();
         }
         None
@@ -167,12 +294,14 @@ impl TypeName {
         }
 
         let base = self.base_internal.as_ref();
-        let mut s = if self.args.is_empty() {
-            base.to_string()
-        } else {
-            let arg_sigs: Vec<String> = self.args.iter().map(|a| a.to_jvm_signature()).collect();
-            format!("{}<{}>", base, arg_sigs.join(""))
-        };
+        let mut s =
+            if self.args.is_empty() || self.is_wildcard_extends() || self.is_wildcard_super() {
+                base.to_string()
+            } else {
+                let arg_sigs: Vec<String> =
+                    self.args.iter().map(|a| a.to_jvm_signature()).collect();
+                format!("{}<{}>", base, arg_sigs.join(""))
+            };
         if self.array_dims > 0 {
             s.push_str(&"[]".repeat(self.array_dims));
         }
@@ -197,60 +326,42 @@ impl TypeName {
             return rendered;
         }
 
-        fn is_likely_type_var(name: &str) -> bool {
-            let mut chars = name.chars();
-            let Some(first) = chars.next() else {
-                return false;
-            };
-            if !first.is_ascii_uppercase() {
-                return false;
-            }
-            if name.len() == 1 {
-                return true;
-            }
-            chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-                && matches!(
-                    first,
-                    'E' | 'K' | 'R' | 'T' | 'U' | 'V' | 'W' | 'X' | 'Y' | 'Z'
-                )
-        }
-
         fn to_jvm_sig_for_substitution(ty: &TypeName) -> String {
-            let mut sig = match ty.base_internal.as_ref() {
-                "byte" => "B".to_string(),
-                "char" => "C".to_string(),
-                "double" => "D".to_string(),
-                "float" => "F".to_string(),
-                "int" => "I".to_string(),
-                "long" => "J".to_string(),
-                "short" => "S".to_string(),
-                "boolean" => "Z".to_string(),
-                "void" => "V".to_string(),
-                "*" => "*".to_string(),
-                "+" | "-" => {
+            let mut sig = match ty.kind {
+                TypeNameKind::Primitive => match ty.base_internal.as_ref() {
+                    "byte" => "B".to_string(),
+                    "char" => "C".to_string(),
+                    "double" => "D".to_string(),
+                    "float" => "F".to_string(),
+                    "int" => "I".to_string(),
+                    "long" => "J".to_string(),
+                    "short" => "S".to_string(),
+                    "boolean" => "Z".to_string(),
+                    "void" => "V".to_string(),
+                    other => other.to_string(),
+                },
+                TypeNameKind::Wildcard => "*".to_string(),
+                TypeNameKind::WildcardExtends | TypeNameKind::WildcardSuper => {
                     if let Some(inner) = ty.args.first() {
                         format!("{}{}", ty.base_internal, to_jvm_sig_for_substitution(inner))
                     } else {
                         ty.base_internal.to_string()
                     }
                 }
-                base if base.contains('/') => {
+                TypeNameKind::TypeVar => format!("T{};", ty.base_internal),
+                TypeNameKind::Internal
+                | TypeNameKind::SourceLike
+                | TypeNameKind::Capture
+                | TypeNameKind::Null
+                | TypeNameKind::Unknown
+                | TypeNameKind::Intersection => {
+                    let base = ty.base_internal.as_ref();
                     if ty.args.is_empty() {
                         format!("L{};", base)
                     } else {
                         let arg_sigs: Vec<String> =
                             ty.args.iter().map(to_jvm_sig_for_substitution).collect();
                         format!("L{}<{}>;", base, arg_sigs.join(""))
-                    }
-                }
-                other if is_likely_type_var(other) => format!("T{};", other),
-                other => {
-                    if ty.args.is_empty() {
-                        format!("L{};", other)
-                    } else {
-                        let arg_sigs: Vec<String> =
-                            ty.args.iter().map(to_jvm_sig_for_substitution).collect();
-                        format!("L{}<{}>;", other, arg_sigs.join(""))
                     }
                 }
             };
@@ -287,25 +398,29 @@ impl TypeName {
             return "Ljava/lang/Object;".to_string();
         }
 
-        let mut sig = match self.base_internal.as_ref() {
-            "byte" => "B".to_string(),
-            "char" => "C".to_string(),
-            "double" => "D".to_string(),
-            "float" => "F".to_string(),
-            "int" => "I".to_string(),
-            "long" => "J".to_string(),
-            "short" => "S".to_string(),
-            "boolean" => "Z".to_string(),
-            "void" => "V".to_string(),
-            "*" => "*".to_string(),
-            "+" | "-" => {
+        let mut sig = match self.kind {
+            TypeNameKind::Primitive => match self.base_internal.as_ref() {
+                "byte" => "B".to_string(),
+                "char" => "C".to_string(),
+                "double" => "D".to_string(),
+                "float" => "F".to_string(),
+                "int" => "I".to_string(),
+                "long" => "J".to_string(),
+                "short" => "S".to_string(),
+                "boolean" => "Z".to_string(),
+                "void" => "V".to_string(),
+                other => other.to_string(),
+            },
+            TypeNameKind::Wildcard => "*".to_string(),
+            TypeNameKind::WildcardExtends | TypeNameKind::WildcardSuper => {
                 if let Some(inner) = self.args.first() {
                     format!("{}{}", self.base_internal, inner.to_jvm_signature())
                 } else {
                     self.base_internal.to_string()
                 }
             }
-            base if base.contains('/') => {
+            TypeNameKind::Internal | TypeNameKind::SourceLike | TypeNameKind::Capture => {
+                let base = self.base_internal.as_ref();
                 if self.args.is_empty() {
                     format!("L{};", base)
                 } else {
@@ -314,14 +429,31 @@ impl TypeName {
                     format!("L{}<{}>;", base, arg_sigs.join(""))
                 }
             }
-            // Treat other identifiers as type variables (e.g. "T", "E").
-            other => format!("T{};", other),
+            TypeNameKind::TypeVar | TypeNameKind::Null | TypeNameKind::Unknown => {
+                format!("T{};", self.base_internal)
+            }
+            TypeNameKind::Intersection => "Ljava/lang/Object;".to_string(),
         };
 
         if self.array_dims > 0 {
             sig = format!("{}{}", "[".repeat(self.array_dims), sig);
         }
         sig
+    }
+
+    fn classify_legacy_base(base: &str) -> TypeNameKind {
+        match base {
+            "byte" | "char" | "double" | "float" | "int" | "long" | "short" | "boolean"
+            | "void" => TypeNameKind::Primitive,
+            Self::INTERSECTION_INTERNAL => TypeNameKind::Intersection,
+            "*" | "?" => TypeNameKind::Wildcard,
+            "+" => TypeNameKind::WildcardExtends,
+            "-" => TypeNameKind::WildcardSuper,
+            "null" => TypeNameKind::Null,
+            "capture" => TypeNameKind::Capture,
+            _ if base.contains('/') => TypeNameKind::Internal,
+            _ => TypeNameKind::SourceLike,
+        }
     }
 }
 

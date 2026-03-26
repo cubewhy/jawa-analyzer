@@ -578,11 +578,13 @@ mod tests {
                 LocalVar {
                     name: Arc::from("nns"),
                     type_internal: TypeName::new("Test/NestedNonStatic"),
+                    decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                     init_expr: None,
                 },
                 LocalVar {
                     name: Arc::from("t"),
                     type_internal: TypeName::new("Test"),
+                    decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                     init_expr: None,
                 },
             ],

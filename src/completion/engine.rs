@@ -672,6 +672,7 @@ mod tests {
             vec![LocalVar {
                 name: Arc::from("cl"),
                 type_internal: TypeName::new("RandomClass"),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             }],
             Some(Arc::from("Main")),
@@ -706,6 +707,7 @@ mod tests {
             vec![LocalVar {
                 name: Arc::from("cl"),
                 type_internal: TypeName::new("RandomClass"),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             }],
             Some(Arc::from("Main")),
@@ -736,6 +738,7 @@ mod tests {
             vec![LocalVar {
                 name: Arc::from("cl"),
                 type_internal: TypeName::new("RandomClass"),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             }],
             Some(Arc::from("Main")),
@@ -1005,11 +1008,13 @@ mod tests {
                 LocalVar {
                     name: Arc::from("nc"),
                     type_internal: TypeName::new("NestedClass"),
+                    decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                     init_expr: None,
                 },
                 LocalVar {
                     name: Arc::from("str"),
-                    type_internal: TypeName::new("var"),
+                    type_internal: TypeName::unknown(),
+                    decl_kind: crate::semantic::LocalVarDeclKind::VarSyntax,
                     init_expr: Some("nc.randomFunction()".to_string()),
                 },
             ],
@@ -1082,11 +1087,13 @@ mod tests {
                 LocalVar {
                     name: Arc::from("nc"),
                     type_internal: TypeName::new("NestedClass"),
+                    decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                     init_expr: None,
                 },
                 LocalVar {
                     name: Arc::from("str"),
-                    type_internal: TypeName::new("var"),
+                    type_internal: TypeName::unknown(),
+                    decl_kind: crate::semantic::LocalVarDeclKind::VarSyntax,
                     init_expr: Some("nc.randomFunction(\"a\", 1l)".to_string()),
                 },
             ],
@@ -1144,7 +1151,8 @@ mod tests {
             "",
             vec![LocalVar {
                 name: Arc::from("str"),
-                type_internal: TypeName::new("var"),
+                type_internal: TypeName::unknown(),
+                decl_kind: crate::semantic::LocalVarDeclKind::VarSyntax,
                 init_expr: Some("getString()".to_string()),
             }],
             Some(Arc::from("Main")),
@@ -1316,11 +1324,13 @@ mod tests {
                 LocalVar {
                     name: Arc::from("args"),
                     type_internal: TypeName::new("String[]"),
+                    decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                     init_expr: None,
                 },
                 LocalVar {
                     name: Arc::from("a"),
-                    type_internal: TypeName::new("var"),
+                    type_internal: TypeName::unknown(),
+                    decl_kind: crate::semantic::LocalVarDeclKind::VarSyntax,
                     init_expr: Some("args[0]".to_string()),
                 },
             ],
@@ -1356,11 +1366,13 @@ mod tests {
                 LocalVar {
                     name: Arc::from("nums"),
                     type_internal: TypeName::new("int[]"),
+                    decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                     init_expr: None,
                 },
                 LocalVar {
                     name: Arc::from("x"),
-                    type_internal: TypeName::new("var"),
+                    type_internal: TypeName::unknown(),
+                    decl_kind: crate::semantic::LocalVarDeclKind::VarSyntax,
                     init_expr: Some("nums[0]".to_string()),
                 },
             ],
@@ -1417,6 +1429,7 @@ mod tests {
             vec![LocalVar {
                 name: Arc::from("b"),
                 type_internal: TypeName::new("String[]"),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             }],
             None,
@@ -1534,24 +1547,28 @@ mod tests {
                 LocalVar {
                     name: Arc::from("arr"),
                     type_internal: TypeName::new("char[]"),
+                    decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                     init_expr: None,
                 },
                 // var c = arr[0];
                 LocalVar {
                     name: Arc::from("c"),
-                    type_internal: TypeName::new("var"),
+                    type_internal: TypeName::unknown(),
+                    decl_kind: crate::semantic::LocalVarDeclKind::VarSyntax,
                     init_expr: Some("arr[0]".to_string()),
                 },
                 // var strArr = new String[]{"[1]", "[2]"}; (标准对象数组，带干扰符号)
                 LocalVar {
                     name: Arc::from("strArr"),
-                    type_internal: TypeName::new("var"),
+                    type_internal: TypeName::unknown(),
+                    decl_kind: crate::semantic::LocalVarDeclKind::VarSyntax,
                     init_expr: Some("new String[]{\"[1]\", \"[2]\"}".to_string()),
                 },
                 // var strItem = strArr[1];
                 LocalVar {
                     name: Arc::from("strItem"),
-                    type_internal: TypeName::new("var"),
+                    type_internal: TypeName::unknown(),
+                    decl_kind: crate::semantic::LocalVarDeclKind::VarSyntax,
                     init_expr: Some("strArr[1]".to_string()),
                 },
             ],
@@ -1635,7 +1652,8 @@ mod tests {
             "",
             vec![LocalVar {
                 name: Arc::from("item"),
-                type_internal: TypeName::new("var"),
+                type_internal: TypeName::unknown(),
+                decl_kind: crate::semantic::LocalVarDeclKind::VarSyntax,
                 init_expr: Some("getArr()[0]".to_string()),
             }],
             Some(Arc::from("Main")),
@@ -1686,7 +1704,8 @@ mod tests {
             "",
             vec![LocalVar {
                 name: Arc::from("m"),
-                type_internal: TypeName::new("var"),
+                type_internal: TypeName::unknown(),
+                decl_kind: crate::semantic::LocalVarDeclKind::VarSyntax,
                 init_expr: Some("new Main()".to_string()),
             }],
             Some(Arc::from("org/cubewhy/Main")),
@@ -1740,6 +1759,7 @@ mod tests {
             vec![LocalVar {
                 name: Arc::from("res"),
                 type_internal: TypeName::new("java/lang/String[][]"),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             }],
             None,
@@ -1820,6 +1840,7 @@ mod tests {
             vec![LocalVar {
                 name: Arc::from("m"),
                 type_internal: TypeName::new("org/cubewhy/Main"),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             }],
             None,

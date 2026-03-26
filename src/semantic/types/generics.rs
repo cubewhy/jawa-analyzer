@@ -96,15 +96,17 @@ impl JvmType {
         match self {
             JvmType::Object(name, args) => {
                 let inner_args: Vec<TypeName> = args.iter().map(|a| a.to_type_name()).collect();
-                TypeName::with_args(name.as_str(), inner_args)
+                TypeName::internal_with_args(name.as_str(), inner_args)
             }
-            JvmType::TypeVar(name) => TypeName::new(name.as_str()),
+            JvmType::TypeVar(name) => TypeName::type_var(name.as_str()),
             JvmType::Array(inner) => inner.to_type_name().wrap_array(),
-            JvmType::Wildcard => TypeName::new("*"),
-            JvmType::WildcardBound(c, inner) => {
-                TypeName::with_args(c.to_string(), vec![inner.to_type_name()])
+            JvmType::Wildcard => TypeName::wildcard(),
+            JvmType::WildcardBound('+', inner) => TypeName::wildcard_extends(inner.to_type_name()),
+            JvmType::WildcardBound('-', inner) => TypeName::wildcard_super(inner.to_type_name()),
+            JvmType::WildcardBound(other, inner) => {
+                TypeName::with_args(other.to_string(), vec![inner.to_type_name()])
             }
-            JvmType::Primitive(c) => TypeName::new(java_primitive_char_to_name(*c)),
+            JvmType::Primitive(c) => TypeName::primitive(java_primitive_char_to_name(*c)),
         }
     }
 
@@ -346,7 +348,9 @@ fn expand_type_name_with_bounds_impl(
         .collect::<Vec<_>>();
 
     let base = ty.base_internal.as_ref();
-    if ty.args.is_empty() && !ty.contains_slash() && is_likely_type_var_name(base) {
+    if ty.args.is_empty()
+        && (ty.is_type_var() || (ty.is_source_like() && is_likely_type_var_name(base)))
+    {
         let bounds = method_bounds.get(base).or_else(|| class_bounds.get(base))?;
         if !visiting.insert(base.to_string()) {
             return None;
@@ -368,6 +372,7 @@ fn expand_type_name_with_bounds_impl(
 
     Some(TypeName {
         base_internal: ty.base_internal.clone(),
+        kind: ty.kind,
         args: expanded_args,
         array_dims: ty.array_dims,
     })

@@ -90,7 +90,7 @@ impl<'a> SymbolResolver<'a> {
                 }
                 self.resolve_member(
                     ctx,
-                    &TypeName::new(class_internal_name.as_ref()),
+                    &TypeName::internal(class_internal_name.as_ref()),
                     member_prefix,
                     None,
                 )
@@ -169,7 +169,7 @@ impl<'a> SymbolResolver<'a> {
                         &ctx.local_variables,
                         ctx.enclosing_internal_name.as_ref(),
                     );
-                    resolved.unwrap_or_else(|| TypeName::new("unknown"))
+                    resolved.unwrap_or_else(TypeName::unknown)
                 })
                 .collect();
 
@@ -315,22 +315,25 @@ impl<'a> SymbolResolver<'a> {
             if !ty.is_empty()
                 && let Some(internal) = self.resolve_type_name(ctx, ty)
             {
-                return Some(TypeName::new(internal.as_ref()));
+                return Some(TypeName::internal(internal.as_ref()));
             }
         }
 
         let as_internal = expr.replace('.', "/");
         if self.view.get_class(&as_internal).is_some() {
-            return Some(TypeName::new(as_internal));
+            return Some(TypeName::internal(as_internal));
         }
 
         if expr.is_empty() || expr == "this" {
-            return ctx.enclosing_internal_name.as_deref().map(TypeName::new);
+            return ctx
+                .enclosing_internal_name
+                .as_deref()
+                .map(TypeName::internal);
         }
         if is_super_receiver_expr(expr) {
             return resolve_direct_super_owner(ctx, self.view)
                 .as_deref()
-                .map(TypeName::new);
+                .map(TypeName::internal);
         }
 
         // local variable
@@ -347,7 +350,7 @@ impl<'a> SymbolResolver<'a> {
             return self
                 .resolve_type_name(ctx, expr)
                 .as_deref()
-                .map(TypeName::new);
+                .map(TypeName::internal);
         }
         // Chained field access: System.out -> java/lang/System -> field out -> java/io/PrintStream
         self.resolve_chained(ctx, expr)
@@ -359,9 +362,9 @@ impl<'a> SymbolResolver<'a> {
         let first = parts.next()?;
 
         let mut current: TypeName = if first == "this" {
-            TypeName::new(ctx.enclosing_internal_name.as_deref()?)
+            TypeName::internal(ctx.enclosing_internal_name.as_deref()?)
         } else if is_super_receiver_expr(first) {
-            TypeName::new(resolve_direct_super_owner(ctx, self.view)?.as_ref())
+            TypeName::internal(resolve_direct_super_owner(ctx, self.view)?.as_ref())
         } else if let Some(lv) = ctx
             .local_variables
             .iter()
@@ -369,7 +372,7 @@ impl<'a> SymbolResolver<'a> {
         {
             lv.type_internal.clone()
         } else {
-            TypeName::new(self.resolve_type_name(ctx, first)?.as_ref())
+            TypeName::internal(self.resolve_type_name(ctx, first)?.as_ref())
         };
 
         for part in parts {
@@ -377,7 +380,7 @@ impl<'a> SymbolResolver<'a> {
                 .view
                 .resolve_direct_inner_class(current.erased_internal(), part)
             {
-                current = TypeName::new(inner.internal_name.as_ref());
+                current = TypeName::internal(inner.internal_name.as_ref());
                 continue;
             }
             tracing::debug!(
@@ -386,7 +389,7 @@ impl<'a> SymbolResolver<'a> {
                 "resolve: chained field lookup"
             );
             let (_, field) = self.lookup_field_candidate(&current, part)?;
-            current = TypeName::new(descriptor_to_internal_arc(&field.descriptor)?.as_ref());
+            current = TypeName::internal(descriptor_to_internal_arc(&field.descriptor)?.as_ref());
         }
 
         tracing::debug!(
@@ -1030,6 +1033,7 @@ mod tests {
                     TypeName::new("org/example/Flyable"),
                     TypeName::new("org/example/Swimmable"),
                 ]),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             }],
             None,

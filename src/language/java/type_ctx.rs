@@ -466,12 +466,15 @@ fn resolve_type_name_strict_inner(
             .map(|arg| resolve_type_arg_type(ctx, arg))
             .collect::<Option<Vec<crate::semantic::types::type_name::TypeName>>>()?;
         if arg_types.is_empty() {
-            crate::semantic::types::type_name::TypeName::new(base_internal)
+            crate::semantic::types::type_name::TypeName::internal(base_internal)
         } else {
-            crate::semantic::types::type_name::TypeName::with_args(base_internal, arg_types)
+            crate::semantic::types::type_name::TypeName::internal_with_args(
+                base_internal,
+                arg_types,
+            )
         }
     } else {
-        crate::semantic::types::type_name::TypeName::new(base_internal)
+        crate::semantic::types::type_name::TypeName::internal(base_internal)
     };
 
     if dims > 0 {
@@ -549,12 +552,15 @@ fn resolve_type_name_relaxed_inner(
             }
         }
         if resolved_args.is_empty() {
-            crate::semantic::types::type_name::TypeName::new(base_internal)
+            crate::semantic::types::type_name::TypeName::internal(base_internal)
         } else {
-            crate::semantic::types::type_name::TypeName::with_args(base_internal, resolved_args)
+            crate::semantic::types::type_name::TypeName::internal_with_args(
+                base_internal,
+                resolved_args,
+            )
         }
     } else {
-        crate::semantic::types::type_name::TypeName::new(base_internal)
+        crate::semantic::types::type_name::TypeName::internal(base_internal)
     };
 
     if dims > 0 {
@@ -630,20 +636,16 @@ fn resolve_type_arg_type(
         return None;
     }
     if arg == "?" {
-        return Some(crate::semantic::types::type_name::TypeName::new("*"));
+        return Some(crate::semantic::types::type_name::TypeName::wildcard());
     }
     if let Some(bound) = arg.strip_prefix("? extends ") {
         let inner = resolve_type_arg_type(ctx, bound)?;
-        return Some(crate::semantic::types::type_name::TypeName::with_args(
-            "+",
-            vec![inner],
-        ));
+        return Some(crate::semantic::types::type_name::TypeName::wildcard_extends(inner));
     }
     if let Some(bound) = arg.strip_prefix("? super ") {
         let inner = resolve_type_arg_type(ctx, bound)?;
-        return Some(crate::semantic::types::type_name::TypeName::with_args(
-            "-",
-            vec![inner],
+        return Some(crate::semantic::types::type_name::TypeName::wildcard_super(
+            inner,
         ));
     }
 
@@ -677,7 +679,7 @@ fn resolve_type_arg_type_relaxed(
     }
     if arg == "?" {
         return Some((
-            crate::semantic::types::type_name::TypeName::new("*"),
+            crate::semantic::types::type_name::TypeName::wildcard(),
             TypeResolveQuality::Exact,
         ));
     }
@@ -685,7 +687,7 @@ fn resolve_type_arg_type_relaxed(
         let inner = resolve_type_arg_type_relaxed(ctx, bound)
             .or_else(|| resolve_type_name_relaxed_inner(ctx, bound))?;
         return Some((
-            crate::semantic::types::type_name::TypeName::with_args("+", vec![inner.0]),
+            crate::semantic::types::type_name::TypeName::wildcard_extends(inner.0),
             inner.1,
         ));
     }
@@ -693,7 +695,7 @@ fn resolve_type_arg_type_relaxed(
         let inner = resolve_type_arg_type_relaxed(ctx, bound)
             .or_else(|| resolve_type_name_relaxed_inner(ctx, bound))?;
         return Some((
-            crate::semantic::types::type_name::TypeName::with_args("-", vec![inner.0]),
+            crate::semantic::types::type_name::TypeName::wildcard_super(inner.0),
             inner.1,
         ));
     }

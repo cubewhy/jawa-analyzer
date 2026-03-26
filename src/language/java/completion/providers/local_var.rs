@@ -86,6 +86,7 @@ mod tests {
                 .map(|(name, ty)| LocalVar {
                     name: Arc::from(name),
                     type_internal: TypeName::new(ty),
+                    decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                     init_expr: None,
                 })
                 .collect(),
@@ -168,6 +169,7 @@ mod tests {
             vec![LocalVar {
                 name: Arc::from("aVar"),
                 type_internal: TypeName::new("java/lang/String"),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             }],
             None,
@@ -229,6 +231,7 @@ mod tests {
             vec![LocalVar {
                 name: Arc::from("cl"),
                 type_internal: TypeName::new("RandomClass"),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             }],
             None,
@@ -258,6 +261,7 @@ mod tests {
             vec![LocalVar {
                 name: Arc::from("aVar"),
                 type_internal: TypeName::new("java/lang/String"),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             }],
             None,

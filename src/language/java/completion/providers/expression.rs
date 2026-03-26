@@ -991,6 +991,7 @@ mod tests {
             vec![crate::semantic::LocalVar {
                 name: Arc::from("t"),
                 type_internal: crate::semantic::types::type_name::TypeName::new("app/Test"),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             }],
             Some(Arc::from("Test")),

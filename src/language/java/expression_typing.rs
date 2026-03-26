@@ -498,6 +498,7 @@ fn intrinsic_method_return_type(
             // Create a wildcard type with upper bound of the receiver type
             let wildcard = TypeName {
                 base_internal: Arc::from("+"),
+                kind: crate::semantic::types::type_name::TypeNameKind::WildcardExtends,
                 args: vec![receiver.clone()],
                 array_dims: 0,
             };
@@ -1136,7 +1137,7 @@ fn evaluate_chain_inner(
                             type_ctx,
                             view,
                         )
-                        .unwrap_or_else(|| TypeName::new("unknown"))
+                        .unwrap_or_else(TypeName::unknown)
                     })
                     .collect();
                 current = resolver.resolve_method_return_with_callsite_and_qualifier_resolver(
@@ -1249,7 +1250,7 @@ fn resolve_chain_segment_on_receiver(
                         None,
                         None,
                     )
-                    .unwrap_or_else(|| TypeName::new("unknown"))
+                    .unwrap_or_else(TypeName::unknown)
                 })
                 .collect();
             let receiver_internal = recv_full.to_internal_with_generics();
@@ -1276,7 +1277,7 @@ fn resolve_chain_segment_on_receiver(
 }
 
 fn canonicalize_chain_receiver_type(recv: &TypeName, type_ctx: &SourceTypeCtx) -> Option<TypeName> {
-    if recv.contains_slash() || recv.is_primitive() {
+    if recv.is_exact_class() || recv.is_primitive() {
         return Some(recv.clone());
     }
 
@@ -1310,7 +1311,7 @@ fn resolve_local_identifier_type(
     resolving_vars: &mut Vec<Arc<str>>,
 ) -> Option<TypeName> {
     let local = locals.iter().find(|lv| lv.name.as_ref() == ident)?;
-    if local.type_internal.erased_internal() != "var" {
+    if local.decl_kind != crate::semantic::LocalVarDeclKind::VarSyntax {
         return Some(local.type_internal.clone());
     }
 
@@ -1344,7 +1345,7 @@ fn is_currently_resolving_var_local(
     resolving_vars.iter().any(|name| name.as_ref() == ident)
         && locals.iter().any(|lv| {
             lv.name.as_ref() == ident
-                && lv.type_internal.erased_internal() == "var"
+                && lv.decl_kind == crate::semantic::LocalVarDeclKind::VarSyntax
                 && lv.init_expr.is_some()
         })
 }
@@ -1597,7 +1598,8 @@ mod tests {
         let resolver = TypeResolver::new(&view);
         let locals = vec![LocalVar {
             name: Arc::from("m"),
-            type_internal: TypeName::new("var"),
+            type_internal: TypeName::unknown(),
+            decl_kind: crate::semantic::LocalVarDeclKind::VarSyntax,
             init_expr: Some("new Main()".to_string()),
         }];
 
@@ -1627,12 +1629,14 @@ mod tests {
         let locals = vec![
             LocalVar {
                 name: Arc::from("s2"),
-                type_internal: TypeName::new("var"),
+                type_internal: TypeName::unknown(),
+                decl_kind: crate::semantic::LocalVarDeclKind::VarSyntax,
                 init_expr: Some("s1.substring(1)".to_string()),
             },
             LocalVar {
                 name: Arc::from("s1"),
-                type_internal: TypeName::new("var"),
+                type_internal: TypeName::unknown(),
+                decl_kind: crate::semantic::LocalVarDeclKind::VarSyntax,
                 init_expr: Some("\"\"".to_string()),
             },
         ];
@@ -1659,6 +1663,7 @@ mod tests {
         let locals = vec![LocalVar {
             name: Arc::from("x"),
             type_internal: TypeName::new("double"),
+            decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
             init_expr: None,
         }];
 
@@ -1731,6 +1736,7 @@ mod tests {
         let locals = vec![LocalVar {
             name: Arc::from("x"),
             type_internal: TypeName::new("java/lang/Object"),
+            decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
             init_expr: None,
         }];
 
@@ -2021,6 +2027,7 @@ mod tests {
         let locals = vec![LocalVar {
             name: Arc::from("s"),
             type_internal: TypeName::new("java/lang/String").with_array_dims(1),
+            decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
             init_expr: None,
         }];
 
@@ -2046,6 +2053,7 @@ mod tests {
         let locals = vec![LocalVar {
             name: Arc::from("s"),
             type_internal: TypeName::new("java/lang/Integer").with_array_dims(1),
+            decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
             init_expr: None,
         }];
 
@@ -2077,6 +2085,7 @@ mod tests {
         let locals = vec![LocalVar {
             name: Arc::from("s"),
             type_internal: TypeName::new("java/lang/String").with_array_dims(2),
+            decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
             init_expr: None,
         }];
 
@@ -2108,6 +2117,7 @@ mod tests {
         let locals = vec![LocalVar {
             name: Arc::from("s"),
             type_internal: TypeName::new("int").with_array_dims(1),
+            decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
             init_expr: None,
         }];
 
@@ -2217,6 +2227,7 @@ mod tests {
         let locals = vec![LocalVar {
             name: Arc::from("s"),
             type_internal: TypeName::new("java/lang/String").with_array_dims(1),
+            decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
             init_expr: None,
         }];
 
@@ -2288,6 +2299,7 @@ mod tests {
         let locals = vec![LocalVar {
             name: Arc::from("str"),
             type_internal: TypeName::new("java/lang/String"),
+            decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
             init_expr: None,
         }];
 
@@ -2304,6 +2316,7 @@ mod tests {
         // Should return Class<? extends String>
         let expected_wildcard = TypeName {
             base_internal: Arc::from("+"),
+            kind: crate::semantic::types::type_name::TypeNameKind::WildcardExtends,
             args: vec![TypeName::new("java/lang/String")],
             array_dims: 0,
         };
@@ -2322,6 +2335,7 @@ mod tests {
         let locals = vec![LocalVar {
             name: Arc::from("obj"),
             type_internal: TypeName::new("org/cubewhy/MyClass"),
+            decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
             init_expr: None,
         }];
 
@@ -2338,6 +2352,7 @@ mod tests {
         // Should return Class<? extends MyClass>
         let expected_wildcard = TypeName {
             base_internal: Arc::from("+"),
+            kind: crate::semantic::types::type_name::TypeNameKind::WildcardExtends,
             args: vec![TypeName::new("org/cubewhy/MyClass")],
             array_dims: 0,
         };
@@ -2360,6 +2375,7 @@ mod tests {
         let locals = vec![LocalVar {
             name: Arc::from("list"),
             type_internal: list_of_string.clone(),
+            decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
             init_expr: None,
         }];
 
@@ -2376,6 +2392,7 @@ mod tests {
         // Should return Class<? extends List<String>>
         let expected_wildcard = TypeName {
             base_internal: Arc::from("+"),
+            kind: crate::semantic::types::type_name::TypeNameKind::WildcardExtends,
             args: vec![list_of_string],
             array_dims: 0,
         };
@@ -2394,6 +2411,7 @@ mod tests {
         let locals = vec![LocalVar {
             name: Arc::from("obj"),
             type_internal: TypeName::new("java/lang/Object"),
+            decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
             init_expr: None,
         }];
 
@@ -2410,6 +2428,7 @@ mod tests {
         // Should return Class<? extends Object>
         let expected_wildcard = TypeName {
             base_internal: Arc::from("+"),
+            kind: crate::semantic::types::type_name::TypeNameKind::WildcardExtends,
             args: vec![TypeName::new("java/lang/Object")],
             array_dims: 0,
         };
@@ -2428,6 +2447,7 @@ mod tests {
         let locals = vec![LocalVar {
             name: Arc::from("arr"),
             type_internal: TypeName::new("java/lang/String").with_array_dims(1),
+            decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
             init_expr: None,
         }];
 
@@ -2460,6 +2480,7 @@ mod tests {
         let locals = vec![LocalVar {
             name: Arc::from("str"),
             type_internal: TypeName::new("java/lang/String"),
+            decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
             init_expr: None,
         }];
 
@@ -2476,6 +2497,7 @@ mod tests {
         // Should return Class<? extends String>
         let expected_wildcard = TypeName {
             base_internal: Arc::from("+"),
+            kind: crate::semantic::types::type_name::TypeNameKind::WildcardExtends,
             args: vec![TypeName::new("java/lang/String")],
             array_dims: 0,
         };

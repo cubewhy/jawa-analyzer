@@ -428,7 +428,7 @@ pub(crate) fn materialize_local_variable_types(
         .iter()
         .enumerate()
         .filter_map(|(i, lv)| {
-            if lv.type_internal.erased_internal() == "var" {
+            if lv.decl_kind == crate::semantic::LocalVarDeclKind::VarSyntax {
                 lv.init_expr.as_deref().map(|e| (i, e.to_string()))
             } else {
                 None
@@ -612,14 +612,14 @@ fn resolve_selected_call(
                 type_ctx,
                 view,
             )
-            .unwrap_or_else(|| TypeName::new("unknown"))
+            .unwrap_or_else(TypeName::unknown)
         })
         .collect();
     let mut selection_arg_types = arg_types.clone();
     if let Some(arg_index) = selection_unknown_arg_index
         && let Some(slot) = selection_arg_types.get_mut(arg_index)
     {
-        *slot = TypeName::new("unknown");
+        *slot = TypeName::unknown();
     }
 
     let candidate_refs: Vec<&MethodSummary> = candidates
@@ -793,7 +793,14 @@ fn canonicalize_scoped_type(
         return Some(TypeName::intersection(bounds).with_array_dims(ty.array_dims));
     }
 
-    if ty.contains_slash() || !ty.args.is_empty() {
+    if ty.is_exact_class()
+        || ty.is_primitive()
+        || ty.is_type_var()
+        || ty.is_unknown()
+        || ty.is_null()
+        || ty.is_wildcard_like()
+        || !ty.args.is_empty()
+    {
         return Some(ty);
     }
 
@@ -813,20 +820,10 @@ fn expand_local_type_strict(
     type_ctx: &SourceTypeCtx,
     ty: &TypeName,
 ) -> TypeName {
-    if matches!(
-        ty.erased_internal(),
-        "var"
-            | "unknown"
-            | "byte"
-            | "short"
-            | "int"
-            | "long"
-            | "float"
-            | "double"
-            | "boolean"
-            | "char"
-            | "void"
-    ) {
+    if ty.is_primitive() || ty.is_type_var() || ty.is_unknown() || ty.is_null() {
+        return ty.clone();
+    }
+    if ty.is_wildcard_like() {
         return ty.clone();
     }
 
@@ -860,15 +857,17 @@ fn expand_local_type_strict(
         .map(|a| expand_local_type_strict(sym, ctx, type_ctx, a))
         .collect();
 
-    let resolved = if ty.contains_slash() || sym.view.get_class(base).is_some() {
+    let resolved = if ty.is_exact_class() || sym.view.get_class(base).is_some() {
         TypeName {
             base_internal: ty.base_internal.clone(),
+            kind: ty.kind,
             args: expanded_args,
             array_dims: ty.array_dims,
         }
     } else if let Some(internal) = resolve_enclosing_owner_type_name(ctx, sym.view, base) {
         TypeName {
             base_internal: internal,
+            kind: crate::semantic::types::type_name::TypeNameKind::Internal,
             args: expanded_args,
             array_dims: ty.array_dims,
         }
@@ -879,6 +878,7 @@ fn expand_local_type_strict(
     } else if let Some(internal) = sym.resolve_type_name(ctx, base) {
         TypeName {
             base_internal: internal,
+            kind: crate::semantic::types::type_name::TypeNameKind::Internal,
             args: expanded_args,
             array_dims: ty.array_dims,
         }
@@ -1087,6 +1087,7 @@ mod tests {
             vec![LocalVar {
                 name: Arc::from("value"),
                 type_internal: TypeName::new("T"),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             }],
             Some(Arc::from("Demo")),

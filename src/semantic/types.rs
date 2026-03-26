@@ -169,7 +169,7 @@ impl<'idx> TypeResolver<'idx> {
                     }
 
                     match resolved {
-                        Some(internal) => TypeName::new(internal.as_ref()),
+                        Some(internal) => TypeName::internal(internal.as_ref()),
                         None => TypeName::new(raw_ty), // unresolved source-like type; may be expanded later
                     }
                 }
@@ -202,7 +202,7 @@ impl<'idx> TypeResolver<'idx> {
 
         // `this`
         if expr == "this" {
-            return enclosing.map(|arc| TypeName::new(arc.to_string()));
+            return enclosing.map(|arc| TypeName::internal(arc.to_string()));
         }
 
         // Strings
@@ -325,6 +325,7 @@ impl<'idx> TypeResolver<'idx> {
             // Create a wildcard type with upper bound of the receiver type
             let wildcard = TypeName {
                 base_internal: Arc::from("+"),
+                kind: crate::semantic::types::type_name::TypeNameKind::WildcardExtends,
                 args: vec![receiver_type],
                 array_dims: 0,
             };
@@ -414,12 +415,17 @@ impl<'idx> TypeResolver<'idx> {
             .collect();
         let mut ty = TypeName {
             base_internal: ty.base_internal,
+            kind: ty.kind,
             args: canonical_args,
             array_dims: ty.array_dims,
         };
 
-        if ty.contains_slash()
-            || matches!(ty.base_internal.as_ref(), "+" | "-" | "?" | "*" | "capture")
+        if ty.is_exact_class()
+            || ty.is_primitive()
+            || ty.is_type_var()
+            || ty.is_unknown()
+            || ty.is_null()
+            || ty.is_wildcard_like()
         {
             return ty;
         }
@@ -603,7 +609,7 @@ impl<'idx> TypeResolver<'idx> {
         };
 
         let inferred = arg_ty
-            .filter(|ty| ty.erased_internal() != "unknown")
+            .filter(|ty| !ty.is_unknown())
             .and_then(type_name_to_jvm_type)
             .or_else(|| {
                 arg_text.and_then(|txt| {
@@ -651,7 +657,7 @@ impl<'idx> TypeResolver<'idx> {
             }
 
             let owner_ty = self.resolve(qualifier, locals, enclosing)?;
-            let owner = if owner_ty.contains_slash() {
+            let owner = if owner_ty.is_exact_class() {
                 owner_ty.erased_internal().to_string()
             } else {
                 self.resolve_owner_from_text(owner_ty.erased_internal())?
@@ -702,6 +708,7 @@ impl<'idx> TypeResolver<'idx> {
             out.push(LocalVar {
                 name: Arc::from(name),
                 type_internal: normalize_lambda_param_jvm_type(&ty).to_type_name(),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             });
         }
@@ -833,7 +840,7 @@ impl<'idx> TypeResolver<'idx> {
         if let Some(resolve_qualifier) = qualifier_resolver
             && let Some(ty) = resolve_qualifier(raw)
         {
-            if ty.contains_slash() {
+            if ty.is_exact_class() {
                 return Some(ty.erased_internal().to_string());
             }
             if let Some(owner) = self.resolve_owner_from_text(ty.erased_internal()) {
@@ -1146,7 +1153,7 @@ impl<'idx> TypeResolver<'idx> {
             let Some(arg_ty) = arg_types.get(arg_idx) else {
                 continue;
             };
-            if arg_ty.erased_internal() == "unknown" {
+            if arg_ty.is_unknown() {
                 continue;
             }
             let Some((mapped_index, vararg_element)) =
@@ -1276,7 +1283,7 @@ impl<'idx> TypeResolver<'idx> {
         if is_type_variable_descriptor_token(desc) {
             return Some(0);
         }
-        if arg_ty.erased_internal() == "unknown" {
+        if arg_ty.is_unknown() {
             return Some(0);
         }
         let ty_str = arg_ty.erased_internal_with_arrays();
@@ -1389,11 +1396,11 @@ impl<'idx> TypeResolver<'idx> {
         if source_erased == target_erased {
             return ConversionKind::Identity;
         }
-        if source.erased_internal() == "unknown" || target.erased_internal() == "unknown" {
+        if source.is_unknown() || target.is_unknown() {
             return ConversionKind::Unknown;
         }
 
-        if source.erased_internal() == "null" {
+        if source.is_null() {
             return if is_reference_type_name(target) {
                 ConversionKind::NullToReference
             } else {
@@ -1454,9 +1461,7 @@ fn is_reference_type_name(ty: &TypeName) -> bool {
     if ty.is_intersection() {
         return true;
     }
-    ty.array_dims > 0
-        || ty.contains_slash()
-        || matches!(ty.erased_internal(), "*" | "+" | "-" | "capture")
+    ty.array_dims > 0 || ty.is_exact_class() || ty.is_wildcard_like()
 }
 
 fn is_reference_widening(view: &IndexView, source: &TypeName, target: &TypeName) -> bool {
@@ -1632,7 +1637,7 @@ fn normalize_arg_types(arg_count: usize, arg_types: &[TypeName]) -> Vec<TypeName
     }
     let mut out = arg_types.to_vec();
     while out.len() < arg_count {
-        out.push(TypeName::new("unknown"));
+        out.push(TypeName::unknown());
     }
     out
 }
@@ -2135,6 +2140,9 @@ pub fn is_concrete_type_name(ty: &TypeName) -> bool {
 }
 
 fn type_name_to_jvm_type(ty: &TypeName) -> Option<JvmType> {
+    if ty.is_unknown() || ty.is_null() || ty.is_source_like() {
+        return None;
+    }
     let sig = ty.to_jvm_signature();
     let (parsed, rest) = JvmType::parse(&sig)?;
     if rest.is_empty() { Some(parsed) } else { None }
@@ -2306,21 +2314,25 @@ mod tests {
             LocalVar {
                 name: Arc::from("cl"),
                 type_internal: TypeName::new("RandomClass"),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             },
             LocalVar {
                 name: Arc::from("sf"),
                 type_internal: TypeName::new("float"),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             },
             LocalVar {
                 name: Arc::from("result"),
                 type_internal: TypeName::new("java/lang/String"),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             },
             LocalVar {
                 name: Arc::from("myList"),
                 type_internal: TypeName::new("java/util/List"),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             },
         ];
@@ -2418,6 +2430,7 @@ mod tests {
         let locals = vec![LocalVar {
             name: Arc::from("box"),
             type_internal: box_t,
+            decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
             init_expr: None,
         }];
         (idx.view(root_scope()), locals)
@@ -2522,6 +2535,7 @@ mod tests {
         let locals = vec![LocalVar {
             name: Arc::from("box"),
             type_internal: box_t,
+            decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
             init_expr: None,
         }];
         (idx.view(root_scope()), locals)
@@ -2620,11 +2634,13 @@ mod tests {
             LocalVar {
                 name: Arc::from("strBox"),
                 type_internal: TypeName::with_args("Box", vec![TypeName::new("java/lang/String")]),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             },
             LocalVar {
                 name: Arc::from("s"),
                 type_internal: TypeName::with_args("Box", vec![TypeName::new("java/lang/String")]),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             },
         ];
@@ -2785,6 +2801,7 @@ mod tests {
             LocalVar {
                 name: Arc::from("myL"),
                 type_internal: TypeName::new("SomeClass"),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             },
         ];
@@ -2986,6 +3003,7 @@ mod tests {
         let locals = vec![LocalVar {
             name: Arc::from("s"),
             type_internal: TypeName::with_args("Box", vec![TypeName::new("java/lang/String")]),
+            decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
             init_expr: None,
         }];
         let chain = parse_chain_from_expr("s.map(Pair::new).get()");
@@ -3244,6 +3262,7 @@ mod tests {
                     vec![TypeName::new("java/lang/String")],
                 )],
             ),
+            decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
             init_expr: None,
         }];
         let chain = parse_chain_from_expr("box.map(List::size).get()");
@@ -3636,6 +3655,7 @@ mod tests {
         locals.push(LocalVar {
             name: Arc::from("arr"),
             type_internal: TypeName::new("char[]"),
+            decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
             init_expr: None,
         });
 
@@ -4258,6 +4278,7 @@ mod tests {
                     vec![TypeName::new("java/lang/String")],
                 )],
             ),
+            decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
             init_expr: None,
         }];
 
@@ -4427,6 +4448,7 @@ mod tests {
                     vec![TypeName::new("java/lang/String")],
                 )],
             ),
+            decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
             init_expr: None,
         }];
 

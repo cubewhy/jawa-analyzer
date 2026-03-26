@@ -114,8 +114,8 @@ fn collect_var_hints(
             else {
                 continue;
             };
-            if local.type_internal.erased_internal() == "var"
-                || local.type_internal.erased_internal() == "unknown"
+            if local.decl_kind == crate::semantic::LocalVarDeclKind::VarSyntax
+                || local.type_internal.is_unknown()
             {
                 continue;
             }

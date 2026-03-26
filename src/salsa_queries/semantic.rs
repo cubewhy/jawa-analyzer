@@ -677,6 +677,7 @@ fn extract_enhanced_for_locals(
                 local: LocalVar {
                     name: Arc::from(ctx.node_text(name_node)),
                     type_internal: resolve_declared_source_type(raw_ty, type_ctx, enclosing),
+                    decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                     init_expr: None,
                 },
                 declaration_start: name_node.start_byte(),
@@ -718,6 +719,7 @@ fn extract_catch_params(
                 local: LocalVar {
                     name: Arc::from(ctx.node_text(name_node)),
                     type_internal: resolve_declared_source_type(raw_ty, type_ctx, enclosing),
+                    decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                     init_expr: None,
                 },
                 declaration_start: name_node.start_byte(),
@@ -786,13 +788,15 @@ fn extract_declared_locals(
             let local = if raw_ty == "var" {
                 LocalVar {
                     name: Arc::from(name),
-                    type_internal: TypeName::new("var"),
+                    type_internal: TypeName::unknown(),
+                    decl_kind: crate::semantic::LocalVarDeclKind::VarSyntax,
                     init_expr: get_initializer_text(ty_node, ctx.bytes()),
                 }
             } else {
                 LocalVar {
                     name: Arc::from(name),
                     type_internal: resolve_declared_source_type(&raw_ty, type_ctx, enclosing),
+                    decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                     init_expr: None,
                 }
             };
@@ -820,7 +824,7 @@ fn resolve_declared_source_type(
         && let Some(resolved) = type_ctx.resolve_type_name_relaxed(raw_ty.trim())
     {
         if raw_ty.contains('<') && resolved.ty.args.is_empty() {
-            return TypeName::new(raw_ty.trim());
+            return TypeName::source_like(raw_ty.trim());
         }
         return resolved.ty;
     }
@@ -868,7 +872,8 @@ fn collect_misread_var_decls(
                 let local = if type_name.as_deref() == Some("var") {
                     LocalVar {
                         name: Arc::from(name),
-                        type_internal: TypeName::new("var"),
+                        type_internal: TypeName::unknown(),
+                        decl_kind: crate::semantic::LocalVarDeclKind::VarSyntax,
                         init_expr: Some(ctx.node_text(init_node).to_string()),
                     }
                 } else {
@@ -876,6 +881,7 @@ fn collect_misread_var_decls(
                     LocalVar {
                         name: Arc::from(name),
                         type_internal: resolve_declared_source_type(raw_ty, type_ctx, enclosing),
+                        decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                         init_expr: None,
                     }
                 };
@@ -966,6 +972,7 @@ fn extract_method_params(
             local: LocalVar {
                 name: Arc::from(ctx.node_text(name_node)),
                 type_internal: resolve_declared_source_type(raw_ty.as_str(), type_ctx, enclosing),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             },
             declaration_start: name_node.start_byte(),
@@ -1022,7 +1029,8 @@ fn collect_locals_in_errors(
                         let local = if raw_ty == "var" {
                             LocalVar {
                                 name: Arc::from(name_node.utf8_text(ctx.bytes()).ok()?),
-                                type_internal: TypeName::new("var"),
+                                type_internal: TypeName::unknown(),
+                                decl_kind: crate::semantic::LocalVarDeclKind::VarSyntax,
                                 init_expr: get_initializer_text(ty_node, ctx.bytes()),
                             }
                         } else {
@@ -1031,6 +1039,7 @@ fn collect_locals_in_errors(
                                 type_internal: resolve_declared_source_type(
                                     &raw_ty, type_ctx, enclosing,
                                 ),
+                                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                                 init_expr: None,
                             }
                         };
@@ -1202,7 +1211,7 @@ fn extract_lambda_params_from_error_arrow_node(
     let param_entries: Vec<(Arc<str>, TypeName, usize)> = match params_node.kind() {
         "identifier" => vec![(
             Arc::from(ctx.node_text(params_node)),
-            TypeName::new("unknown"),
+            TypeName::unknown(),
             params_node.start_byte(),
         )],
         "inferred_parameters" => {
@@ -1213,7 +1222,7 @@ fn extract_lambda_params_from_error_arrow_node(
                 .map(|node| {
                     (
                         Arc::from(ctx.node_text(node)),
-                        TypeName::new("unknown"),
+                        TypeName::unknown(),
                         node.start_byte(),
                     )
                 })
@@ -1253,6 +1262,7 @@ fn extract_lambda_params_from_error_arrow_node(
                     local: LocalVar {
                         name,
                         type_internal,
+                        decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                         init_expr: None,
                     },
                     declaration_start,
@@ -1300,7 +1310,8 @@ fn extract_lambda_params_from_node(
         "identifier" => vec![CachedMethodLocal {
             local: LocalVar {
                 name: Arc::from(ctx.node_text(params)),
-                type_internal: TypeName::new("unknown"),
+                type_internal: TypeName::unknown(),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             },
             declaration_start: params.start_byte(),
@@ -1316,7 +1327,8 @@ fn extract_lambda_params_from_node(
                 vars.push(CachedMethodLocal {
                     local: LocalVar {
                         name: Arc::from(ctx.node_text(node)),
-                        type_internal: TypeName::new("unknown"),
+                        type_internal: TypeName::unknown(),
+                        decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                         init_expr: None,
                     },
                     declaration_start: node.start_byte(),
@@ -1339,6 +1351,7 @@ fn extract_lambda_params_from_node(
                     local: LocalVar {
                         name: Arc::from(ctx.node_text(name_node)),
                         type_internal: extract_lambda_formal_param_type(ctx, node, type_ctx),
+                        decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                         init_expr: None,
                     },
                     declaration_start: name_node.start_byte(),
@@ -1387,11 +1400,11 @@ fn extract_lambda_formal_param_type(
     type_ctx: Option<&SourceTypeCtx>,
 ) -> TypeName {
     let Some(type_node) = param_node.child_by_field_name("type") else {
-        return TypeName::new("unknown");
+        return TypeName::unknown();
     };
     let raw_ty = ctx.node_text(type_node).trim().to_string();
     if raw_ty.is_empty() || raw_ty == "var" {
-        return TypeName::new("unknown");
+        return TypeName::unknown();
     }
     resolve_declared_source_type(&raw_ty, type_ctx, &EnclosingTypeInfo::default())
 }
@@ -1448,7 +1461,7 @@ fn resolve_enclosing_owner_declared_type(
         }
     }
 
-    let mut ty = TypeName::new(resolved.as_ref());
+    let mut ty = TypeName::internal(resolved.as_ref());
     if dims > 0 {
         ty = ty.with_array_dims(dims);
     }
@@ -2401,6 +2414,43 @@ mod tests {
             "{}\nexpected={expected_sig:?}\nactual={actual_sig:?}",
             case.name
         );
+    }
+
+    #[test]
+    fn default_package_class_named_unknown_is_not_placeholder_local() {
+        let source = indoc! {r#"
+            class unknown {}
+            class Demo {
+                void test() {
+                    unknown value = new unknown();
+                    value/*caret*/
+                }
+            }
+        "#};
+        let (source, offset) = prepare_source(source, "/*caret*/", true);
+        let workspace_index =
+            crate::index::WorkspaceIndexHandle::new(crate::index::WorkspaceIndex::new());
+        workspace_index
+            .load()
+            .add_classes(vec![minimal_class("unknown")]);
+        let db = Database::with_workspace_index(workspace_index);
+        let workspace = Workspace::new();
+        let uri = Url::parse("file:///test/Test.java").unwrap();
+        let file = SourceFile::new(&db, FileId::new(uri), source.clone(), Arc::from("java"));
+        let name_table = resolve_name_table_for_file(&db, file).expect("name table");
+
+        let expected = reference_locals(&db, file, &source, offset, Arc::clone(&name_table));
+        let actual = extract_visible_method_locals_incremental(&db, file, offset, &workspace);
+        assert_eq!(locals_signature(&actual), locals_signature(&expected));
+
+        let value = actual
+            .iter()
+            .find(|local| local.name.as_ref() == "value")
+            .expect("local value should be visible");
+        assert_eq!(value.type_internal.to_internal_with_generics(), "unknown");
+        assert!(value.type_internal.is_exact_class());
+        assert!(!value.type_internal.is_unknown());
+        assert_eq!(value.decl_kind, crate::semantic::LocalVarDeclKind::Explicit);
     }
 
     #[test]

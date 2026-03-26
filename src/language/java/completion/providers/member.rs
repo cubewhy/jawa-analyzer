@@ -1048,13 +1048,13 @@ fn normalize_receiver_owner_for_members(
                 resolved.args = receiver.args.clone();
             }
             resolved.array_dims = receiver.array_dims;
-            if resolved.contains_slash() {
+            if resolved.is_exact_class() {
                 return resolved;
             }
         }
     }
 
-    if receiver.contains_slash() {
+    if receiver.is_exact_class() {
         return receiver;
     }
 
@@ -1063,6 +1063,7 @@ fn normalize_receiver_owner_for_members(
     {
         return TypeName {
             base_internal: internal,
+            kind: crate::semantic::types::type_name::TypeNameKind::Internal,
             args: receiver.args,
             array_dims: receiver.array_dims,
         };
@@ -1766,6 +1767,39 @@ mod tests {
     }
 
     #[test]
+    fn test_member_provider_treats_default_package_var_class_as_concrete_type() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![ClassMetadata {
+            package: None,
+            name: Arc::from("var"),
+            internal_name: Arc::from("var"),
+            super_name: Some(Arc::from("java/lang/Object")),
+            interfaces: vec![],
+            annotations: vec![],
+            methods: vec![make_method("ping", "()V", ACC_PUBLIC, false)],
+            fields: vec![],
+            access_flags: ACC_PUBLIC,
+            generic_signature: None,
+            inner_class_of: None,
+            origin: ClassOrigin::Unknown,
+        }]);
+
+        let ctx = ctx_with_semantic_and_erased(TypeName::internal("var"), "var", "pi");
+        let results = MemberProvider
+            .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
+            .candidates;
+
+        assert!(
+            results.iter().any(|c| candidate_name(c) == "ping"),
+            "default-package class named `var` should behave like a normal concrete receiver: {:?}",
+            results
+                .iter()
+                .map(|c| candidate_name(c).to_string())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn test_local_receiver_with_complex_wildcard_generics_preserves_outer_base() {
         let idx = WorkspaceIndex::new();
         idx.add_classes(vec![ClassMetadata {
@@ -1803,6 +1837,7 @@ mod tests {
             vec![LocalVar {
                 name: Arc::from("nums"),
                 type_internal: TypeName::new("java/util/List<Box<? extends Number>>"),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             }],
             None,
@@ -1889,6 +1924,7 @@ mod tests {
             vec![LocalVar {
                 name: Arc::from("nums"),
                 type_internal: TypeName::new("List<Box<? extends Number>>"),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             }],
             None,
@@ -1976,6 +2012,7 @@ mod tests {
             vec![LocalVar {
                 name: Arc::from("nums"),
                 type_internal: TypeName::new("List<Box<? extends Number>>"),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             }],
             None,
@@ -2614,6 +2651,7 @@ mod tests {
                     "java/util/ArrayList",
                     vec![TypeName::new("java/lang/String")],
                 ),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             }],
             Some(Arc::from("Main")),
@@ -2769,6 +2807,7 @@ mod tests {
                     "java/util/ArrayList",
                     vec![TypeName::new("java/lang/String")],
                 ),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             }],
             Some(Arc::from("Main")),
@@ -3027,6 +3066,7 @@ mod tests {
             vec![LocalVar {
                 name: Arc::from("nums"),
                 type_internal: receiver_semantic.clone(),
+                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
                 init_expr: None,
             }],
             Some(Arc::from("Demo")),

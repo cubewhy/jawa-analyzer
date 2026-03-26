@@ -323,6 +323,7 @@ pub fn convert_local_var(data: &crate::salsa_queries::LocalVarData) -> LocalVar 
     LocalVar {
         name: Arc::clone(&data.name),
         type_internal: TypeName::new(data.type_internal.as_ref()),
+        decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
         init_expr: data.init_expr.as_ref().map(|s| s.to_string()),
     }
 }
