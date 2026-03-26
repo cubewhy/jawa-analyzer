@@ -187,7 +187,7 @@ impl OverrideProvider {
 
         index
             .get_class(enclosing)
-            .map(|meta| meta.fields.iter().cloned().collect())
+            .map(|meta| meta.fields.to_vec())
             .unwrap_or_default()
     }
 
@@ -203,6 +203,7 @@ impl OverrideProvider {
         if let Some(meta) = index.get_class(enclosing) {
             return meta.direct_name().to_string();
         }
+        // TODO: return None instead using heuristics
         enclosing
             .rsplit(['/', '$'])
             .next()
@@ -244,6 +245,7 @@ fn is_access_modifier_prefix(prefix: &str) -> bool {
     "public".starts_with(p) || "protected".starts_with(p)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_candidate(
     method: &MethodSummary,
     return_type_source: &str,

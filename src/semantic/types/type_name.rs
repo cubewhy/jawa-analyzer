@@ -213,10 +213,10 @@ impl TypeName {
 
     /// Erase generic parameters and array dims for index lookup.
     pub fn erased_internal(&self) -> &str {
-        if self.is_intersection() {
-            if let Some(primary) = self.primary_bound() {
-                return primary.erased_internal();
-            }
+        if self.is_intersection()
+            && let Some(primary) = self.primary_bound()
+        {
+            return primary.erased_internal();
         }
         &self.base_internal
     }
