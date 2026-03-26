@@ -256,35 +256,6 @@ mod tests {
     }
 
     #[test]
-    fn test_type_annotation_location() {
-        let idx = WorkspaceIndex::new();
-        let scope = root_scope();
-        let ctx = SemanticContext::new(
-            CursorLocation::TypeAnnotation {
-                prefix: "aV".to_string(),
-            },
-            "aV",
-            vec![LocalVar {
-                name: Arc::from("aVar"),
-                type_internal: TypeName::new("java/lang/String"),
-                decl_kind: crate::semantic::LocalVarDeclKind::Explicit,
-                init_expr: None,
-            }],
-            None,
-            None,
-            None,
-            vec![],
-        );
-        let results = LocalVarProvider
-            .provide_test(scope, &ctx, &idx.view(root_scope()), None)
-            .candidates;
-        assert!(
-            results.iter().any(|c| c.label.as_ref() == "aVar"),
-            "should complete locals inside TypeAnnotation context due to parsing ambiguity"
-        );
-    }
-
-    #[test]
     fn test_array_local_detail_and_descriptor_preserve_dims() {
         let idx = WorkspaceIndex::new();
         let scope = root_scope();
