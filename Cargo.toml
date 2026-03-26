@@ -36,6 +36,8 @@ ropey = "1.6.1"
 tempfile = "3.26.0"
 async-trait = "0.1.89"
 lru = "0.16.3"
+notify = "8.2.0"
+notify-debouncer-full = "0.7.0"
 
 [dev-dependencies]
 insta = { version = "1", features = ["ron"] }

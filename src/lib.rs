@@ -1,6 +1,7 @@
 pub mod build_integration;
 pub mod completion;
 pub mod decompiler;
+pub mod fs_watcher;
 pub mod index;
 pub mod jvm;
 pub mod language;

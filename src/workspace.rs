@@ -3,12 +3,16 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use tokio::sync::{RwLock, watch};
 use tower_lsp::lsp_types::Url;
 use tracing::info;
 
 use crate::build_integration::{SourceRootId, WorkspaceModelSnapshot, WorkspaceRootKind};
-use crate::index::codebase::{collect_source_files, load_source_inputs};
+use crate::index::codebase::{
+    SourceScanMode, collect_source_files, collect_source_files_for_root, load_source_inputs,
+    should_index_source_path,
+};
 use crate::index::incremental::SourceTextInput;
 use crate::index::{
     ClassMetadata, ClassOrigin, ClasspathId, IndexScope, ModuleId, WorkspaceIndex,
@@ -61,10 +65,77 @@ pub struct Workspace {
     salsa_files: Arc<parking_lot::RwLock<HashMap<Url, crate::salsa_db::SourceFile>>>,
     /// File URIs currently managed by workspace/fallback bulk indexing.
     indexed_salsa_uris: Arc<parking_lot::RwLock<HashSet<Url>>>,
+    /// Root directory used by fallback indexing and source watching when no
+    /// managed workspace model is available.
+    workspace_root: Arc<parking_lot::RwLock<Option<PathBuf>>>,
     /// IntelliJ-style semantic cache for parsed locals and members
     /// Keyed by content hash, automatically invalidated when content changes
     semantic_cache: Arc<parking_lot::RwLock<SemanticCache>>,
     jdk_classes: RwLock<Vec<ClassMetadata>>,
+    full_reindex_in_progress: Arc<AtomicUsize>,
+    full_reindex_serial: Arc<AtomicUsize>,
+    watched_roots_tx: watch::Sender<Vec<WatchedSourceRoot>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WatchedSourceRoot {
+    pub path: PathBuf,
+    pub scan_mode: SourceScanMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum FilesystemChangeKind {
+    Upsert,
+    Remove,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct FilesystemChange {
+    pub path: PathBuf,
+    pub kind: FilesystemChangeKind,
+}
+
+impl FilesystemChange {
+    pub(crate) fn upsert(path: PathBuf) -> Self {
+        Self {
+            path,
+            kind: FilesystemChangeKind::Upsert,
+        }
+    }
+
+    pub(crate) fn remove(path: PathBuf) -> Self {
+        Self {
+            path,
+            kind: FilesystemChangeKind::Remove,
+        }
+    }
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FilesystemApplySummary {
+    pub applied: usize,
+    pub removed: usize,
+    pub skipped_open_documents: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FileApplyState {
+    Applied,
+    Unchanged,
+    SkippedOpenDocument,
+    SkippedUntracked,
+}
+
+struct FullReindexGuard {
+    counter: Arc<AtomicUsize>,
+    serial: Arc<AtomicUsize>,
+}
+
+impl Drop for FullReindexGuard {
+    fn drop(&mut self) {
+        self.serial.fetch_add(1, Ordering::AcqRel);
+        self.counter.fetch_sub(1, Ordering::Release);
+    }
 }
 
 impl Workspace {
@@ -74,6 +145,7 @@ impl Workspace {
 
         // Create Salsa database with the same workspace index reference
         let salsa_db = SalsaDatabase::with_workspace_index(index.clone());
+        let (watched_roots_tx, _) = watch::channel(Vec::new());
 
         Self {
             documents: DocumentStore::new(),
@@ -81,9 +153,43 @@ impl Workspace {
             salsa_db: Arc::new(parking_lot::Mutex::new(salsa_db)),
             salsa_files: Arc::new(parking_lot::RwLock::new(HashMap::new())),
             indexed_salsa_uris: Arc::new(parking_lot::RwLock::new(HashSet::new())),
+            workspace_root: Arc::new(parking_lot::RwLock::new(None)),
             semantic_cache: Arc::new(parking_lot::RwLock::new(SemanticCache::default())),
             jdk_classes: RwLock::new(Vec::new()),
+            full_reindex_in_progress: Arc::new(AtomicUsize::new(0)),
+            full_reindex_serial: Arc::new(AtomicUsize::new(0)),
+            watched_roots_tx,
         }
+    }
+
+    fn begin_full_reindex(&self) -> FullReindexGuard {
+        self.full_reindex_in_progress.fetch_add(1, Ordering::AcqRel);
+        self.full_reindex_serial.fetch_add(1, Ordering::AcqRel);
+        FullReindexGuard {
+            counter: Arc::clone(&self.full_reindex_in_progress),
+            serial: Arc::clone(&self.full_reindex_serial),
+        }
+    }
+
+    pub fn full_reindex_in_progress(&self) -> bool {
+        self.full_reindex_in_progress.load(Ordering::Acquire) != 0
+    }
+
+    pub fn full_reindex_serial(&self) -> usize {
+        self.full_reindex_serial.load(Ordering::Acquire)
+    }
+
+    pub fn set_workspace_root(&self, root: PathBuf) {
+        *self.workspace_root.write() = Some(root);
+        self.publish_watched_source_roots();
+    }
+
+    pub fn workspace_root(&self) -> Option<PathBuf> {
+        self.workspace_root.read().clone()
+    }
+
+    pub(crate) fn subscribe_watched_source_roots(&self) -> watch::Receiver<Vec<WatchedSourceRoot>> {
+        self.watched_roots_tx.subscribe()
     }
 
     /// Get cached method locals by content hash (IntelliJ-style PSI cache)
@@ -315,6 +421,8 @@ impl Workspace {
     }
 
     pub async fn apply_workspace_model(&self, snapshot: WorkspaceModelSnapshot) -> Result<()> {
+        let _reindex_guard = self.begin_full_reindex();
+        self.set_workspace_root(snapshot.root.path.clone());
         let jdk_classes = self.jdk_classes.read().await.clone();
         let open_doc_overlays = self
             .documents
@@ -333,7 +441,13 @@ impl Workspace {
                             | WorkspaceRootKind::Tests
                             | WorkspaceRootKind::Generated
                     ) {
-                        Some((module.id, root.id, root.classpath, root.path.clone()))
+                        Some((
+                            module.id,
+                            root.id,
+                            root.classpath,
+                            root.path.clone(),
+                            root.kind,
+                        ))
                     } else {
                         None
                     }
@@ -344,8 +458,13 @@ impl Workspace {
         let indexed_roots = tokio::task::spawn_blocking(move || {
             root_inputs
                 .into_iter()
-                .map(|(module_id, root_id, classpath, root_path)| {
-                    let source_files = collect_source_files([root_path.clone()]);
+                .map(|(module_id, root_id, classpath, root_path, root_kind)| {
+                    let mode = if matches!(root_kind, WorkspaceRootKind::Generated) {
+                        SourceScanMode::IncludeGenerated
+                    } else {
+                        SourceScanMode::Default
+                    };
+                    let source_files = collect_source_files_for_root(root_path.clone(), mode);
                     let mut source_inputs = load_source_inputs(source_files);
                     overlay_open_document_inputs(&mut source_inputs, &open_doc_overlays);
                     (
@@ -506,6 +625,7 @@ impl Workspace {
 
         self.prune_indexed_salsa_files(&current_indexed_uris);
         self.index.replace(new_index, Some(snapshot.clone()));
+        self.publish_watched_source_roots();
 
         info!(
             generation = snapshot.generation,
@@ -526,6 +646,8 @@ impl Workspace {
     }
 
     pub async fn index_fallback_root(&self, root: PathBuf) -> Result<()> {
+        let _reindex_guard = self.begin_full_reindex();
+        self.set_workspace_root(root.clone());
         let open_doc_overlays = self
             .documents
             .snapshot_documents()
@@ -562,7 +684,147 @@ impl Workspace {
         }
         self.prune_indexed_salsa_files(&current_indexed_uris);
         self.index.replace(index, None);
+        self.publish_watched_source_roots();
         Ok(())
+    }
+
+    pub(crate) fn watched_source_roots(&self) -> Vec<WatchedSourceRoot> {
+        let (_, model) = self.index.snapshot();
+        let mut roots = Vec::new();
+        let mut seen = HashSet::new();
+
+        if let Some(model) = model.as_ref() {
+            for root in model
+                .modules
+                .iter()
+                .flat_map(|module| module.roots.iter())
+                .filter(|root| {
+                    matches!(
+                        root.kind,
+                        WorkspaceRootKind::Sources
+                            | WorkspaceRootKind::Tests
+                            | WorkspaceRootKind::Generated
+                    )
+                })
+            {
+                let mode = scan_mode_for_root_kind(root.kind);
+                if seen.insert(root.path.clone()) {
+                    roots.push(WatchedSourceRoot {
+                        path: root.path.clone(),
+                        scan_mode: mode,
+                    });
+                }
+            }
+        }
+
+        if roots.is_empty()
+            && let Some(root) = self.workspace_root()
+            && seen.insert(root.clone())
+        {
+            roots.push(WatchedSourceRoot {
+                path: root,
+                scan_mode: SourceScanMode::Default,
+            });
+        }
+
+        roots
+    }
+
+    pub(crate) fn apply_filesystem_changes_blocking(
+        &self,
+        changes: Vec<FilesystemChange>,
+    ) -> Result<FilesystemApplySummary> {
+        let mut summary = FilesystemApplySummary::default();
+        let mut removals = Vec::new();
+        let mut upserts = Vec::new();
+
+        for change in changes {
+            match change.kind {
+                FilesystemChangeKind::Remove => removals.push(change.path),
+                FilesystemChangeKind::Upsert => upserts.push(change.path),
+            }
+        }
+
+        removals.sort();
+        removals.dedup();
+        upserts.sort();
+        upserts.dedup();
+
+        for path in removals {
+            match self.remove_disk_source_path_blocking(&path)? {
+                FileApplyState::Applied => {
+                    summary.applied += 1;
+                    summary.removed += 1;
+                }
+                FileApplyState::SkippedOpenDocument => {
+                    summary.skipped_open_documents += 1;
+                }
+                FileApplyState::Unchanged | FileApplyState::SkippedUntracked => {}
+            }
+        }
+
+        for path in upserts {
+            match self.upsert_disk_source_path_blocking(&path)? {
+                FileApplyState::Applied => {
+                    summary.applied += 1;
+                }
+                FileApplyState::SkippedOpenDocument => {
+                    summary.skipped_open_documents += 1;
+                }
+                FileApplyState::Unchanged | FileApplyState::SkippedUntracked => {}
+            }
+        }
+
+        Ok(summary)
+    }
+
+    pub(crate) fn reconcile_closed_document_blocking(&self, uri: &Url) -> Result<bool> {
+        if self.documents.with_doc(uri, |_| ()).is_some() {
+            return Ok(false);
+        }
+
+        if let Ok(path) = uri.to_file_path() {
+            let (_, model) = self.index.snapshot();
+            if path.exists() && self.should_track_disk_path_with_model(&path, model.as_ref()) {
+                return Ok(matches!(
+                    self.upsert_disk_source_path_blocking(&path)?,
+                    FileApplyState::Applied | FileApplyState::Unchanged
+                ));
+            }
+        }
+
+        Ok(self.remove_source_origin_for_uri_blocking(uri))
+    }
+
+    pub(crate) fn rescan_watched_roots_blocking(
+        &self,
+        roots: Vec<WatchedSourceRoot>,
+    ) -> Result<FilesystemApplySummary> {
+        let current_paths = roots
+            .iter()
+            .flat_map(|root| collect_source_files_for_root(root.path.clone(), root.scan_mode))
+            .collect::<HashSet<_>>();
+        let current_uris = current_paths
+            .iter()
+            .filter_map(|path| file_url_from_path(path))
+            .collect::<HashSet<_>>();
+
+        let removals = {
+            let tracked = self.indexed_salsa_uris.read();
+            tracked
+                .iter()
+                .filter(|uri| self.documents.with_doc(uri, |_| ()).is_none())
+                .filter_map(|uri| {
+                    let path = uri.to_file_path().ok()?;
+                    matches_watched_root(&path, &roots)
+                        .filter(|_| !current_uris.contains(uri))
+                        .map(|_| FilesystemChange::remove(path))
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let upserts = current_paths.into_iter().map(FilesystemChange::upsert);
+        self.apply_filesystem_changes_blocking(removals.into_iter().chain(upserts).collect())
     }
 
     /// Get or create a Salsa SourceFile for the given URI
@@ -792,12 +1054,155 @@ impl Workspace {
 
         *self.indexed_salsa_uris.write() = current_indexed_uris.clone();
     }
+
+    fn publish_watched_source_roots(&self) {
+        let _ = self.watched_roots_tx.send(self.watched_source_roots());
+    }
+
+    fn should_track_disk_path_with_model(
+        &self,
+        path: &Path,
+        model: Option<&WorkspaceModelSnapshot>,
+    ) -> bool {
+        if let Some(model) = model
+            && let Some(root) = model.source_root_for_path(path, None)
+        {
+            return matches!(
+                root.kind,
+                WorkspaceRootKind::Sources
+                    | WorkspaceRootKind::Tests
+                    | WorkspaceRootKind::Generated
+            ) && should_index_source_path(path, scan_mode_for_root_kind(root.kind));
+        }
+
+        self.workspace_root().is_some_and(|root| {
+            path.starts_with(&root) && should_index_source_path(path, SourceScanMode::Default)
+        })
+    }
+
+    fn upsert_disk_source_path_blocking(&self, path: &Path) -> Result<FileApplyState> {
+        let Some(language_id) = language_id_for_path(path) else {
+            return Ok(FileApplyState::SkippedUntracked);
+        };
+        let Some(uri) = file_url_from_path(path) else {
+            return Ok(FileApplyState::SkippedUntracked);
+        };
+        if self.documents.with_doc(&uri, |_| ()).is_some() {
+            return Ok(FileApplyState::SkippedOpenDocument);
+        }
+
+        let (index_snapshot, model) = self.index.snapshot();
+        if !self.should_track_disk_path_with_model(path, model.as_ref()) {
+            return Ok(FileApplyState::SkippedUntracked);
+        }
+
+        let content = match std::fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return self.remove_disk_source_path_blocking(path);
+            }
+            Err(error) => return Err(error.into()),
+        };
+
+        let context = Self::resolve_analysis_context_for_snapshot(model.as_ref(), Some(path));
+        let origin = ClassOrigin::SourceFile(Arc::from(uri.as_str()));
+        let salsa_file = self.get_or_create_salsa_file(&uri, &content, language_id);
+        let classes = {
+            let db = self.salsa_db.lock();
+            let _ = crate::salsa_queries::index::extract_classes(&*db, salsa_file);
+            self.extract_salsa_classes_for_index_context(
+                &*db,
+                salsa_file,
+                &origin,
+                index_snapshot.as_ref(),
+                context,
+            )
+        };
+
+        let changed = self.index.update(|index| {
+            index.update_source_in_context(context.module, context.source_root, origin, classes)
+        });
+        self.track_indexed_uri(&uri);
+
+        Ok(if changed {
+            FileApplyState::Applied
+        } else {
+            FileApplyState::Unchanged
+        })
+    }
+
+    fn remove_disk_source_path_blocking(&self, path: &Path) -> Result<FileApplyState> {
+        let Some(uri) = file_url_from_path(path) else {
+            return Ok(FileApplyState::SkippedUntracked);
+        };
+        if self.documents.with_doc(&uri, |_| ()).is_some() {
+            return Ok(FileApplyState::SkippedOpenDocument);
+        }
+
+        Ok(if self.remove_source_origin_for_uri_blocking(&uri) {
+            FileApplyState::Applied
+        } else {
+            FileApplyState::Unchanged
+        })
+    }
+
+    fn remove_source_origin_for_uri_blocking(&self, uri: &Url) -> bool {
+        let (_, model) = self.index.snapshot();
+        let path = uri.to_file_path().ok();
+        let context = Self::resolve_analysis_context_for_snapshot(model.as_ref(), path.as_deref());
+        let origin = ClassOrigin::SourceFile(Arc::from(uri.as_str()));
+        let changed = self.index.update(|index| {
+            index.remove_source_origin_in_context(context.module, context.source_root, &origin)
+        });
+        self.untrack_indexed_uri(uri);
+        self.remove_salsa_file(uri);
+        changed
+    }
+
+    fn track_indexed_uri(&self, uri: &Url) {
+        self.indexed_salsa_uris.write().insert(uri.clone());
+    }
+
+    fn untrack_indexed_uri(&self, uri: &Url) {
+        self.indexed_salsa_uris.write().remove(uri);
+    }
 }
 
 impl Default for Workspace {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn scan_mode_for_root_kind(kind: WorkspaceRootKind) -> SourceScanMode {
+    if matches!(kind, WorkspaceRootKind::Generated) {
+        SourceScanMode::IncludeGenerated
+    } else {
+        SourceScanMode::Default
+    }
+}
+
+fn language_id_for_path(path: &Path) -> Option<&'static str> {
+    match path.extension().and_then(|ext| ext.to_str()) {
+        Some("java") => Some("java"),
+        Some("kt") => Some("kotlin"),
+        _ => None,
+    }
+}
+
+fn file_url_from_path(path: &Path) -> Option<Url> {
+    let absolute = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    Url::from_file_path(absolute).ok()
+}
+
+fn matches_watched_root<'a>(
+    path: &Path,
+    roots: &'a [WatchedSourceRoot],
+) -> Option<&'a WatchedSourceRoot> {
+    roots
+        .iter()
+        .filter(|root| path.starts_with(&root.path))
+        .max_by_key(|root| root.path.components().count())
 }
 
 fn merge_classpath<'a>(paths: impl Iterator<Item = &'a PathBuf>) -> Vec<&'a PathBuf> {
@@ -1212,6 +1617,184 @@ mod tests {
         let file = workspace.get_salsa_file(&uri).expect("tracked salsa file");
         let db = workspace.salsa_db.lock();
         assert_eq!(file.content(&*db), "class Demo { String live; }");
+    }
+
+    #[tokio::test]
+    async fn filesystem_apply_skips_open_document_snapshot() {
+        let workspace = Workspace::new();
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("Demo.java");
+        fs::write(&path, "class Demo { int disk; }").expect("write source");
+        let uri =
+            Url::from_file_path(path.canonicalize().expect("canonical path")).expect("file uri");
+
+        workspace
+            .documents
+            .open(Document::new(crate::workspace::SourceFile::new(
+                uri.clone(),
+                "java",
+                1,
+                "class Demo { String live; }",
+                None,
+            )));
+
+        workspace
+            .index_fallback_root(dir.path().to_path_buf())
+            .await
+            .expect("index root");
+
+        fs::write(&path, "class Demo { boolean disk; }").expect("rewrite source");
+
+        let summary = workspace
+            .apply_filesystem_changes_blocking(vec![FilesystemChange::upsert(path.clone())])
+            .expect("apply filesystem change");
+        assert_eq!(summary.applied, 0);
+        assert_eq!(summary.skipped_open_documents, 1);
+
+        let file = workspace.get_salsa_file(&uri).expect("tracked salsa file");
+        let db = workspace.salsa_db.lock();
+        assert_eq!(file.content(&*db), "class Demo { String live; }");
+    }
+
+    #[tokio::test]
+    async fn watched_root_subscription_publishes_fallback_root() {
+        let workspace = Workspace::new();
+        let dir = tempdir().expect("tempdir");
+        let mut roots_rx = workspace.subscribe_watched_source_roots();
+
+        workspace.set_workspace_root(dir.path().to_path_buf());
+
+        roots_rx.changed().await.expect("watched root update");
+        assert_eq!(
+            roots_rx.borrow().clone(),
+            vec![WatchedSourceRoot {
+                path: dir.path().to_path_buf(),
+                scan_mode: SourceScanMode::Default,
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn rescan_watched_roots_removes_deleted_disk_source() {
+        let workspace = Workspace::new();
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("Demo.java");
+        fs::write(&path, "class Demo { int disk; }").expect("write source");
+        let uri =
+            Url::from_file_path(path.canonicalize().expect("canonical path")).expect("file uri");
+
+        workspace
+            .index_fallback_root(dir.path().to_path_buf())
+            .await
+            .expect("index root");
+        assert!(
+            workspace.get_salsa_file(&uri).is_some(),
+            "tracked before delete"
+        );
+
+        fs::remove_file(&path).expect("remove source");
+
+        let summary = workspace
+            .rescan_watched_roots_blocking(workspace.watched_source_roots())
+            .expect("rescan roots");
+        assert_eq!(summary.applied, 1);
+        assert_eq!(summary.removed, 1);
+        assert!(
+            workspace.get_salsa_file(&uri).is_none(),
+            "deleted file should be removed from tracked state"
+        );
+    }
+
+    #[tokio::test]
+    async fn reconcile_closed_document_restores_disk_snapshot() {
+        let workspace = Workspace::new();
+        let dir = tempdir().expect("tempdir");
+        let path = dir.path().join("Demo.java");
+        fs::write(&path, "class Demo { int disk; }").expect("write source");
+        let uri =
+            Url::from_file_path(path.canonicalize().expect("canonical path")).expect("file uri");
+
+        workspace
+            .documents
+            .open(Document::new(crate::workspace::SourceFile::new(
+                uri.clone(),
+                "java",
+                1,
+                "class Demo { String live; }",
+                None,
+            )));
+
+        workspace
+            .index_fallback_root(dir.path().to_path_buf())
+            .await
+            .expect("index root");
+
+        workspace.documents.close(&uri);
+        workspace
+            .reconcile_closed_document_blocking(&uri)
+            .expect("reconcile closed document");
+
+        let file = workspace.get_salsa_file(&uri).expect("tracked salsa file");
+        let db = workspace.salsa_db.lock();
+        assert_eq!(file.content(&*db), "class Demo { int disk; }");
+    }
+
+    #[tokio::test]
+    async fn managed_workspace_indexes_generated_root_sources() {
+        let workspace = Workspace::new();
+        let dir = tempdir().expect("tempdir");
+        let app_dir = dir.path().join("app");
+        let generated_root = app_dir.join("build/generated/sources/annotationProcessor/java/main");
+        let pkg_dir = generated_root.join("org/example");
+        fs::create_dir_all(&pkg_dir).expect("create generated package dir");
+        let path = pkg_dir.join("GeneratedDemo.java");
+        fs::write(
+            &path,
+            "package org.example; public class GeneratedDemo { int value; }",
+        )
+        .expect("write generated source");
+        let uri =
+            Url::from_file_path(path.canonicalize().expect("canonical path")).expect("file uri");
+
+        workspace
+            .apply_workspace_model(WorkspaceModelSnapshot {
+                generation: 1,
+                root: WorkspaceRoot {
+                    path: dir.path().to_path_buf(),
+                },
+                name: "demo".into(),
+                modules: vec![WorkspaceModule {
+                    id: ModuleId(1),
+                    name: "app".into(),
+                    directory: app_dir.clone(),
+                    roots: vec![WorkspaceSourceRoot {
+                        id: SourceRootId(11),
+                        path: generated_root.clone(),
+                        kind: WorkspaceRootKind::Generated,
+                        classpath: ClasspathId::Main,
+                    }],
+                    compile_classpath: vec![],
+                    test_classpath: vec![],
+                    dependency_modules: vec![],
+                    java: JavaToolchainInfo {
+                        language_version: None,
+                    },
+                }],
+                provenance: WorkspaceModelProvenance {
+                    tool: DetectedBuildToolKind::Gradle,
+                    tool_version: Some("8.10".into()),
+                    imported_at: SystemTime::UNIX_EPOCH,
+                },
+                freshness: ModelFreshness::Fresh,
+                fidelity: ModelFidelity::Full,
+            })
+            .await
+            .expect("apply workspace model");
+
+        assert!(
+            workspace.get_salsa_file(&uri).is_some(),
+            "generated Java source roots should be indexed"
+        );
     }
 
     #[tokio::test]

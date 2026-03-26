@@ -11,6 +11,7 @@ use super::handlers::completion::handle_completion;
 use crate::build_integration::{BuildIntegrationService, ReloadReason};
 use crate::completion::engine::CompletionEngine;
 use crate::decompiler::cache::DecompilerCache;
+use crate::fs_watcher::SourceWatchService;
 use crate::index::ClassOrigin;
 use crate::index::jdk::JdkIndexer;
 use crate::language::LanguageRegistry;
@@ -37,6 +38,7 @@ pub struct Backend {
     request_cancellation: Arc<RequestCancellationManager>,
     build_services: tokio::sync::RwLock<Vec<BuildIntegrationService>>,
     pending_document_reindex_versions: Arc<dashmap::DashMap<Url, i32>>,
+    source_watch_service: tokio::sync::RwLock<Option<SourceWatchService>>,
 }
 
 impl Backend {
@@ -56,6 +58,7 @@ impl Backend {
             request_cancellation: Arc::new(RequestCancellationManager::new()),
             build_services: tokio::sync::RwLock::new(Vec::new()),
             pending_document_reindex_versions: Arc::new(dashmap::DashMap::new()),
+            source_watch_service: tokio::sync::RwLock::new(None),
         }
     }
 
@@ -79,6 +82,7 @@ impl Backend {
     async fn configure_workspace_root(&self, root: std::path::PathBuf) {
         let workspace = Arc::clone(&self.workspace);
         let client = self.client.clone();
+        workspace.set_workspace_root(root.clone());
 
         let config = self.config.read().await;
         let jdk_path = config.jdk_path.clone();
@@ -123,6 +127,14 @@ impl Backend {
             BuildIntegrationService::new(root, Arc::clone(&workspace), client.clone(), jdk_path);
         service.schedule_reload(ReloadReason::Initialize);
         self.build_services.write().await.push(service);
+
+        let mut source_watch_service = self.source_watch_service.write().await;
+        if source_watch_service.is_none() {
+            *source_watch_service = Some(SourceWatchService::new(
+                Arc::clone(&workspace),
+                client.clone(),
+            ));
+        }
     }
 
     pub async fn update_config(&self, params: serde_json::Value) {
@@ -368,6 +380,9 @@ impl LanguageServer for Backend {
 
     async fn shutdown(&self) -> LspResult<()> {
         info!("LSP shutdown");
+        if let Some(source_watch_service) = self.source_watch_service.write().await.take() {
+            source_watch_service.stop();
+        }
         Ok(())
     }
 
@@ -609,8 +624,25 @@ impl LanguageServer for Backend {
         let uri = &params.text_document.uri;
         info!(uri = %uri, "did_close");
         self.workspace.documents.close(uri);
-        // Remove from Salsa database
-        self.workspace.remove_salsa_file(uri);
+
+        let workspace = Arc::clone(&self.workspace);
+        let uri_for_reconcile = uri.clone();
+        match tokio::task::spawn_blocking(move || {
+            workspace.reconcile_closed_document_blocking(&uri_for_reconcile)
+        })
+        .await
+        {
+            Ok(Ok(true)) => {
+                self.client.semantic_tokens_refresh().await.ok();
+            }
+            Ok(Ok(false)) => {}
+            Ok(Err(error)) => {
+                tracing::error!(%error, uri = %uri, "did_close reconcile failed");
+            }
+            Err(error) => {
+                tracing::error!(%error, uri = %uri, "did_close reconcile task panicked");
+            }
+        }
     }
 
     async fn did_change_watched_files(&self, params: DidChangeWatchedFilesParams) {

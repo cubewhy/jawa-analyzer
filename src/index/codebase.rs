@@ -7,6 +7,12 @@ use walkdir::WalkDir;
 use super::incremental::{SourceParseSession, SourceTextInput};
 use super::{ClassMetadata, ClassOrigin};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum SourceScanMode {
+    Default,
+    IncludeGenerated,
+}
+
 /// Scan result
 pub struct CodebaseIndex {
     pub classes: Vec<ClassMetadata>,
@@ -165,22 +171,21 @@ pub fn index_source_text(
     CodebaseIndexSession::default().index_source_text(uri, content, lang, name_table)
 }
 
-fn is_excluded(path: &Path) -> bool {
+fn is_excluded_with_mode(path: &Path, mode: SourceScanMode) -> bool {
     path.components().any(|c| {
+        let component = c.as_os_str().to_str().unwrap_or("");
         matches!(
-            c.as_os_str().to_str().unwrap_or(""),
-            "target"
-                | "build"
-                | ".git"
+            component,
+            ".git"
                 | ".gradle"
                 | "node_modules"
                 | ".idea"
                 | "out"
                 | "dist"
                 | ".kotlin"
-                | "generated"
                 | "__pycache__"
-        )
+        ) || (component == "generated" && mode != SourceScanMode::IncludeGenerated)
+            || (matches!(component, "build" | "target") && mode != SourceScanMode::IncludeGenerated)
     })
 }
 
@@ -190,43 +195,55 @@ where
 {
     roots
         .into_iter()
-        .flat_map(|root| {
-            WalkDir::new(root)
-                .follow_links(false)
-                .into_iter()
-                .filter_entry(|e| !is_excluded(e.path()))
-                .filter_map(|e| e.ok())
-                .filter(|e| e.file_type().is_file())
-                .filter(|e| {
-                    let ext = e.path().extension().and_then(|s| s.to_str());
-                    matches!(ext, Some("java") | Some("kt"))
-                })
-                .map(|e| e.into_path())
-                .collect::<Vec<_>>()
-        })
+        .flat_map(|root| collect_source_files_for_root(root, SourceScanMode::Default))
         .collect()
+}
+
+pub(crate) fn collect_source_files_for_root(root: PathBuf, mode: SourceScanMode) -> Vec<PathBuf> {
+    WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|e| !is_excluded_with_mode(e.path(), mode))
+        .filter_map(|e| e.ok())
+        .filter(|e| e.file_type().is_file())
+        .filter(|e| should_index_source_path(e.path(), mode))
+        .map(|e| e.into_path())
+        .collect()
+}
+
+pub(crate) fn should_index_source_path(path: &Path, mode: SourceScanMode) -> bool {
+    if is_excluded_with_mode(path, mode) {
+        return false;
+    }
+
+    matches!(
+        path.extension().and_then(|s| s.to_str()),
+        Some("java") | Some("kt")
+    )
 }
 
 pub(crate) fn load_source_inputs(source_files: Vec<PathBuf>) -> Vec<SourceTextInput> {
     source_files
         .into_par_iter()
-        .filter_map(|path| {
-            let content = std::fs::read_to_string(&path).ok()?;
-            let uri = path_to_uri_str(&path);
-            let origin = ClassOrigin::SourceFile(Arc::from(uri.as_str()));
-            let language_id: Arc<str> = if path.extension().and_then(|s| s.to_str()) == Some("kt") {
-                Arc::from("kotlin")
-            } else {
-                Arc::from("java")
-            };
-            Some(SourceTextInput::new(
-                Arc::from(uri.as_str()),
-                language_id,
-                content,
-                origin,
-            ))
-        })
+        .filter_map(load_source_input)
         .collect()
+}
+
+pub(crate) fn load_source_input(path: PathBuf) -> Option<SourceTextInput> {
+    let content = std::fs::read_to_string(&path).ok()?;
+    let uri = path_to_uri_str(&path);
+    let origin = ClassOrigin::SourceFile(Arc::from(uri.as_str()));
+    let language_id: Arc<str> = if path.extension().and_then(|s| s.to_str()) == Some("kt") {
+        Arc::from("kotlin")
+    } else {
+        Arc::from("java")
+    };
+    Some(SourceTextInput::new(
+        Arc::from(uri.as_str()),
+        language_id,
+        content,
+        origin,
+    ))
 }
 
 fn path_to_uri_str(path: &Path) -> String {
