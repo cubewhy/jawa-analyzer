@@ -1940,7 +1940,7 @@ mod tests {
                     methods: vec![],
                     fields: vec![],
                     access_flags: ACC_PUBLIC,
-                    inner_class_of: Some(Arc::from("ClassWithGenerics")),
+                    inner_class_of: Some(Arc::from("org/cubewhy/ClassWithGenerics")),
                     generic_signature: Some(Arc::from("<T:Ljava/lang/Object;>Ljava/lang/Object;")),
                     origin: ClassOrigin::Unknown,
                 },
@@ -2086,7 +2086,7 @@ mod tests {
                     }],
                     fields: vec![],
                     access_flags: ACC_PUBLIC,
-                    inner_class_of: Some(Arc::from("ClassWithGenerics")),
+                    inner_class_of: Some(Arc::from("org/cubewhy/ClassWithGenerics")),
                     generic_signature: Some(Arc::from("<T:Ljava/lang/Object;>Ljava/lang/Object;")),
                     origin: ClassOrigin::Unknown,
                 },
@@ -6371,7 +6371,7 @@ mod tests {
                 fields: vec![],
                 access_flags: ACC_PUBLIC | ACC_STATIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("ChainCheck")),
+                inner_class_of: Some(Arc::from("org/cubewhy/ChainCheck")),
                 origin: ClassOrigin::Unknown,
             },
             ClassMetadata {
@@ -6385,7 +6385,7 @@ mod tests {
                 fields: vec![],
                 access_flags: ACC_PUBLIC | ACC_STATIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("Box")),
+                inner_class_of: Some(Arc::from("org/cubewhy/ChainCheck$Box")),
                 origin: ClassOrigin::Unknown,
             },
         ]);
@@ -6504,7 +6504,7 @@ mod tests {
                 fields: vec![],
                 access_flags: ACC_PUBLIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("Test")),
+                inner_class_of: Some(Arc::from("app/Test")),
                 origin: ClassOrigin::Unknown,
             },
             ClassMetadata {
@@ -6518,7 +6518,7 @@ mod tests {
                 fields: vec![],
                 access_flags: ACC_PUBLIC | ACC_STATIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("Test")),
+                inner_class_of: Some(Arc::from("app/Test")),
                 origin: ClassOrigin::Unknown,
             },
         ]);

@@ -321,7 +321,7 @@ mod tests {
                     fields: vec![],
                     access_flags: ACC_PUBLIC,
                     generic_signature: None,
-                    inner_class_of: Some(Arc::from("Outer")),
+                    inner_class_of: Some(Arc::from("org/cubewhy/Outer")),
                     origin: ClassOrigin::Unknown,
                 },
             ],

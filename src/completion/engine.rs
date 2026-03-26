@@ -788,7 +788,7 @@ mod tests {
                 methods: vec![],
                 fields: vec![],
                 access_flags: ACC_PUBLIC,
-                inner_class_of: Some(Arc::from("ChainCheck")),
+                inner_class_of: Some(Arc::from("org/cubewhy/ChainCheck")),
                 generic_signature: None,
                 origin: ClassOrigin::Unknown,
             },

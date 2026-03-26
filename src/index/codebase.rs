@@ -330,7 +330,10 @@ class Bar(val value: String) {
         let result = index_codebase(dir.path(), None);
         let inner = result.classes.iter().find(|c| c.name.as_ref() == "Inner");
         assert!(inner.is_some(), "Inner class should be indexed");
-        assert_eq!(inner.unwrap().inner_class_of.as_deref(), Some("Foo"));
+        assert_eq!(
+            inner.unwrap().inner_class_of.as_deref(),
+            Some("com/example/Foo")
+        );
     }
 
     #[test]

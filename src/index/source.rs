@@ -72,9 +72,9 @@ pub(crate) fn discover_kotlin_names(source: &str) -> Vec<Arc<str>> {
     let package = extract_kotlin_package(tree.root_node(), bytes);
 
     let mut results = Vec::new();
-    let mut stack = vec![tree.root_node()];
+    let mut stack = vec![(tree.root_node(), None::<Arc<str>>)];
 
-    while let Some(node) = stack.pop() {
+    while let Some((node, outer_internal)) = stack.pop() {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             match child.kind() {
@@ -84,22 +84,24 @@ pub(crate) fn discover_kotlin_names(source: &str) -> Vec<Arc<str>> {
                         .find(|n| n.kind() == "type_identifier")
                     {
                         let class_name = node_text(id_node, bytes);
-                        let internal = match &package {
-                            Some(pkg) => format!("{}/{}", pkg, class_name),
-                            None => class_name.to_string(),
+                        let internal = match (&package, &outer_internal) {
+                            (_, Some(outer)) => format!("{outer}${class_name}"),
+                            (Some(pkg), None) => format!("{}/{}", pkg, class_name),
+                            (None, None) => class_name.to_string(),
                         };
-                        results.push(Arc::from(internal.as_str()));
+                        let internal = Arc::from(internal.as_str());
+                        results.push(Arc::clone(&internal));
 
                         if let Some(body) = child
                             .named_children(&mut child.walk())
                             .find(|n| n.kind() == "class_body")
                         {
-                            stack.push(body);
+                            stack.push((body, Some(internal)));
                         }
                     }
                 }
                 _ => {
-                    stack.push(child);
+                    stack.push((child, outer_internal.clone()));
                 }
             }
         }
@@ -126,21 +128,21 @@ fn collect_kotlin_classes(
     root_node: Node,
     bytes: &[u8],
     package: &Option<Arc<str>>,
-    initial_outer: Option<Arc<str>>,
+    initial_outer_internal: Option<Arc<str>>,
     origin: &ClassOrigin,
     out: &mut Vec<ClassMetadata>,
 ) {
-    let mut stack = vec![(root_node, initial_outer)];
+    let mut stack = vec![(root_node, initial_outer_internal)];
 
-    while let Some((node, outer_class)) = stack.pop() {
+    while let Some((node, outer_internal)) = stack.pop() {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             match child.kind() {
                 "class_declaration" | "object_declaration" | "companion_object" => {
                     if let Some(meta) =
-                        parse_kotlin_class(child, bytes, package, outer_class.clone(), origin)
+                        parse_kotlin_class(child, bytes, package, outer_internal.clone(), origin)
                     {
-                        let inner_outer = Some(Arc::clone(&meta.name));
+                        let inner_outer = Some(Arc::clone(&meta.internal_name));
                         if let Some(body) = child
                             .named_children(&mut child.walk())
                             .find(|n| n.kind() == "class_body")
@@ -151,7 +153,7 @@ fn collect_kotlin_classes(
                     }
                 }
                 _ => {
-                    stack.push((child, outer_class.clone()));
+                    stack.push((child, outer_internal.clone()));
                 }
             }
         }
@@ -162,7 +164,7 @@ fn parse_kotlin_class(
     node: Node,
     bytes: &[u8],
     package: &Option<Arc<str>>,
-    outer_class: Option<Arc<str>>,
+    outer_internal: Option<Arc<str>>,
     origin: &ClassOrigin,
 ) -> Option<ClassMetadata> {
     // The class name for class_declaration / object_declaration is type_identifier.
@@ -176,9 +178,10 @@ fn parse_kotlin_class(
     }
 
     let name: Arc<str> = Arc::from(class_name);
-    let internal_name: Arc<str> = match package {
-        Some(pkg) => Arc::from(format!("{}/{}", pkg, class_name).as_str()),
-        None => Arc::clone(&name),
+    let internal_name: Arc<str> = match (&package, &outer_internal) {
+        (_, Some(outer)) => Arc::from(format!("{outer}${class_name}").as_str()),
+        (Some(pkg), None) => Arc::from(format!("{}/{}", pkg, class_name).as_str()),
+        (None, None) => Arc::clone(&name),
     };
 
     // Parent class: the first type_identifier in delegation_specifiers
@@ -228,7 +231,7 @@ fn parse_kotlin_class(
         fields,
         access_flags,
         generic_signature: extract_generic_signature(node, bytes, "Ljava/lang/Object;"),
-        inner_class_of: outer_class,
+        inner_class_of: outer_internal,
         origin: origin.clone(),
     })
 }

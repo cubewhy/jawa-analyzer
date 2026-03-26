@@ -118,7 +118,7 @@ mod tests {
                 methods: vec![],
                 fields: vec![],
                 access_flags: 0,
-                inner_class_of: Some(Arc::from("Outer")),
+                inner_class_of: Some(Arc::from("pkg/Outer")),
                 generic_signature: None,
                 origin: ClassOrigin::Unknown,
             },

@@ -10,9 +10,10 @@ use crate::index::{BucketIndex, ClassMetadata, FieldSummary, MethodSummary, Name
 #[derive(Default)]
 struct IndexViewCaches {
     class_by_internal: DashMap<Arc<str>, Option<Arc<ClassMetadata>>>,
+    source_type_names: DashMap<Arc<str>, Arc<str>>,
     classes_by_simple_name: DashMap<Arc<str>, Arc<Vec<Arc<ClassMetadata>>>>,
     classes_in_package: DashMap<Arc<str>, Arc<Vec<Arc<ClassMetadata>>>>,
-    direct_inner_classes: DashMap<(Option<Arc<str>>, Arc<str>), Arc<Vec<Arc<ClassMetadata>>>>,
+    direct_inner_classes: DashMap<Arc<str>, Arc<Vec<Arc<ClassMetadata>>>>,
     inherited_members: DashMap<Arc<str>, Arc<InheritedMembers>>,
     mro: DashMap<Arc<str>, Arc<Vec<Arc<ClassMetadata>>>>,
     methods_by_name: DashMap<(Arc<str>, Arc<str>), Arc<Vec<Arc<MethodSummary>>>>,
@@ -138,13 +139,17 @@ impl IndexView {
     }
 
     pub fn get_source_type_name(&self, internal: &str) -> Option<String> {
-        let class = self.get_class(internal)?;
-        if class.inner_class_of.is_some() || class.internal_name.contains('$') {
-            // For nested/inner classes, internal name already encodes the owner chain.
-            // Converting separators is O(length) and avoids global index scans.
-            return Some(class.internal_name.replace(['/', '$'], "."));
+        if let Some(cached) = self.caches.source_type_names.get(internal) {
+            return Some(cached.value().to_string());
         }
-        Some(class.source_name())
+
+        let class = self.get_class(internal)?;
+        let source_name =
+            class.qualified_source_name_with(|owner_internal| self.get_class(owner_internal));
+        self.caches
+            .source_type_names
+            .insert(Arc::from(internal), Arc::from(source_name.as_str()));
+        Some(source_name)
     }
 
     /// Resolve a simple inner-class name within the current enclosing-class scope.
@@ -159,24 +164,18 @@ impl IndexView {
             .or_else(|| self.resolve_internal_hint_to_class(enclosing_internal))?;
         let enclosing_pkg = enclosing.package.clone();
 
-        let mut scope_chain: Vec<Arc<str>> = vec![Arc::clone(&enclosing.name)];
+        let mut scope_chain: Vec<Arc<str>> = vec![Arc::clone(&enclosing.internal_name)];
         let mut cur = enclosing;
-        while let Some(parent_name) = cur.inner_class_of.clone() {
-            scope_chain.push(Arc::clone(&parent_name));
-            let parent = cur
-                .internal_name
-                .rsplit_once('$')
-                .and_then(|(owner_internal, _)| self.get_class(owner_internal))
-                .or_else(|| {
-                    self.get_classes_by_simple_name(parent_name.as_ref())
-                        .into_iter()
-                        .find(|c| {
-                            c.name.as_ref() == parent_name.as_ref() && c.package == enclosing_pkg
-                        })
-                });
-            match parent {
-                Some(p) => cur = p,
-                None => break,
+        let mut depth = 0usize;
+        while let Some(parent_internal) = cur.inner_class_of.clone() {
+            scope_chain.push(Arc::clone(&parent_internal));
+            let Some(parent) = self.get_class(parent_internal.as_ref()) else {
+                break;
+            };
+            cur = parent;
+            depth += 1;
+            if depth > 64 {
+                break;
             }
         }
 
@@ -202,27 +201,6 @@ impl IndexView {
                 match &best {
                     Some((best_pos, _)) if *best_pos <= pos => {}
                     _ => best = Some((pos, class)),
-                }
-            } else if class.inner_class_of.is_none()
-                && class.internal_name.contains('$')
-                && class
-                    .internal_name
-                    .rsplit('$')
-                    .next()
-                    .is_some_and(|tail| tail == simple_name)
-            {
-                // Compatibility fallback when inner_class_of is missing.
-                let owner_tail = class
-                    .internal_name
-                    .rsplit_once('$')
-                    .and_then(|(owner, _)| owner.rsplit('/').next());
-                if let Some(owner_tail) = owner_tail
-                    && let Some(pos) = scope_chain.iter().position(|n| n.as_ref() == owner_tail)
-                {
-                    match &best {
-                        Some((best_pos, _)) if *best_pos <= pos => {}
-                        _ => best = Some((pos, class)),
-                    }
                 }
             }
         }
@@ -267,22 +245,17 @@ impl IndexView {
     /// Returns direct nested classes whose owner is `owner_internal`.
     /// Ownership is determined by authoritative `inner_class_of` metadata.
     pub fn direct_inner_classes_of(&self, owner_internal: &str) -> Vec<Arc<ClassMetadata>> {
-        let Some(owner) = self.get_class(owner_internal) else {
-            return vec![];
-        };
-        let key = (owner.package.clone(), Arc::clone(&owner.name));
+        let key = Arc::from(owner_internal);
         if let Some(cached) = self.caches.direct_inner_classes.get(&key) {
             return cached.value().as_ref().clone();
         }
 
-        let owner_pkg = owner.package.as_deref();
-        let owner_name = owner.name.as_ref();
         let merged = Arc::new(
-            self.merge_classes(|layer| layer.direct_inner_classes_by_owner(owner_pkg, owner_name)),
+            self.merge_classes(|layer| layer.direct_inner_classes_by_owner(owner_internal)),
         );
         self.caches
             .direct_inner_classes
-            .insert(key, Arc::clone(&merged));
+            .insert(Arc::clone(&key), Arc::clone(&merged));
         merged.as_ref().clone()
     }
 
@@ -292,12 +265,9 @@ impl IndexView {
         owner_internal: &str,
         simple_name: &str,
     ) -> Option<Arc<ClassMetadata>> {
-        let owner = self.get_class(owner_internal)?;
-        let owner_pkg = owner.package.as_deref();
-        let owner_name = owner.name.as_ref();
         let mut best: Option<Arc<ClassMetadata>> = None;
         for layer in &self.layers {
-            for candidate in layer.direct_inner_classes_by_owner(owner_pkg, owner_name) {
+            for candidate in layer.direct_inner_classes_by_owner(owner_internal) {
                 if !candidate.matches_simple_name(simple_name) {
                     continue;
                 }
@@ -317,28 +287,8 @@ impl IndexView {
     /// metadata. Returns `None` when ownership cannot be proven.
     pub fn resolve_owner_class(&self, class_internal: &str) -> Option<Arc<ClassMetadata>> {
         let class = self.get_class(class_internal)?;
-        let owner_name = class.inner_class_of.as_deref()?;
-        let mut best: Option<Arc<ClassMetadata>> = None;
-
-        for candidate in self.get_classes_by_simple_name(owner_name) {
-            if candidate.package != class.package {
-                continue;
-            }
-            if !self
-                .direct_inner_classes_of(candidate.internal_name.as_ref())
-                .into_iter()
-                .any(|inner| inner.internal_name == class.internal_name)
-            {
-                continue;
-            }
-
-            match &best {
-                Some(current) if !Self::should_replace(current, &candidate) => {}
-                _ => best = Some(candidate),
-            }
-        }
-
-        best
+        let owner_internal = class.inner_class_of.as_deref()?;
+        self.get_class(owner_internal)
     }
 
     /// Resolve a potentially-qualified nested type path (e.g. `Outer.Inner`, `a.b.Outer.Inner`)
@@ -844,7 +794,7 @@ mod tests {
                 fields: vec![],
                 access_flags: rust_asm::constants::ACC_PUBLIC,
                 generic_signature: Some(Arc::from("<T:Ljava/lang/Object;>Ljava/lang/Object;")),
-                inner_class_of: Some(Arc::from("ClassWithGenerics")),
+                inner_class_of: Some(Arc::from("org/cubewhy/ClassWithGenerics")),
                 origin: ClassOrigin::Unknown,
             },
             ClassMetadata {
@@ -907,7 +857,7 @@ mod tests {
                 fields: vec![],
                 access_flags: rust_asm::constants::ACC_PUBLIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("Outer")),
+                inner_class_of: Some(Arc::from("org/cubewhy/Outer")),
                 origin: ClassOrigin::Unknown,
             },
             ClassMetadata {
@@ -921,7 +871,7 @@ mod tests {
                 fields: vec![],
                 access_flags: rust_asm::constants::ACC_PUBLIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("Middle")),
+                inner_class_of: Some(Arc::from("org/cubewhy/Outer$Middle")),
                 origin: ClassOrigin::Unknown,
             },
         ];
@@ -955,16 +905,14 @@ mod tests {
             }
             if class.inner_class_of.is_some() {
                 let mut chain = vec![class.name.to_string()];
-                let pkg = class.package.clone();
                 let mut current = Arc::clone(class);
-                while let Some(parent_name) = current.inner_class_of.clone() {
-                    chain.push(parent_name.to_string());
-                    let parent = view
-                        .iter_all_classes()
-                        .into_iter()
-                        .find(|c| c.name.as_ref() == parent_name.as_ref() && c.package == pkg);
+                while let Some(parent_internal) = current.inner_class_of.clone() {
+                    let parent = view.get_class(parent_internal.as_ref());
                     match parent {
-                        Some(p) => current = p,
+                        Some(p) => {
+                            chain.push(p.name.to_string());
+                            current = p;
+                        }
                         None => {
                             chain.clear();
                             break;
@@ -1045,7 +993,7 @@ mod tests {
                 fields: vec![],
                 access_flags: rust_asm::constants::ACC_PUBLIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("Outer")),
+                inner_class_of: Some(Arc::from("org/cubewhy/Outer")),
                 origin: ClassOrigin::Unknown,
             },
         ]);
@@ -1090,7 +1038,7 @@ mod tests {
                 fields: vec![],
                 access_flags: rust_asm::constants::ACC_PUBLIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("ChainCheck")),
+                inner_class_of: Some(Arc::from("org/cubewhy/ChainCheck")),
                 origin: ClassOrigin::Unknown,
             },
             ClassMetadata {
@@ -1104,7 +1052,7 @@ mod tests {
                 fields: vec![],
                 access_flags: rust_asm::constants::ACC_PUBLIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("Box")),
+                inner_class_of: Some(Arc::from("org/cubewhy/ChainCheck$Box")),
                 origin: ClassOrigin::Unknown,
             },
         ]);
@@ -1147,7 +1095,7 @@ mod tests {
             },
             ClassMetadata {
                 package: Some(Arc::from("org/cubewhy")),
-                name: Arc::from("ChainCheck$Box"),
+                name: Arc::from("Box"),
                 internal_name: Arc::from("org/cubewhy/ChainCheck$Box"),
                 super_name: None,
                 interfaces: vec![],
@@ -1156,7 +1104,7 @@ mod tests {
                 fields: vec![],
                 access_flags: rust_asm::constants::ACC_PUBLIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("ChainCheck")),
+                inner_class_of: Some(Arc::from("org/cubewhy/ChainCheck")),
                 origin: ClassOrigin::Unknown,
             },
         ]);
@@ -1192,7 +1140,7 @@ mod tests {
             },
             ClassMetadata {
                 package: Some(Arc::from("org/cubewhy")),
-                name: Arc::from("ChainCheck$Box"),
+                name: Arc::from("Box"),
                 internal_name: Arc::from("org/cubewhy/ChainCheck$Box"),
                 super_name: None,
                 interfaces: vec![],
@@ -1201,7 +1149,7 @@ mod tests {
                 fields: vec![],
                 access_flags: rust_asm::constants::ACC_PUBLIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("ChainCheck")),
+                inner_class_of: Some(Arc::from("org/cubewhy/ChainCheck")),
                 origin: ClassOrigin::Unknown,
             },
         ]);
@@ -1246,7 +1194,7 @@ mod tests {
                 fields: vec![],
                 access_flags: rust_asm::constants::ACC_PUBLIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("ChainCheck")),
+                inner_class_of: Some(Arc::from("org/cubewhy/ChainCheck")),
                 origin: ClassOrigin::Unknown,
             },
             ClassMetadata {
@@ -1260,7 +1208,7 @@ mod tests {
                 fields: vec![],
                 access_flags: rust_asm::constants::ACC_PUBLIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("Box")),
+                inner_class_of: Some(Arc::from("org/cubewhy/ChainCheck$Box")),
                 origin: ClassOrigin::Unknown,
             },
         ]);
@@ -1310,7 +1258,7 @@ mod tests {
                 fields: vec![],
                 access_flags: rust_asm::constants::ACC_PUBLIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("ChainCheck")),
+                inner_class_of: Some(Arc::from("org/cubewhy/ChainCheck")),
                 origin: ClassOrigin::Unknown,
             },
             ClassMetadata {
@@ -1324,7 +1272,7 @@ mod tests {
                 fields: vec![],
                 access_flags: rust_asm::constants::ACC_PUBLIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("Box")),
+                inner_class_of: Some(Arc::from("org/cubewhy/ChainCheck$Box")),
                 origin: ClassOrigin::Unknown,
             },
         ]);
@@ -1369,7 +1317,7 @@ mod tests {
                 fields: vec![],
                 access_flags: rust_asm::constants::ACC_PUBLIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("Outer$Class")),
+                inner_class_of: Some(Arc::from("com/example/Outer$Class")),
                 origin: ClassOrigin::Unknown,
             },
         ]);

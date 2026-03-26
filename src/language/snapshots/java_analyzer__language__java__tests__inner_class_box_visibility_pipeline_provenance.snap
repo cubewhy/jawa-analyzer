@@ -3,11 +3,11 @@ source: src/language/java.rs
 expression: out
 ---
 parsed_classes:
-name=Box internal=org/cubewhy/ClassWithGenerics$Box inner_of=Some("ClassWithGenerics")
+name=Box internal=org/cubewhy/ClassWithGenerics$Box inner_of=Some("org/cubewhy/ClassWithGenerics")
 name=ClassWithGenerics internal=org/cubewhy/ClassWithGenerics inner_of=None
 
 index_lookup_box:
-name=Box internal=org/cubewhy/ClassWithGenerics$Box inner_of=Some("ClassWithGenerics")
+name=Box internal=org/cubewhy/ClassWithGenerics$Box inner_of=Some("org/cubewhy/ClassWithGenerics")
 
 type_location=TypeAnnotation { prefix: "Bo" }
 type_annotation_list_bo_candidates_contains_box=true

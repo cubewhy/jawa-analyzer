@@ -752,7 +752,7 @@ mod tests {
         index.add_classes(vec![make_cls("org/cubewhy", "ClassWithGenerics"), {
             let mut c = make_cls("org/cubewhy", "Box");
             c.internal_name = Arc::from("org/cubewhy/ClassWithGenerics$Box");
-            c.inner_class_of = Some(Arc::from("ClassWithGenerics"));
+            c.inner_class_of = Some(Arc::from("org/cubewhy/ClassWithGenerics"));
             c
         }]);
         let ctx = SemanticContext::new(
@@ -784,7 +784,7 @@ mod tests {
             {
                 let mut c = make_cls("org/cubewhy", "Box");
                 c.internal_name = Arc::from("org/cubewhy/Other$Box");
-                c.inner_class_of = Some(Arc::from("Other"));
+                c.inner_class_of = Some(Arc::from("org/cubewhy/Other"));
                 c
             },
         ]);
@@ -814,7 +814,7 @@ mod tests {
         index.add_classes(vec![make_cls("org/cubewhy", "ChainCheck"), {
             let mut c = make_cls("org/cubewhy", "Box");
             c.internal_name = Arc::from("org/cubewhy/ChainCheck$Box");
-            c.inner_class_of = Some(Arc::from("ChainCheck"));
+            c.inner_class_of = Some(Arc::from("org/cubewhy/ChainCheck"));
             c
         }]);
 
@@ -853,13 +853,13 @@ mod tests {
             {
                 let mut c = make_cls("org/cubewhy", "Box");
                 c.internal_name = Arc::from("org/cubewhy/ChainCheck$Box");
-                c.inner_class_of = Some(Arc::from("ChainCheck"));
+                c.inner_class_of = Some(Arc::from("org/cubewhy/ChainCheck"));
                 c
             },
             {
                 let mut c = make_cls("org/cubewhy", "BoxV");
                 c.internal_name = Arc::from("org/cubewhy/ChainCheck$Box$BoxV");
-                c.inner_class_of = Some(Arc::from("Box"));
+                c.inner_class_of = Some(Arc::from("org/cubewhy/ChainCheck$Box"));
                 c
             },
         ]);
@@ -897,7 +897,7 @@ mod tests {
         index.add_classes(vec![make_cls("org/cubewhy", "ChainCheck"), {
             let mut c = make_cls("org/cubewhy", "Box");
             c.internal_name = Arc::from("org/cubewhy/ChainCheck$Box");
-            c.inner_class_of = Some(Arc::from("ChainCheck"));
+            c.inner_class_of = Some(Arc::from("org/cubewhy/ChainCheck"));
             c
         }]);
         let ctx = SemanticContext::new(
@@ -939,7 +939,7 @@ mod tests {
         index.add_classes(vec![make_cls("app", "Test"), {
             let mut c = make_cls("app", "Nested");
             c.internal_name = Arc::from("app/Test$Nested");
-            c.inner_class_of = Some(Arc::from("Test"));
+            c.inner_class_of = Some(Arc::from("app/Test"));
             c
         }]);
         let ctx = SemanticContext::new(
@@ -974,7 +974,7 @@ mod tests {
         index.add_classes(vec![make_cls("app", "Test"), {
             let mut c = make_cls("app", "NestedNonStatic");
             c.internal_name = Arc::from("app/Test$NestedNonStatic");
-            c.inner_class_of = Some(Arc::from("Test"));
+            c.inner_class_of = Some(Arc::from("app/Test"));
             c
         }]);
         let ctx = SemanticContext::new(
@@ -1016,7 +1016,7 @@ mod tests {
         index.add_classes(vec![make_cls("org/cubewhy", "ChainCheck"), {
             let mut c = make_cls("org/cubewhy", "Box");
             c.internal_name = Arc::from("org/cubewhy/ChainCheck$Box");
-            c.inner_class_of = Some(Arc::from("ChainCheck"));
+            c.inner_class_of = Some(Arc::from("org/cubewhy/ChainCheck"));
             c
         }]);
         let ctx = SemanticContext::new(
@@ -1045,9 +1045,9 @@ mod tests {
     fn test_static_access_uses_direct_name_for_raw_bytecode_nested_type() {
         let index = WorkspaceIndex::new();
         index.add_classes(vec![make_cls("java/lang", "Integer"), {
-            let mut c = make_cls("java/lang", "Integer$PublicCache");
+            let mut c = make_cls("java/lang", "PublicCache");
             c.internal_name = Arc::from("java/lang/Integer$PublicCache");
-            c.inner_class_of = Some(Arc::from("Integer"));
+            c.inner_class_of = Some(Arc::from("java/lang/Integer"));
             c
         }]);
         let ctx = SemanticContext::new(
@@ -1075,9 +1075,9 @@ mod tests {
     fn test_static_access_hides_non_public_nested_type_from_other_package() {
         let index = WorkspaceIndex::new();
         index.add_classes(vec![make_cls("java/lang", "Integer"), {
-            let mut c = make_cls("java/lang", "Integer$IntegerCache");
+            let mut c = make_cls("java/lang", "IntegerCache");
             c.internal_name = Arc::from("java/lang/Integer$IntegerCache");
-            c.inner_class_of = Some(Arc::from("Integer"));
+            c.inner_class_of = Some(Arc::from("java/lang/Integer"));
             c.access_flags = 0;
             c
         }]);
@@ -1108,7 +1108,7 @@ mod tests {
         index.add_classes(vec![make_cls("java/lang", "Integer"), {
             let mut c = make_cls("java/lang", "Integer$IntegerCache");
             c.internal_name = Arc::from("java/lang/Integer$IntegerCache");
-            c.inner_class_of = Some(Arc::from("Integer"));
+            c.inner_class_of = Some(Arc::from("java/lang/Integer"));
             c.access_flags = 0;
             c
         }]);
@@ -1151,7 +1151,7 @@ mod tests {
         for i in 0..5_000 {
             let mut inner = make_cls("bench/p", &format!("Inner{i:05}"));
             inner.internal_name = Arc::from(format!("bench/p/Other$Inner{i:05}"));
-            inner.inner_class_of = Some(Arc::from("Other"));
+            inner.inner_class_of = Some(Arc::from("org/cubewhy/Other"));
             classes.push(inner);
         }
         index.add_classes(classes);
@@ -1246,7 +1246,7 @@ mod tests {
         for i in 0..2_000 {
             let mut inner = make_cls("bench/p", &format!("Inner{i:05}"));
             inner.internal_name = Arc::from(format!("bench/p/Outer$Inner{i:05}"));
-            inner.inner_class_of = Some(Arc::from("Outer"));
+            inner.inner_class_of = Some(Arc::from("bench/p/Outer"));
             classes.push(inner);
         }
         classes.push(make_cls("bench/p", "Owner"));

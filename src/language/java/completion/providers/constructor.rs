@@ -458,7 +458,7 @@ mod tests {
                 fields: vec![],
                 access_flags: ACC_PUBLIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("ChainCheck")),
+                inner_class_of: Some(Arc::from("org/cubewhy/ChainCheck")),
                 origin: ClassOrigin::Unknown,
             },
             ClassMetadata {
@@ -480,7 +480,7 @@ mod tests {
                 fields: vec![],
                 access_flags: ACC_PUBLIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("Box")),
+                inner_class_of: Some(Arc::from("org/cubewhy/ChainCheck$Box")),
                 origin: ClassOrigin::Unknown,
             },
         ]);
@@ -892,7 +892,7 @@ mod tests {
                 fields: vec![],
                 access_flags: ACC_PUBLIC | rust_asm::constants::ACC_STATIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("Test")),
+                inner_class_of: Some(Arc::from("app/Test")),
                 origin: ClassOrigin::Unknown,
             },
             ClassMetadata {
@@ -914,7 +914,7 @@ mod tests {
                 fields: vec![],
                 access_flags: ACC_PUBLIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("Test")),
+                inner_class_of: Some(Arc::from("app/Test")),
                 origin: ClassOrigin::Unknown,
             },
         ]);

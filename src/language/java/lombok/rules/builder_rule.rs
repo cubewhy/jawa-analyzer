@@ -200,7 +200,7 @@ fn generate_builder_class(
         interfaces: vec![],
         fields: vec![],
         methods: vec![],
-        inner_class_of: Some(Arc::from(owner_class_name)),
+        inner_class_of: Some(Arc::from(owner_internal)),
         generic_signature: None,
         annotations: vec![],
         origin: crate::index::ClassOrigin::Unknown,

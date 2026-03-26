@@ -551,7 +551,11 @@ impl MemberProvider {
                 )
                 .with_replacement_mode(crate::completion::candidate::ReplacementMode::MemberSegment)
                 .with_filter_text(inner_name.to_string())
-                .with_detail(inner.source_name())
+                .with_detail(
+                    index
+                        .get_source_type_name(inner.internal_name.as_ref())
+                        .unwrap_or_else(|| inner.source_name()),
+                )
                 .with_score(62.0 + match_score as f32 * 0.1),
             );
         }
@@ -4142,7 +4146,7 @@ mod tests {
                 fields: vec![],
                 access_flags: ACC_PUBLIC | ACC_STATIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("ChainCheck")),
+                inner_class_of: Some(Arc::from("org/cubewhy/ChainCheck")),
                 origin: ClassOrigin::Unknown,
             },
         ]);
@@ -4187,7 +4191,7 @@ mod tests {
             },
             ClassMetadata {
                 package: Some(Arc::from("java/lang")),
-                name: Arc::from("Integer$PublicCache"),
+                name: Arc::from("PublicCache"),
                 internal_name: Arc::from("java/lang/Integer$PublicCache"),
                 super_name: None,
                 interfaces: vec![],
@@ -4196,7 +4200,7 @@ mod tests {
                 fields: vec![],
                 access_flags: ACC_PUBLIC | ACC_STATIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("Integer")),
+                inner_class_of: Some(Arc::from("java/lang/Integer")),
                 origin: ClassOrigin::Unknown,
             },
         ]);
@@ -4242,7 +4246,7 @@ mod tests {
             },
             ClassMetadata {
                 package: Some(Arc::from("java/lang")),
-                name: Arc::from("Integer$IntegerCache"),
+                name: Arc::from("IntegerCache"),
                 internal_name: Arc::from("java/lang/Integer$IntegerCache"),
                 super_name: None,
                 interfaces: vec![],
@@ -4251,7 +4255,7 @@ mod tests {
                 fields: vec![],
                 access_flags: 0,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("Integer")),
+                inner_class_of: Some(Arc::from("java/lang/Integer")),
                 origin: ClassOrigin::Unknown,
             },
         ]);
@@ -4306,7 +4310,7 @@ mod tests {
                 fields: vec![],
                 access_flags: ACC_PUBLIC | ACC_STATIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("ChainCheck")),
+                inner_class_of: Some(Arc::from("org/cubewhy/ChainCheck")),
                 origin: ClassOrigin::Unknown,
             },
             ClassMetadata {
@@ -4320,7 +4324,7 @@ mod tests {
                 fields: vec![],
                 access_flags: ACC_PUBLIC | ACC_STATIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("Box")),
+                inner_class_of: Some(Arc::from("org/cubewhy/ChainCheck$Box")),
                 origin: ClassOrigin::Unknown,
             },
         ]);

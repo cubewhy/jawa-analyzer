@@ -187,23 +187,14 @@ pub fn extract_java_classes_from_root(
     let type_ctx_elapsed = type_ctx_started.elapsed();
     let collect_started = Instant::now();
     let mut results = Vec::new();
-    collect_java_classes(
-        &ctx,
-        root,
-        &package,
-        None,
-        None,
-        origin,
-        &type_ctx,
-        &mut results,
-    );
+    collect_java_classes(&ctx, root, &package, None, origin, &type_ctx, &mut results);
     let collect_elapsed = collect_started.elapsed();
 
     let error_recovery_started = Instant::now();
     if results.is_empty()
         && let Some(error_node) = find_top_error_node(root)
         && let Some(meta) =
-            parse_java_error_class(&ctx, error_node, &package, None, None, origin, &type_ctx)
+            parse_java_error_class(&ctx, error_node, &package, None, origin, &type_ctx)
     {
         results.push(meta);
     }
@@ -763,7 +754,6 @@ fn parse_java_error_class(
     error_node: Node,
     package: &Option<Arc<str>>,
     outer_internal: Option<Arc<str>>,
-    outer_simple: Option<Arc<str>>,
     origin: &ClassOrigin,
     type_ctx: &SourceTypeCtx,
 ) -> Option<ClassMetadata> {
@@ -849,7 +839,7 @@ fn parse_java_error_class(
         methods,
         fields,
         access_flags,
-        inner_class_of: outer_simple,
+        inner_class_of: outer_internal,
         generic_signature,
         origin: origin.clone(),
     })
@@ -951,7 +941,6 @@ fn parse_java_class(
     node: Node,
     package: &Option<Arc<str>>,
     outer_internal: Option<Arc<str>>,
-    outer_simple: Option<Arc<str>>,
     origin: &ClassOrigin,
     type_ctx: &SourceTypeCtx,
 ) -> Option<(ClassMetadata, Vec<ClassMetadata>)> {
@@ -1050,7 +1039,7 @@ fn parse_java_class(
         methods,
         fields,
         access_flags,
-        inner_class_of: outer_simple,
+        inner_class_of: outer_internal,
         generic_signature: class_generic_signature,
         origin: origin.clone(),
     };
@@ -1272,15 +1261,14 @@ fn collect_java_classes(
     root_node: Node,
     package: &Option<Arc<str>>,
     initial_outer_internal: Option<Arc<str>>,
-    initial_outer_simple: Option<Arc<str>>,
     origin: &ClassOrigin,
     type_ctx: &Arc<SourceTypeCtx>,
     out: &mut Vec<ClassMetadata>,
 ) {
     let is_class_decl = kind_is(CLASS_DECL_KINDS);
-    let mut stack = vec![(root_node, initial_outer_internal, initial_outer_simple)];
+    let mut stack = vec![(root_node, initial_outer_internal)];
 
-    while let Some((node, outer_internal, outer_simple)) = stack.pop() {
+    while let Some((node, outer_internal)) = stack.pop() {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
             if is_class_decl.test(Input::new(child, (), None)) {
@@ -1289,14 +1277,12 @@ fn collect_java_classes(
                     child,
                     package,
                     outer_internal.clone(),
-                    outer_simple.clone(),
                     origin,
                     type_ctx,
                 ) {
                     let inner_outer_internal = Some(Arc::clone(&meta.internal_name));
-                    let inner_outer_simple = Some(Arc::clone(&meta.name));
                     if let Some(body) = child.child_by_field_name("body") {
-                        stack.push((body, inner_outer_internal, inner_outer_simple));
+                        stack.push((body, inner_outer_internal));
                     }
                     out.push(meta);
                     // Add synthetic nested classes (e.g., Builder classes)
@@ -1304,7 +1290,7 @@ fn collect_java_classes(
                 }
             } else {
                 // Continue searching downwards
-                stack.push((child, outer_internal.clone(), outer_simple.clone()));
+                stack.push((child, outer_internal.clone()));
             }
         }
     }
@@ -1595,7 +1581,7 @@ public class Main {
             "org/cubewhy/a/Main$NestedClass",
             "nested class internal name should use $ separator"
         );
-        assert_eq!(nested.inner_class_of.as_deref(), Some("Main"));
+        assert_eq!(nested.inner_class_of.as_deref(), Some("org/cubewhy/a/Main"));
     }
 
     #[test]
@@ -1655,7 +1641,10 @@ public class Main {
             leaf.internal_name.as_ref(),
             "org/cubewhy/a/Main$Nested$Leaf"
         );
-        assert_eq!(leaf.inner_class_of.as_deref(), Some("Nested"));
+        assert_eq!(
+            leaf.inner_class_of.as_deref(),
+            Some("org/cubewhy/a/Main$Nested")
+        );
     }
 
     #[test]
@@ -2552,7 +2541,7 @@ mod nested_class_navigation_tests {
 
         assert_eq!(outer.internal_name.as_ref(), "com/example/Outer");
         assert_eq!(inner.internal_name.as_ref(), "com/example/Outer$Inner");
-        assert_eq!(inner.inner_class_of.as_deref(), Some("Outer"));
+        assert_eq!(inner.inner_class_of.as_deref(), Some("com/example/Outer"));
 
         // Test find_symbol_range for nested class
         let idx = WorkspaceIndex::new();
@@ -2654,8 +2643,14 @@ fn test_nested_class_completion_scenarios() {
     );
 
     // Verify inner_class_of is set correctly
-    assert_eq!(static_inner.inner_class_of.as_deref(), Some("Outer"));
-    assert_eq!(instance_inner.inner_class_of.as_deref(), Some("Outer"));
+    assert_eq!(
+        static_inner.inner_class_of.as_deref(),
+        Some("com/example/Outer")
+    );
+    assert_eq!(
+        instance_inner.inner_class_of.as_deref(),
+        Some("com/example/Outer")
+    );
 
     // Verify static flag
     use rust_asm::constants::ACC_STATIC;
@@ -2722,7 +2717,10 @@ fn test_nested_class_with_dollar_in_name() {
         inner.internal_name.as_ref(),
         "com/example/Outer$Class$Inner$Class"
     );
-    assert_eq!(inner.inner_class_of.as_deref(), Some("Outer$Class"));
+    assert_eq!(
+        inner.inner_class_of.as_deref(),
+        Some("com/example/Outer$Class")
+    );
 
     // Test find_symbol_range for nested class with $ in name
     let idx = WorkspaceIndex::new();

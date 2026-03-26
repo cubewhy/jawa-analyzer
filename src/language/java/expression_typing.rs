@@ -1507,7 +1507,7 @@ mod tests {
                 fields: vec![],
                 access_flags: ACC_PUBLIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("Outer")),
+                inner_class_of: Some(Arc::from("org/cubewhy/Outer")),
                 origin: ClassOrigin::Unknown,
             },
         ]);
@@ -1785,7 +1785,7 @@ mod tests {
                 fields: vec![],
                 access_flags: ACC_PUBLIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("Main")),
+                inner_class_of: Some(Arc::from("org/example/Main")),
                 origin: ClassOrigin::Unknown,
             },
             ClassMetadata {
@@ -1799,7 +1799,7 @@ mod tests {
                 fields: vec![],
                 access_flags: ACC_PUBLIC | rust_asm::constants::ACC_STATIC,
                 generic_signature: None,
-                inner_class_of: Some(Arc::from("Test")),
+                inner_class_of: Some(Arc::from("org/example/Main$Test")),
                 origin: ClassOrigin::Unknown,
             },
             ClassMetadata {

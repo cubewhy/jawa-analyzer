@@ -4,6 +4,7 @@ use rust_asm::class_reader::ClassReader;
 use rust_asm::class_reader::{AttributeInfo, ElementValue};
 use rust_asm::constant_pool::CpInfo;
 use rust_asm::constants::ACC_STATIC;
+use rust_asm::nodes::ClassNode;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::io::Read;
 use std::path::Path;
@@ -51,6 +52,7 @@ pub struct ClassMetadata {
     pub access_flags: u16,
     /// The Signature attribute
     pub generic_signature: Option<Arc<str>>,
+    /// Authoritative owner internal name for member classes, e.g. `pkg/Outer$Inner`.
     pub inner_class_of: Option<Arc<str>>,
     pub origin: ClassOrigin,
 }
@@ -62,7 +64,7 @@ impl ClassMetadata {
     /// Get the fully qualified name of the source code that conforms to Java syntax
     pub fn source_name(&self) -> String {
         if self.inner_class_of.is_some() {
-            return self.internal_name.replace(['/', '$'], ".");
+            return self.fallback_nested_source_name();
         }
 
         let mut out = String::new();
@@ -75,31 +77,68 @@ impl ClassMetadata {
         out
     }
 
-    /// Returns the direct class name visible from the declaring owner.
-    /// For nested bytecode classes this strips the owner chain prefix from `name`,
-    /// while source metadata already stores the direct name.
-    pub fn direct_name(&self) -> &str {
-        if let Some(owner) = self.inner_class_of.as_deref()
-            && let Some(rest) = self
-                .name
-                .strip_prefix(owner)
-                .and_then(|s| s.strip_prefix('$'))
-        {
-            return rest;
+    fn fallback_nested_source_name(&self) -> String {
+        if let Some(owner_internal) = self.inner_class_of.as_deref() {
+            let mut out = owner_internal.replace('/', ".");
+            if !out.is_empty() {
+                out.push('.');
+            }
+            out.push_str(&self.name);
+            return out;
         }
+        self.internal_name.replace('/', ".")
+    }
+
+    pub fn qualified_source_name_with<F>(&self, mut resolve_owner: F) -> String
+    where
+        F: FnMut(&str) -> Option<Arc<ClassMetadata>>,
+    {
+        if self.inner_class_of.is_none() {
+            return self.source_name();
+        }
+
+        let mut segments = vec![self.name.to_string()];
+        let mut owner_internal = self.inner_class_of.clone();
+        let mut depth = 0usize;
+
+        while let Some(owner_name) = owner_internal {
+            let Some(owner) = resolve_owner(owner_name.as_ref()) else {
+                return self.fallback_nested_source_name();
+            };
+            segments.push(owner.name.to_string());
+            owner_internal = owner.inner_class_of.clone();
+            depth += 1;
+            if depth > 64 {
+                return self.fallback_nested_source_name();
+            }
+        }
+
+        segments.reverse();
+
+        let mut out = String::new();
+        if let Some(ref pkg) = self.package {
+            out.push_str(&pkg.replace('/', "."));
+            out.push('.');
+        }
+        out.push_str(&segments.join("."));
+        out
+    }
+
+    /// Returns the direct class name visible from the declaring owner.
+    pub fn direct_name(&self) -> &str {
         self.name.as_ref()
     }
 
     pub fn matches_simple_name(&self, simple_name: &str) -> bool {
-        self.name.as_ref() == simple_name || self.direct_name() == simple_name
+        self.direct_name() == simple_name
     }
 
     pub fn matches_internal_name_tail(&self, tail: &str) -> bool {
-        self.name.as_ref() == tail
-            || tail
-                .rsplit('$')
-                .next()
-                .is_some_and(|simple| self.direct_name() == simple)
+        self.internal_name
+            .rsplit('/')
+            .next()
+            .is_some_and(|internal_tail| internal_tail == tail)
+            || self.direct_name() == tail
     }
 
     pub fn is_static(&self) -> bool {
@@ -596,6 +635,7 @@ fn parse_class_data_with_origin(bytes: &[u8], origin: ClassOrigin) -> Option<Cla
     let rsp: Vec<_> = cn.name.rsplitn(2, '/').collect();
     let class_name = *rsp.first()?;
     let package = rsp.get(1).copied();
+    let (name, inner_class_of) = bytecode_declared_name_and_owner(&cn, class_name);
 
     let generic_signature = cn.attributes.iter().find_map(|a| {
         if let AttributeInfo::Signature { signature_index } = a {
@@ -718,18 +758,9 @@ fn parse_class_data_with_origin(bytes: &[u8], origin: ClassOrigin) -> Option<Cla
         })
         .collect();
 
-    let inner_class_of = if !cn.outer_class.is_empty() {
-        let outer_simple = cn.outer_class.rsplit('/').next().unwrap_or(&cn.outer_class);
-        Some(Arc::from(outer_simple))
-    } else {
-        class_name
-            .find('$')
-            .map(|pos| Arc::from(&class_name[..pos]))
-    };
-
     Some(ClassMetadata {
         package: package.map(Arc::from),
-        name: Arc::from(class_name),
+        name,
         internal_name,
         super_name: cn.super_name.map(|str| intern_str(&str)),
         interfaces: cn
@@ -745,6 +776,25 @@ fn parse_class_data_with_origin(bytes: &[u8], origin: ClassOrigin) -> Option<Cla
         inner_class_of,
         origin,
     })
+}
+
+fn bytecode_declared_name_and_owner(
+    class_node: &ClassNode,
+    fallback_name: &str,
+) -> (Arc<str>, Option<Arc<str>>) {
+    let self_entry = class_node
+        .inner_classes
+        .iter()
+        .find(|entry| entry.name == class_node.name);
+
+    let name = self_entry
+        .and_then(|entry| entry.inner_name.as_deref())
+        .unwrap_or(fallback_name);
+    let owner_internal = self_entry
+        .and_then(|entry| entry.outer_name.as_deref())
+        .map(intern_str);
+
+    (Arc::from(name), owner_internal)
 }
 
 /// 将源码中的参数名称合并到字节码索引中，并使用简单的类型名称比对解决重载冲突
@@ -1672,8 +1722,20 @@ public class Calc {
     #[test]
     fn test_strict_source_name_generation() {
         // 场景 1：合法的嵌套类 (内部有明确的 inner_class_of)
-        let mut nested = make_class("com/example", "Outer$Inner", ClassOrigin::Unknown);
-        nested.inner_class_of = Some(Arc::from("Outer"));
+        let nested = ClassMetadata {
+            package: Some(Arc::from("com/example")),
+            name: Arc::from("Inner"),
+            internal_name: Arc::from("com/example/Outer$Inner"),
+            super_name: None,
+            interfaces: vec![],
+            annotations: vec![],
+            methods: vec![],
+            fields: vec![],
+            access_flags: ACC_PUBLIC,
+            generic_signature: None,
+            inner_class_of: Some(Arc::from("com/example/Outer")),
+            origin: ClassOrigin::Unknown,
+        };
         assert_eq!(nested.source_name(), "com.example.Outer.Inner");
         assert_eq!(nested.direct_name(), "Inner");
 
@@ -1690,10 +1752,10 @@ public class Calc {
     }
 
     #[test]
-    fn test_direct_name_strips_owner_chain_using_metadata() {
+    fn test_direct_name_uses_declared_nested_segment() {
         let nested = ClassMetadata {
             package: Some(Arc::from("com/example")),
-            name: Arc::from("Outer$Middle$Leaf"),
+            name: Arc::from("Leaf"),
             internal_name: Arc::from("com/example/Outer$Middle$Leaf"),
             super_name: None,
             interfaces: vec![],
@@ -1702,7 +1764,7 @@ public class Calc {
             fields: vec![],
             access_flags: ACC_PUBLIC,
             generic_signature: None,
-            inner_class_of: Some(Arc::from("Outer$Middle")),
+            inner_class_of: Some(Arc::from("com/example/Outer$Middle")),
             origin: ClassOrigin::Unknown,
         };
 
