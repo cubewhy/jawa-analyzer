@@ -19,6 +19,13 @@ impl CompletionProvider for LocalVarProvider {
         "local_var"
     }
 
+    fn is_applicable(&self, ctx: &SemanticContext) -> bool {
+        matches!(
+            ctx.location,
+            CursorLocation::Expression { .. } | CursorLocation::MethodArgument { .. }
+        )
+    }
+
     fn provide(
         &self,
         _scope: IndexScope,
