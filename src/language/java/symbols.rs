@@ -6,16 +6,18 @@ use crate::lsp::converters::ts_node_to_range;
 pub fn collect_java_symbols<'a>(
     root: Node<'a>,
     bytes: &'a [u8],
+    rope: &ropey::Rope,
     request: Option<&crate::lsp::request_context::RequestContext>,
 ) -> crate::lsp::request_cancellation::RequestResult<Vec<DocumentSymbol>> {
     let mut out = Vec::new();
-    collect_type_declarations(root, bytes, request, &mut out)?;
+    collect_type_declarations(root, bytes, rope, request, &mut out)?;
     Ok(out)
 }
 
 fn collect_type_declarations<'a>(
     node: Node<'a>,
     bytes: &'a [u8],
+    rope: &ropey::Rope,
     request: Option<&crate::lsp::request_context::RequestContext>,
     out: &mut Vec<DocumentSymbol>,
 ) -> crate::lsp::request_cancellation::RequestResult<()> {
@@ -27,13 +29,13 @@ fn collect_type_declarations<'a>(
             request.check_cancelled("document_symbol.type_declarations")?;
         }
         if is_type_declaration(child.kind()) {
-            if let Some(symbol) = build_type_symbol(child, bytes, request)? {
+            if let Some(symbol) = build_type_symbol(child, bytes, rope, request)? {
                 out.push(symbol);
             }
             continue;
         }
         if matches!(child.kind(), "program" | "ERROR") {
-            collect_type_declarations(child, bytes, request, out)?;
+            collect_type_declarations(child, bytes, rope, request, out)?;
         }
     }
     Ok(())
@@ -53,13 +55,14 @@ fn is_type_declaration(kind: &str) -> bool {
 fn build_type_symbol<'a>(
     node: Node<'a>,
     bytes: &'a [u8],
+    rope: &ropey::Rope,
     request: Option<&crate::lsp::request_context::RequestContext>,
 ) -> crate::lsp::request_cancellation::RequestResult<Option<DocumentSymbol>> {
-    let Some((mut sym, body)) = start_type_symbol(node, bytes) else {
+    let Some((mut sym, body)) = start_type_symbol(node, bytes, rope) else {
         return Ok(None);
     };
     let children = if let Some(body_node) = body {
-        collect_type_members(body_node, bytes, request)?
+        collect_type_members(body_node, bytes, rope, request)?
     } else {
         Vec::new()
     };
@@ -70,6 +73,7 @@ fn build_type_symbol<'a>(
 fn collect_type_members<'a>(
     body: Node<'a>,
     bytes: &'a [u8],
+    rope: &ropey::Rope,
     request: Option<&crate::lsp::request_context::RequestContext>,
 ) -> crate::lsp::request_cancellation::RequestResult<Vec<DocumentSymbol>> {
     let mut out = Vec::new();
@@ -81,7 +85,7 @@ fn collect_type_members<'a>(
             request.check_cancelled("document_symbol.type_members")?;
         }
         if is_type_declaration(child.kind()) {
-            if let Some(symbol) = build_type_symbol(child, bytes, request)? {
+            if let Some(symbol) = build_type_symbol(child, bytes, rope, request)? {
                 out.push(symbol);
             }
             continue;
@@ -91,19 +95,19 @@ fn collect_type_members<'a>(
             "method_declaration"
             | "constructor_declaration"
             | "compact_constructor_declaration" => {
-                if let Some(symbol) = parse_method_symbol(child, bytes) {
+                if let Some(symbol) = parse_method_symbol(child, bytes, rope) {
                     out.push(symbol);
                 }
             }
             "enum_constant" | "enum_constant_declaration" => {
-                if let Some(symbol) = parse_enum_constant_symbol(child, bytes) {
+                if let Some(symbol) = parse_enum_constant_symbol(child, bytes, rope) {
                     out.push(symbol);
                 }
             }
             "enum_body_declarations" | "ERROR" => {
-                out.extend(collect_type_members(child, bytes, request)?);
+                out.extend(collect_type_members(child, bytes, rope, request)?);
             }
-            "field_declaration" => out.extend(parse_field_symbols(child, bytes)),
+            "field_declaration" => out.extend(parse_field_symbols(child, bytes, rope)),
             _ => {}
         }
     }
@@ -114,6 +118,7 @@ fn collect_type_members<'a>(
 fn start_type_symbol<'a>(
     node: Node<'a>,
     bytes: &'a [u8],
+    rope: &ropey::Rope,
 ) -> Option<(DocumentSymbol, Option<Node<'a>>)> {
     let name_node = node.child_by_field_name("name")?;
     let name = name_node.utf8_text(bytes).ok()?.to_string();
@@ -124,8 +129,8 @@ fn start_type_symbol<'a>(
         _ => SymbolKind::CLASS, // Classes and records are both CLASS
     };
 
-    let range = ts_node_to_range(&node);
-    let selection_range = ts_node_to_range(&name_node);
+    let range = ts_node_to_range(&node, rope);
+    let selection_range = ts_node_to_range(&name_node, rope);
     let body = node.child_by_field_name("body");
 
     #[allow(deprecated)]
@@ -143,7 +148,11 @@ fn start_type_symbol<'a>(
     Some((sym, body))
 }
 
-fn parse_method_symbol<'a>(node: Node<'a>, bytes: &'a [u8]) -> Option<DocumentSymbol> {
+fn parse_method_symbol<'a>(
+    node: Node<'a>,
+    bytes: &'a [u8],
+    rope: &ropey::Rope,
+) -> Option<DocumentSymbol> {
     let name_node = node
         .child_by_field_name("name")
         .or_else(|| node.child_by_field_name("identifier"))?; // constructor 用 identifier
@@ -164,13 +173,17 @@ fn parse_method_symbol<'a>(node: Node<'a>, bytes: &'a [u8]) -> Option<DocumentSy
         kind,
         tags: None,
         deprecated: None,
-        range: ts_node_to_range(&node),
-        selection_range: ts_node_to_range(&name_node),
+        range: ts_node_to_range(&node, rope),
+        selection_range: ts_node_to_range(&name_node, rope),
         children: None,
     })
 }
 
-fn parse_field_symbols<'a>(node: Node<'a>, bytes: &'a [u8]) -> Vec<DocumentSymbol> {
+fn parse_field_symbols<'a>(
+    node: Node<'a>,
+    bytes: &'a [u8],
+    rope: &ropey::Rope,
+) -> Vec<DocumentSymbol> {
     let mut results = Vec::new();
 
     // Find type: used for detail display
@@ -202,8 +215,8 @@ fn parse_field_symbols<'a>(node: Node<'a>, bytes: &'a [u8]) -> Vec<DocumentSymbo
             kind: SymbolKind::FIELD,
             tags: None,
             deprecated: None,
-            range: ts_node_to_range(&node),
-            selection_range: ts_node_to_range(&name_node),
+            range: ts_node_to_range(&node, rope),
+            selection_range: ts_node_to_range(&name_node, rope),
             children: None,
         });
     }
@@ -211,7 +224,11 @@ fn parse_field_symbols<'a>(node: Node<'a>, bytes: &'a [u8]) -> Vec<DocumentSymbo
     results
 }
 
-fn parse_enum_constant_symbol<'a>(node: Node<'a>, bytes: &'a [u8]) -> Option<DocumentSymbol> {
+fn parse_enum_constant_symbol<'a>(
+    node: Node<'a>,
+    bytes: &'a [u8],
+    rope: &ropey::Rope,
+) -> Option<DocumentSymbol> {
     let name_node = node
         .child_by_field_name("name")
         .or_else(|| node.child_by_field_name("identifier"))
@@ -226,8 +243,8 @@ fn parse_enum_constant_symbol<'a>(node: Node<'a>, bytes: &'a [u8]) -> Option<Doc
         kind: SymbolKind::ENUM_MEMBER,
         tags: None,
         deprecated: None,
-        range: ts_node_to_range(&node),
-        selection_range: ts_node_to_range(&name_node),
+        range: ts_node_to_range(&node, rope),
+        selection_range: ts_node_to_range(&name_node, rope),
         children: None,
     })
 }
@@ -241,7 +258,9 @@ mod tests {
     fn collect(src: &str) -> Vec<DocumentSymbol> {
         let mut parser = make_java_parser();
         let tree = parser.parse(src, None).expect("parse java");
-        collect_java_symbols(tree.root_node(), src.as_bytes(), None).expect("symbol collection")
+        let rope = ropey::Rope::from_str(src);
+        collect_java_symbols(tree.root_node(), src.as_bytes(), &rope, None)
+            .expect("symbol collection")
     }
 
     #[test]

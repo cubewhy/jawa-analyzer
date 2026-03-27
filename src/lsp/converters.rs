@@ -7,7 +7,7 @@ use crate::{
             extract_imports_from_source, extract_package_from_source, is_import_needed,
         },
     },
-    language::rope_utils::line_col_to_offset,
+    language::rope_utils::{line_col_to_offset, rope_byte_range_to_range},
 };
 
 /// Convert internal completion candidates to LSP CompletionItem
@@ -138,24 +138,17 @@ pub fn lsp_pos_to_offset(source: &str, pos: Position) -> Option<usize> {
     line_col_to_offset(source, pos.line, pos.character)
 }
 
-pub fn ts_node_to_range(node: &tree_sitter::Node) -> Range {
-    Range {
-        start: Position {
-            line: node.start_position().row as u32,
-            character: node.start_position().column as u32,
-        },
-        end: Position {
-            line: node.end_position().row as u32,
-            character: node.end_position().column as u32,
-        },
-    }
+pub fn ts_node_to_range(node: &tree_sitter::Node, rope: &ropey::Rope) -> Range {
+    rope_byte_range_to_range(rope, node.start_byte(), node.end_byte())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::completion::candidate::{CandidateKind, CompletionCandidate};
+    use ropey::Rope;
     use std::sync::Arc;
+    use tree_sitter::Parser;
 
     fn make_candidate(label: &str, import: Option<&str>) -> CompletionCandidate {
         let mut c = CompletionCandidate::new(
@@ -217,6 +210,27 @@ mod tests {
     fn test_already_in_source_java_lang() {
         let src = "package a;\nclass A {}";
         assert!(is_already_in_source("java.lang.String", src));
+    }
+
+    #[test]
+    fn test_ts_node_to_range_uses_utf16_columns() {
+        let src = "class /*😀*/ Foo {}";
+        let rope = Rope::from_str(src);
+        let mut parser = Parser::new();
+        parser
+            .set_language(&tree_sitter_java::LANGUAGE.into())
+            .expect("load java grammar");
+        let tree = parser.parse(src, None).expect("parse java");
+        let class = tree.root_node().named_child(0).expect("class declaration");
+        let name = class.child_by_field_name("name").expect("class name");
+
+        assert_eq!(
+            ts_node_to_range(&name, &rope),
+            Range {
+                start: Position::new(0, 13),
+                end: Position::new(0, 16),
+            }
+        );
     }
 
     #[test]

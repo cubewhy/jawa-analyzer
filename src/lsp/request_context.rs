@@ -4,7 +4,7 @@ use std::time::Instant;
 use tower_lsp::lsp_types::{Position, Url};
 
 use crate::index::{IndexScope, IndexView};
-use crate::language::rope_utils::rope_line_col_to_offset;
+use crate::language::rope_utils::{rope_identifier_end_position, rope_line_col_to_offset};
 use crate::language::{Language, LanguageRegistry, ParseEnv};
 use crate::lsp::request_cancellation::{
     CancellationToken, Cancelled, RequestFamily, RequestResult,
@@ -240,10 +240,8 @@ impl<'a> PreparedRequest<'a> {
     }
 
     pub fn token_end_position(&self, position: Position) -> Position {
-        Position::new(
-            position.line,
-            token_end_character(self.source_text(), position.line, position.character),
-        )
+        rope_identifier_end_position(&self.file.rope, position.line, position.character)
+            .unwrap_or(position)
     }
 
     pub fn semantic_context(
@@ -368,33 +366,6 @@ impl<'a> PreparedRequest<'a> {
     ) -> RequestResult<Option<SemanticContext>> {
         self.semantic_context(self.token_end_position(position), trigger)
     }
-}
-
-fn token_end_character(content: &str, line: u32, character: u32) -> u32 {
-    let Some(line_str) = content.lines().nth(line as usize) else {
-        return character;
-    };
-    let mut byte_offset = 0usize;
-    let mut utf16_col = 0u32;
-    for ch in line_str.chars() {
-        if utf16_col >= character {
-            break;
-        }
-        utf16_col += ch.len_utf16() as u32;
-        byte_offset += ch.len_utf8();
-    }
-    let rest = &line_str[byte_offset..];
-    if !rest.starts_with(|c: char| c.is_alphanumeric() || c == '_') {
-        return character;
-    }
-    let mut end_utf16 = character;
-    for ch in rest.chars() {
-        if !(ch.is_alphanumeric() || ch == '_') {
-            break;
-        }
-        end_utf16 += ch.len_utf16() as u32;
-    }
-    end_utf16
 }
 
 #[cfg(test)]

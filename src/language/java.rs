@@ -13,7 +13,7 @@ use crate::language::java::completion::providers::{
 };
 use crate::language::java::inlay_hints::{JavaInlayHintKind, collect_java_inlay_hints};
 use crate::language::java::symbols::collect_java_symbols;
-use crate::language::rope_utils::{rope_byte_offset_to_line_col, rope_line_col_to_offset};
+use crate::language::rope_utils::{rope_byte_offset_to_position, rope_line_col_to_offset};
 use crate::language::{ClassifiedToken, ParseEnv};
 use crate::request_metrics::RequestMetrics;
 use crate::semantic::SemanticContext;
@@ -255,7 +255,12 @@ impl Language for JavaLanguage {
     ) -> crate::lsp::request_cancellation::RequestResult<
         Option<Vec<tower_lsp::lsp_types::DocumentSymbol>>,
     > {
-        Ok(Some(collect_java_symbols(node, file.bytes(), request)?))
+        Ok(Some(collect_java_symbols(
+            node,
+            file.bytes(),
+            file.rope.as_ref(),
+            request,
+        )?))
     }
 
     fn supports_inlay_hints(&self) -> bool {
@@ -629,8 +634,7 @@ fn lsp_range_to_byte_range(
 }
 
 fn byte_offset_to_position(rope: &Rope, offset: usize) -> Position {
-    let (line, character) = rope_byte_offset_to_line_col(rope, offset);
-    Position { line, character }
+    rope_byte_offset_to_position(rope, offset)
 }
 
 // TODO: rename or remove the JavaContextExtractor struct.

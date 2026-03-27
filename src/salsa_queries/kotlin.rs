@@ -1,6 +1,7 @@
 use super::Db;
 use crate::index::{ClassMetadata, IndexScope, MethodSummary, ModuleId};
 use crate::language::kotlin::{extract_kotlin_semantic_context_for_test, kotlin_type_to_internal};
+use crate::language::rope_utils::rope_byte_offset_to_line_col;
 use crate::language::ts_utils::capture_text;
 use crate::salsa_db::SourceFile;
 use crate::salsa_queries::context::{
@@ -802,11 +803,8 @@ fn build_kotlin_semantic_context(
     }
 
     for bounded in candidates {
-        let char_offset = rope.byte_to_char(bounded);
-        let line = rope.char_to_line(char_offset);
-        let character = char_offset.saturating_sub(rope.line_to_char(line));
-        if let Some(ctx) =
-            extract_kotlin_semantic_context_for_test(content, line as u32, character as u32, None)
+        let (line, character) = rope_byte_offset_to_line_col(&rope, bounded);
+        if let Some(ctx) = extract_kotlin_semantic_context_for_test(content, line, character, None)
         {
             return Some(ctx);
         }
@@ -1276,16 +1274,12 @@ fn kotlin_member_access_at_offset(source: &str, offset: usize) -> Option<(String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::language::rope_utils::byte_offset_to_line_col;
     use crate::salsa_db::{Database, FileId};
-    use ropey::Rope;
     use tower_lsp::lsp_types::Url;
 
     fn offset_to_line_col(source: &str, offset: usize) -> (u32, u32) {
-        let rope = Rope::from_str(source);
-        let char_offset = rope.byte_to_char(offset);
-        let line = rope.char_to_line(char_offset);
-        let col = char_offset - rope.line_to_char(line);
-        (line as u32, col as u32)
+        byte_offset_to_line_col(source, offset)
     }
 
     #[test]
@@ -1328,6 +1322,36 @@ class User {
 class Test {
     fun run(user: User) {
         val output = user.name
+    }
+}
+"#;
+        let offset = source.rfind("user.name").unwrap() + "user.".len();
+        let (line, character) = offset_to_line_col(source, offset);
+        let file = SourceFile::new(
+            &db,
+            FileId::new(uri),
+            source.to_string(),
+            Arc::from("kotlin"),
+        );
+
+        let resolved = resolve_kotlin_symbol(&db, file, line, character).expect("resolved");
+        assert_eq!(resolved.kind, SymbolKind::Field);
+        assert_eq!(resolved.target_internal_name.as_ref(), "User");
+        assert_eq!(resolved.member_name.as_deref(), Some("name"));
+    }
+
+    #[test]
+    fn test_resolve_kotlin_member_symbol_with_utf16_columns() {
+        let db = Database::default();
+        let uri = Url::parse("file:///test/Test.kt").unwrap();
+        let source = r#"
+class User {
+    val name: String = ""
+}
+
+class Test {
+    fun run(user: User) {
+        val prefix = "😀"; val output = user.name
     }
 }
 "#;
