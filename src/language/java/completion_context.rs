@@ -216,13 +216,13 @@ impl<'a> ContextEnricher<'a> {
             arguments,
             ..
         } = &ctx.location
-            && arguments.is_none()
             && !receiver_expr.is_empty()
         {
             Some((
                 receiver_expr.clone(),
                 member_prefix.clone(),
                 receiver_type.is_some(),
+                arguments.is_none(),
                 SymbolResolver::new(self.view).classify_name(ctx, receiver_expr),
             ))
         } else {
@@ -231,7 +231,7 @@ impl<'a> ContextEnricher<'a> {
 
         let classified_member_receiver = member_access_reclassification
             .as_ref()
-            .and_then(|(_, _, _, classified)| classified.clone());
+            .and_then(|(_, _, _, _, classified)| classified.clone());
 
         if let Some(crate::semantic::names::NameClassification::Expression { ty, .. }) =
             classified_member_receiver.as_ref()
@@ -252,8 +252,13 @@ impl<'a> ContextEnricher<'a> {
             }
         }
 
-        if let Some((receiver_expr, member_prefix, has_receiver_type, Some(classified))) =
-            member_access_reclassification
+        if let Some((
+            receiver_expr,
+            member_prefix,
+            has_receiver_type,
+            allows_import_rewrite,
+            Some(classified),
+        )) = member_access_reclassification
         {
             match classified {
                 crate::semantic::names::NameClassification::Type { internal_name, .. } => {
@@ -274,7 +279,7 @@ impl<'a> ContextEnricher<'a> {
                     ctx.query = member_prefix.clone();
                 }
                 crate::semantic::names::NameClassification::Package { .. }
-                    if !has_receiver_type =>
+                    if !has_receiver_type && allows_import_rewrite =>
                 {
                     ctx.location = CursorLocation::Import {
                         prefix: format!("{receiver_expr}.{member_prefix}"),
@@ -6520,6 +6525,53 @@ mod tests {
             } => {
                 assert_eq!(class_internal_name.as_ref(), "org/cubewhy/ChainCheck");
                 assert!(member_prefix.is_empty());
+            }
+            other => panic!("expected type-qualified MemberAccess, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_member_access_type_qualifier_with_arguments_still_reclassifies_to_type() {
+        let idx = make_index_with_nested_chaincheck();
+        let scope = IndexScope {
+            module: ModuleId::ROOT,
+        };
+        let view = idx.view(scope);
+        let type_ctx = Arc::new(SourceTypeCtx::new(
+            Some(Arc::from("org/cubewhy")),
+            vec![],
+            Some(view.build_name_table()),
+        ));
+        let mut ctx = SemanticContext::new(
+            CursorLocation::MemberAccess {
+                receiver_kind: crate::semantic::AccessReceiverKind::Unknown,
+                receiver_semantic_type: None,
+                receiver_type: None,
+                member_prefix: "make".to_string(),
+                receiver_expr: "ChainCheck".to_string(),
+                arguments: Some("()".to_string()),
+            },
+            "make",
+            vec![],
+            Some(Arc::from("ChainCheck")),
+            Some(Arc::from("org/cubewhy/ChainCheck")),
+            Some(Arc::from("org/cubewhy")),
+            vec![],
+        )
+        .with_extension(type_ctx);
+
+        ContextEnricher::new(&view).enrich(&mut ctx);
+        match &ctx.location {
+            CursorLocation::MemberAccess {
+                receiver_kind:
+                    crate::semantic::AccessReceiverKind::Type {
+                        class_internal_name,
+                    },
+                member_prefix,
+                ..
+            } => {
+                assert_eq!(class_internal_name.as_ref(), "org/cubewhy/ChainCheck");
+                assert_eq!(member_prefix, "make");
             }
             other => panic!("expected type-qualified MemberAccess, got {other:?}"),
         }

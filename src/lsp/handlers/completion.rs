@@ -421,15 +421,17 @@ mod tests {
     use crate::completion::candidate::CandidateKind;
     use crate::completion::engine::{CompletionEngine, CompletionMetadata};
     use crate::index::{
-        ClassMetadata, ClassOrigin, IndexScope, IndexedArchiveData, IndexedJavaModule, ModuleId,
+        ClassMetadata, ClassOrigin, IndexScope, IndexedArchiveData, IndexedJavaModule,
+        MethodParams, MethodSummary, ModuleId,
     };
     use crate::language::LanguageRegistry;
     use crate::language::java::module_info::JavaModuleDescriptor;
     use crate::lsp::request_cancellation::{CancellationToken, RequestFamily};
     use crate::lsp::request_context::RequestContext;
+    use crate::semantic::types::parse_return_type_from_descriptor;
     use crate::workspace::document::Document;
     use crate::workspace::{SourceFile, Workspace};
-    use rust_asm::constants::ACC_PUBLIC;
+    use rust_asm::constants::{ACC_PUBLIC, ACC_STATIC};
     use std::sync::Arc;
     use tower_lsp::lsp_types::{
         CompletionContext, CompletionTriggerKind, PartialResultParams, TextDocumentIdentifier,
@@ -499,6 +501,18 @@ mod tests {
                 provides: vec![],
             }),
             origin: ClassOrigin::Jar(Arc::from("/tmp/modules.jar")),
+        }
+    }
+
+    fn make_method(name: &str, descriptor: &str, flags: u16) -> MethodSummary {
+        MethodSummary {
+            name: Arc::from(name),
+            params: MethodParams::from_method_descriptor(descriptor),
+            annotations: vec![],
+            access_flags: flags,
+            is_synthetic: false,
+            generic_signature: None,
+            return_type: parse_return_type_from_descriptor(descriptor),
         }
     }
 
@@ -1043,6 +1057,45 @@ mod tests {
             labels
                 .iter()
                 .any(|label| label == "com.example.spi.Service"),
+            "{labels:?}"
+        );
+    }
+
+    #[test]
+    fn test_static_method_completion_survives_existing_call_parentheses() {
+        let workspace = Arc::new(Workspace::new());
+        workspace.index.update(|index| {
+            index.add_classes(vec![ClassMetadata {
+                package: Some(Arc::from("java/lang")),
+                name: Arc::from("Thread"),
+                internal_name: Arc::from("java/lang/Thread"),
+                super_name: None,
+                interfaces: vec![],
+                annotations: vec![],
+                methods: vec![make_method(
+                    "currentThread",
+                    "()Ljava/lang/Thread;",
+                    ACC_PUBLIC | ACC_STATIC,
+                )],
+                fields: vec![],
+                access_flags: ACC_PUBLIC,
+                inner_class_of: None,
+                generic_signature: None,
+                origin: ClassOrigin::Unknown,
+            }]);
+        });
+
+        let uri = Url::parse("file:///workspace/Test.java").expect("uri");
+        let labels = completion_labels_from_marked_source(
+            workspace,
+            uri,
+            "class Test { void m() { Thread.currentThread|(); } }",
+        );
+
+        assert!(
+            labels
+                .iter()
+                .any(|label| label.starts_with("currentThread")),
             "{labels:?}"
         );
     }
