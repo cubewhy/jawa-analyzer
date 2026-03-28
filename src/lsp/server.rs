@@ -1,3 +1,4 @@
+use serde_json::{Value, json};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tower_lsp::jsonrpc::Result as LspResult;
@@ -16,6 +17,7 @@ use crate::index::ClassOrigin;
 use crate::index::jdk::JdkIndexer;
 use crate::language::LanguageRegistry;
 use crate::language::rope_utils::rope_line_col_to_offset;
+use crate::lsp::commands::{COMMAND_CLEAR_CACHES, COMMAND_SHOW_MEMORY_STATUS};
 use crate::lsp::config::JavaAnalyzerConfig;
 use crate::lsp::handlers::goto_definition::handle_goto_definition;
 use crate::lsp::handlers::inlay_hints::handle_inlay_hints;
@@ -394,6 +396,28 @@ impl LanguageServer for Backend {
             source_watch_service.stop();
         }
         Ok(())
+    }
+
+    async fn execute_command(&self, params: ExecuteCommandParams) -> LspResult<Option<Value>> {
+        match params.command.as_str() {
+            COMMAND_SHOW_MEMORY_STATUS => {
+                let summary = self.workspace.memory_report().await;
+                self.client
+                    .log_message(MessageType::INFO, summary.clone())
+                    .await;
+                Ok(Some(json!({ "summary": summary })))
+            }
+            COMMAND_CLEAR_CACHES => {
+                let summary = self.workspace.clear_ephemeral_caches().await;
+                self.client
+                    .log_message(MessageType::INFO, summary.clone())
+                    .await;
+                Ok(Some(json!({ "summary": summary })))
+            }
+            command => Err(tower_lsp::jsonrpc::Error::invalid_params(format!(
+                "unsupported command: {command}"
+            ))),
+        }
     }
 
     async fn inlay_hint(&self, params: InlayHintParams) -> LspResult<Option<Vec<InlayHint>>> {

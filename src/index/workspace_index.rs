@@ -1,4 +1,4 @@
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeSet, HashSet, VecDeque};
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -16,6 +16,23 @@ use crate::index::{
 };
 
 type AnalysisContextKey = (ModuleId, ClasspathId, Option<SourceRootId>);
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct WorkspaceIndexStats {
+    pub module_count: usize,
+    pub jar_cache_entries: usize,
+    pub view_cache_entries: usize,
+    pub classpath_jar_refs: usize,
+    pub unique_bucket_count: usize,
+    pub class_count: usize,
+    pub java_module_count: usize,
+    pub origin_count: usize,
+    pub simple_name_entry_count: usize,
+    pub package_entry_count: usize,
+    pub owner_entry_count: usize,
+    pub name_table_entries: usize,
+    pub mro_cache_entries: usize,
+}
 
 pub struct WorkspaceIndex {
     modules: DashMap<ModuleId, Arc<ModuleIndex>>,
@@ -321,6 +338,63 @@ impl WorkspaceIndex {
     ) -> Arc<NameTable> {
         self.view_for_analysis_context(module, classpath_id, source_root)
             .build_name_table()
+    }
+
+    pub(crate) fn memory_stats(&self) -> WorkspaceIndexStats {
+        let mut stats = WorkspaceIndexStats {
+            module_count: self.modules.len(),
+            jar_cache_entries: self.jar_cache.len(),
+            view_cache_entries: self.view_cache.len(),
+            ..WorkspaceIndexStats::default()
+        };
+
+        let mut seen_buckets = HashSet::new();
+        let mut accumulate_bucket = |bucket: Arc<BucketIndex>| {
+            let ptr = Arc::as_ptr(&bucket) as usize;
+            if !seen_buckets.insert(ptr) {
+                return;
+            }
+
+            let bucket_stats = bucket.stats();
+            stats.unique_bucket_count += 1;
+            stats.class_count += bucket_stats.class_count;
+            stats.java_module_count += bucket_stats.module_count;
+            stats.origin_count += bucket_stats.origin_count;
+            stats.simple_name_entry_count += bucket_stats.simple_name_entry_count;
+            stats.package_entry_count += bucket_stats.package_entry_count;
+            stats.owner_entry_count += bucket_stats.owner_entry_count;
+            stats.name_table_entries += bucket_stats.name_table_size;
+            stats.mro_cache_entries += bucket_stats.mro_cache_entries;
+        };
+
+        accumulate_bucket(Arc::clone(&self.jdk));
+
+        for module in &self.modules {
+            let module = module.value();
+            stats.classpath_jar_refs += module.classpath_jar_count();
+            for bucket in module.all_bucket_refs() {
+                accumulate_bucket(bucket);
+            }
+        }
+
+        for bucket in &self.jar_cache {
+            accumulate_bucket(Arc::clone(bucket.value()));
+        }
+
+        stats
+    }
+
+    pub(crate) fn clear_analysis_caches(&self) {
+        self.view_cache.clear();
+        self.jdk.clear_query_caches();
+
+        for module in &self.modules {
+            module.value().clear_query_caches();
+        }
+
+        for bucket in &self.jar_cache {
+            bucket.value().clear_query_caches();
+        }
     }
 
     fn visible_buckets_for_analysis_context(

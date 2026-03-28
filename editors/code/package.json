@@ -18,7 +18,9 @@
     "onCommand:java-analyzer.setVineflowerPath",
     "onCommand:java-analyzer.setCfrPath",
     "onCommand:java-analyzer.selectDecompilerBackend",
-    "onCommand:java-analyzer.setServerPath"
+    "onCommand:java-analyzer.setServerPath",
+    "onCommand:java-analyzer.showMemoryStatus",
+    "onCommand:java-analyzer.clearServerCaches"
   ],
   "contributes": {
     "languages": [
@@ -54,6 +56,14 @@
       {
         "command": "java-analyzer.setServerPath",
         "title": "Java Analyzer: Set Server Path"
+      },
+      {
+        "command": "java-analyzer.showMemoryStatus",
+        "title": "Java Analyzer: Show Memory Status"
+      },
+      {
+        "command": "java-analyzer.clearServerCaches",
+        "title": "Java Analyzer: Clear Server Caches"
       }
     ],
     "configuration": {

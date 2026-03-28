@@ -112,6 +112,15 @@ pub struct ClassExtractionSnapshot {
     pub classes: Vec<crate::index::ClassMetadata>,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct SalsaCacheStats {
+    pub parse_tree_entries: usize,
+    pub parse_tree_text_bytes: usize,
+    pub class_extraction_entries: usize,
+    pub class_extraction_text_bytes: usize,
+    pub extracted_class_count: usize,
+}
+
 /// Tracked: Parsed syntax tree metadata for a source file
 ///
 /// We store metadata about the tree rather than the tree itself,
@@ -218,6 +227,33 @@ impl Database {
 
     pub fn remove_class_extraction(&self, file_id: &FileId) {
         self.class_extractions.write().remove(file_id);
+    }
+
+    pub(crate) fn cache_stats(&self) -> SalsaCacheStats {
+        let parse_trees = self.parse_trees.read();
+        let class_extractions = self.class_extractions.read();
+
+        SalsaCacheStats {
+            parse_tree_entries: parse_trees.len(),
+            parse_tree_text_bytes: parse_trees
+                .values()
+                .map(|snapshot| snapshot.content.len())
+                .sum(),
+            class_extraction_entries: class_extractions.len(),
+            class_extraction_text_bytes: class_extractions
+                .values()
+                .map(|snapshot| snapshot.content.len())
+                .sum(),
+            extracted_class_count: class_extractions
+                .values()
+                .map(|snapshot| snapshot.classes.len())
+                .sum(),
+        }
+    }
+
+    pub(crate) fn clear_cached_snapshots(&self) {
+        self.parse_trees.write().clear();
+        self.class_extractions.write().clear();
     }
 }
 

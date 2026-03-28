@@ -1,4 +1,5 @@
 pub mod capabilities;
+pub mod commands;
 pub mod config;
 pub mod converters;
 pub mod handlers;

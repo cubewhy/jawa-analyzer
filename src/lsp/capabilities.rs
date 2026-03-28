@@ -1,5 +1,6 @@
 use tower_lsp::lsp_types::*;
 
+use crate::lsp::commands::server_commands;
 use crate::lsp::semantic_tokens::{TOKEN_MODIFIERS, TOKEN_TYPES};
 
 pub fn server_capabilities() -> ServerCapabilities {
@@ -48,6 +49,10 @@ pub fn server_capabilities() -> ServerCapabilities {
                 },
             ),
         ),
+        execute_command_provider: Some(ExecuteCommandOptions {
+            commands: server_commands(),
+            work_done_progress_options: WorkDoneProgressOptions::default(),
+        }),
         ..Default::default()
     }
 }

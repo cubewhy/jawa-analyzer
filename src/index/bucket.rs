@@ -1,6 +1,8 @@
 use std::collections::{HashMap, VecDeque};
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
+use lru::LruCache;
 use nucleo_matcher::{
     Config as MatcherConfig, Matcher, Utf32Str,
     pattern::{CaseMatching, Normalization, Pattern},
@@ -13,8 +15,23 @@ use crate::index::{
     intern_str,
 };
 
-type MroCacheMap = HashMap<Arc<str>, (Vec<Arc<MethodSummary>>, Vec<Arc<FieldSummary>>)>;
 type OwnerKey = Arc<str>;
+
+const MRO_CACHE_LIMIT: usize = 1024;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct BucketStats {
+    pub class_count: usize,
+    pub module_count: usize,
+    pub origin_count: usize,
+    pub simple_name_entry_count: usize,
+    pub package_entry_count: usize,
+    pub owner_entry_count: usize,
+    pub name_table_size: usize,
+    pub mro_cache_entries: usize,
+}
+
+type MroCacheMap = LruCache<Arc<str>, (Vec<Arc<MethodSummary>>, Vec<Arc<FieldSummary>>)>;
 
 struct BucketState {
     classes: HashMap<Arc<str>, Arc<ClassMetadata>>,
@@ -41,7 +58,9 @@ impl BucketIndex {
             package_index: HashMap::with_capacity(10_000),
             owner_index: HashMap::with_capacity(50_000),
             name_table: Arc::new(NameTable(FxHashSet::default())),
-            mro_cache: HashMap::new(),
+            mro_cache: LruCache::new(
+                NonZeroUsize::new(MRO_CACHE_LIMIT).expect("MRO cache limit must be non-zero"),
+            ),
         };
 
         Self {
@@ -249,7 +268,7 @@ impl BucketIndex {
     ) -> (Vec<Arc<MethodSummary>>, Vec<Arc<FieldSummary>>) {
         if let Some(cached) = {
             let inner = self.inner.read();
-            inner.mro_cache.get(class_internal).cloned()
+            inner.mro_cache.peek(class_internal).cloned()
         } {
             return cached;
         }
@@ -300,7 +319,7 @@ impl BucketIndex {
         self.inner
             .write()
             .mro_cache
-            .insert(Arc::from(class_internal), result.clone());
+            .put(Arc::from(class_internal), result.clone());
 
         result
     }
@@ -404,6 +423,24 @@ impl BucketIndex {
     pub fn build_name_table(&self) -> Arc<NameTable> {
         let inner = self.inner.read();
         Arc::clone(&inner.name_table)
+    }
+
+    pub(crate) fn stats(&self) -> BucketStats {
+        let inner = self.inner.read();
+        BucketStats {
+            class_count: inner.classes.len(),
+            module_count: inner.modules.len(),
+            origin_count: inner.by_origin.len(),
+            simple_name_entry_count: inner.simple_name_index.len(),
+            package_entry_count: inner.package_index.len(),
+            owner_entry_count: inner.owner_index.len(),
+            name_table_size: inner.name_table.len(),
+            mro_cache_entries: inner.mro_cache.len(),
+        }
+    }
+
+    pub(crate) fn clear_query_caches(&self) {
+        self.inner.write().mro_cache.clear();
     }
 
     pub fn remove_by_origin(&self, origin: &ClassOrigin) -> bool {

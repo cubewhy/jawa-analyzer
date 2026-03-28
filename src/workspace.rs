@@ -1,5 +1,7 @@
 use anyhow::Result;
+use lru::LruCache;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::num::NonZeroUsize;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -28,16 +30,65 @@ use document::DocumentStore;
 
 pub mod document;
 
+const METHOD_LOCALS_CACHE_LIMIT: usize = 512;
+const CLASS_MEMBERS_CACHE_LIMIT: usize = 512;
+
 /// Cache for parsed semantic data (IntelliJ-style PSI cache)
 ///
 /// This stores parsed locals and class members keyed by content hash.
 /// When file content changes, the hash changes and cache is automatically invalidated.
-#[derive(Default)]
 struct SemanticCache {
     /// Cached parsed method locals per method, keyed by content hash
-    method_locals: HashMap<u64, Vec<CachedMethodLocal>>,
+    method_locals: LruCache<u64, Vec<CachedMethodLocal>>,
     /// Cached class members per class, keyed by content hash
-    class_members: HashMap<u64, Vec<CurrentClassMember>>,
+    class_members: LruCache<u64, Vec<CurrentClassMember>>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct SemanticCacheStats {
+    method_local_entries: usize,
+    method_local_items: usize,
+    class_member_entries: usize,
+    class_member_items: usize,
+}
+
+impl Default for SemanticCache {
+    fn default() -> Self {
+        Self {
+            method_locals: LruCache::new(
+                NonZeroUsize::new(METHOD_LOCALS_CACHE_LIMIT)
+                    .expect("method locals cache limit must be non-zero"),
+            ),
+            class_members: LruCache::new(
+                NonZeroUsize::new(CLASS_MEMBERS_CACHE_LIMIT)
+                    .expect("class members cache limit must be non-zero"),
+            ),
+        }
+    }
+}
+
+impl SemanticCache {
+    fn stats(&self) -> SemanticCacheStats {
+        SemanticCacheStats {
+            method_local_entries: self.method_locals.len(),
+            method_local_items: self
+                .method_locals
+                .iter()
+                .map(|(_, locals)| locals.len())
+                .sum(),
+            class_member_entries: self.class_members.len(),
+            class_member_items: self
+                .class_members
+                .iter()
+                .map(|(_, members)| members.len())
+                .sum(),
+        }
+    }
+
+    fn clear(&mut self) {
+        self.method_locals.clear();
+        self.class_members.clear();
+    }
 }
 
 #[derive(Default)]
@@ -261,7 +312,7 @@ impl Workspace {
     /// Get cached method locals by content hash (IntelliJ-style PSI cache)
     pub fn get_cached_method_locals(&self, content_hash: u64) -> Option<Vec<CachedMethodLocal>> {
         self.semantic_cache
-            .read()
+            .write()
             .method_locals
             .get(&content_hash)
             .cloned()
@@ -272,13 +323,13 @@ impl Workspace {
         self.semantic_cache
             .write()
             .method_locals
-            .insert(content_hash, locals);
+            .put(content_hash, locals);
     }
 
     /// Get cached class members by content hash (IntelliJ-style PSI cache)
     pub fn get_cached_class_members(&self, content_hash: u64) -> Option<Vec<CurrentClassMember>> {
         self.semantic_cache
-            .read()
+            .write()
             .class_members
             .get(&content_hash)
             .cloned()
@@ -289,7 +340,7 @@ impl Workspace {
         self.semantic_cache
             .write()
             .class_members
-            .insert(content_hash, members);
+            .put(content_hash, members);
     }
 
     /// Get or create a Salsa SourceFile for a URI string
@@ -479,6 +530,137 @@ impl Workspace {
 
     pub async fn current_model(&self) -> Option<WorkspaceModelSnapshot> {
         self.index.current_model()
+    }
+
+    pub async fn memory_report(&self) -> String {
+        let document_stats = self.documents.stats();
+        let semantic_stats = self.semantic_cache.read().stats();
+        let salsa_file_count = self.salsa_files.read().len();
+        let tracked_indexed_salsa_uri_count = self.indexed_salsa_uris.read().len();
+        let salsa_cache_stats = {
+            let db = self.salsa_db.lock();
+            db.cache_stats()
+        };
+        let index_stats = self.index.load().memory_stats();
+        let jdk_class_count = self.jdk_classes.read().await.len();
+        let jdk_module_count = self.jdk_modules.read().await.len();
+        let interned_string_count = crate::index::intern_pool_len();
+
+        format!(
+            concat!(
+                "Java Analyzer Memory Status\n",
+                "documents.open={open_documents}\n",
+                "documents.text_bytes={document_text_bytes}\n",
+                "documents.rope_bytes={document_rope_bytes}\n",
+                "documents.trees={document_trees}\n",
+                "documents.semantic_token_entries={semantic_token_entries}\n",
+                "documents.semantic_token_bytes_approx={semantic_token_bytes}\n",
+                "documents.semantic_context_entries={semantic_context_entries}\n",
+                "workspace.semantic_method_local_entries={method_local_entries}/{method_local_capacity}\n",
+                "workspace.semantic_method_local_items={method_local_items}\n",
+                "workspace.class_member_entries={class_member_entries}/{class_member_capacity}\n",
+                "workspace.class_member_items={class_member_items}\n",
+                "salsa.files={salsa_file_count}\n",
+                "salsa.indexed_uris={tracked_indexed_salsa_uri_count}\n",
+                "salsa.parse_tree_entries={parse_tree_entries}\n",
+                "salsa.parse_tree_text_bytes={parse_tree_text_bytes}\n",
+                "salsa.class_extraction_entries={class_extraction_entries}\n",
+                "salsa.class_extraction_text_bytes={class_extraction_text_bytes}\n",
+                "salsa.extracted_classes={extracted_class_count}\n",
+                "index.modules={index_modules}\n",
+                "index.jar_cache_entries={jar_cache_entries}\n",
+                "index.view_cache_entries={view_cache_entries}\n",
+                "index.classpath_jar_refs={classpath_jar_refs}\n",
+                "index.unique_buckets={unique_bucket_count}\n",
+                "index.classes={index_class_count}\n",
+                "index.java_modules={index_java_module_count}\n",
+                "index.origins={index_origin_count}\n",
+                "index.simple_name_entries={index_simple_name_entry_count}\n",
+                "index.package_entries={index_package_entry_count}\n",
+                "index.owner_entries={index_owner_entry_count}\n",
+                "index.name_table_entries={index_name_table_entries}\n",
+                "index.mro_cache_entries={index_mro_cache_entries}\n",
+                "index.jdk_classes_cloned={jdk_class_count}\n",
+                "index.jdk_modules_cloned={jdk_module_count}\n",
+                "interned_strings={interned_string_count}\n"
+            ),
+            open_documents = document_stats.open_document_count,
+            document_text_bytes = document_stats.text_bytes,
+            document_rope_bytes = document_stats.rope_bytes,
+            document_trees = document_stats.tree_count,
+            semantic_token_entries = document_stats.semantic_token_entries,
+            semantic_token_bytes = document_stats.semantic_token_bytes,
+            semantic_context_entries = document_stats.semantic_context_entries,
+            method_local_entries = semantic_stats.method_local_entries,
+            method_local_capacity = METHOD_LOCALS_CACHE_LIMIT,
+            method_local_items = semantic_stats.method_local_items,
+            class_member_entries = semantic_stats.class_member_entries,
+            class_member_capacity = CLASS_MEMBERS_CACHE_LIMIT,
+            class_member_items = semantic_stats.class_member_items,
+            salsa_file_count = salsa_file_count,
+            tracked_indexed_salsa_uri_count = tracked_indexed_salsa_uri_count,
+            parse_tree_entries = salsa_cache_stats.parse_tree_entries,
+            parse_tree_text_bytes = salsa_cache_stats.parse_tree_text_bytes,
+            class_extraction_entries = salsa_cache_stats.class_extraction_entries,
+            class_extraction_text_bytes = salsa_cache_stats.class_extraction_text_bytes,
+            extracted_class_count = salsa_cache_stats.extracted_class_count,
+            index_modules = index_stats.module_count,
+            jar_cache_entries = index_stats.jar_cache_entries,
+            view_cache_entries = index_stats.view_cache_entries,
+            classpath_jar_refs = index_stats.classpath_jar_refs,
+            unique_bucket_count = index_stats.unique_bucket_count,
+            index_class_count = index_stats.class_count,
+            index_java_module_count = index_stats.java_module_count,
+            index_origin_count = index_stats.origin_count,
+            index_simple_name_entry_count = index_stats.simple_name_entry_count,
+            index_package_entry_count = index_stats.package_entry_count,
+            index_owner_entry_count = index_stats.owner_entry_count,
+            index_name_table_entries = index_stats.name_table_entries,
+            index_mro_cache_entries = index_stats.mro_cache_entries,
+            jdk_class_count = jdk_class_count,
+            jdk_module_count = jdk_module_count,
+            interned_string_count = interned_string_count,
+        )
+    }
+
+    pub async fn clear_ephemeral_caches(&self) -> String {
+        self.documents.clear_lsp_caches();
+        self.semantic_cache.write().clear();
+        {
+            let db = self.salsa_db.lock();
+            db.clear_cached_snapshots();
+        }
+        self.index.update(|index| index.clear_analysis_caches());
+
+        let document_stats = self.documents.stats();
+        let semantic_stats = self.semantic_cache.read().stats();
+        let salsa_cache_stats = {
+            let db = self.salsa_db.lock();
+            db.cache_stats()
+        };
+        let index_stats = self.index.load().memory_stats();
+
+        format!(
+            concat!(
+                "Cleared ephemeral caches.\n",
+                "documents.semantic_token_entries={semantic_token_entries}\n",
+                "documents.semantic_context_entries={semantic_context_entries}\n",
+                "workspace.semantic_method_local_entries={method_local_entries}\n",
+                "workspace.class_member_entries={class_member_entries}\n",
+                "salsa.parse_tree_entries={parse_tree_entries}\n",
+                "salsa.class_extraction_entries={class_extraction_entries}\n",
+                "index.view_cache_entries={view_cache_entries}\n",
+                "index.mro_cache_entries={mro_cache_entries}\n"
+            ),
+            semantic_token_entries = document_stats.semantic_token_entries,
+            semantic_context_entries = document_stats.semantic_context_entries,
+            method_local_entries = semantic_stats.method_local_entries,
+            class_member_entries = semantic_stats.class_member_entries,
+            parse_tree_entries = salsa_cache_stats.parse_tree_entries,
+            class_extraction_entries = salsa_cache_stats.class_extraction_entries,
+            view_cache_entries = index_stats.view_cache_entries,
+            mro_cache_entries = index_stats.mro_cache_entries,
+        )
     }
 
     pub async fn set_jdk_classes(&self, classes: Vec<ClassMetadata>) {
@@ -1540,8 +1722,11 @@ mod tests {
     };
     use crate::language::LanguageRegistry;
     use crate::salsa_db::ParseTreeOrigin;
+    use crate::semantic::context::{CursorLocation, SemanticContext};
     use crate::workspace::document::Document;
+    use crate::workspace::document::SemanticContextCacheKey;
     use tempfile::tempdir;
+    use tower_lsp::lsp_types::SemanticToken;
 
     fn make_bytecode_module(name: &str, origin: ClassOrigin) -> IndexedJavaModule {
         IndexedJavaModule {
@@ -1694,6 +1879,90 @@ mod tests {
         let db = workspace.salsa_db.lock();
         assert_eq!(same_file.content(&*db), "class Test");
         assert_eq!(same_file.language_id(&*db).as_ref(), "kotlin");
+    }
+
+    #[tokio::test]
+    async fn clear_ephemeral_caches_clears_document_workspace_and_salsa_caches() {
+        let workspace = Workspace::new();
+        let uri = Url::parse("file:///workspace/Test.java").expect("valid uri");
+        let source = "class Test {}";
+
+        workspace
+            .documents
+            .open(Document::new(crate::workspace::SourceFile::new(
+                uri.clone(),
+                "java",
+                1,
+                source,
+                None,
+            )));
+
+        workspace.documents.with_doc_mut(&uri, |doc| {
+            doc.semantic_token_cache = Some((
+                "1".into(),
+                vec![SemanticToken {
+                    delta_line: 0,
+                    delta_start: 0,
+                    length: 4,
+                    token_type: 0,
+                    token_modifiers_bitset: 0,
+                }],
+            ));
+            doc.cache_semantic_context(
+                SemanticContextCacheKey {
+                    document_version: 1,
+                    workspace_version: 0,
+                    module: ModuleId::ROOT,
+                    classpath: ClasspathId::Main,
+                    source_root: None,
+                    overlay_class_count: 0,
+                    offset: 0,
+                    trigger: None,
+                },
+                Arc::new(SemanticContext::new(
+                    CursorLocation::Unknown,
+                    "",
+                    vec![],
+                    None,
+                    None,
+                    None,
+                    vec![],
+                )),
+            );
+        });
+
+        workspace.cache_method_locals(1, vec![]);
+        workspace.cache_class_members(1, vec![]);
+
+        let registry = LanguageRegistry::new();
+        let java = registry.find("java").expect("java language");
+        let tree = java
+            .parse_tree(source, None)
+            .expect("tree-sitter should parse a trivial source file");
+        let salsa_file = workspace
+            .get_or_update_salsa_file(&uri)
+            .expect("salsa file should exist");
+        {
+            let db = workspace.salsa_db.lock();
+            crate::salsa_queries::parse::seed_parse_tree(&*db, salsa_file, &tree);
+            let _ = crate::salsa_queries::index::extract_classes(&*db, salsa_file);
+        }
+
+        let before = workspace.memory_report().await;
+        assert!(before.contains("documents.semantic_token_entries=1"));
+        assert!(before.contains("documents.semantic_context_entries=1"));
+        assert!(before.contains("workspace.semantic_method_local_entries=1/"));
+        assert!(before.contains("workspace.class_member_entries=1/"));
+        assert!(before.contains("salsa.parse_tree_entries=1"));
+        assert!(before.contains("salsa.class_extraction_entries=1"));
+
+        let after = workspace.clear_ephemeral_caches().await;
+        assert!(after.contains("documents.semantic_token_entries=0"));
+        assert!(after.contains("documents.semantic_context_entries=0"));
+        assert!(after.contains("workspace.semantic_method_local_entries=0"));
+        assert!(after.contains("workspace.class_member_entries=0"));
+        assert!(after.contains("salsa.parse_tree_entries=0"));
+        assert!(after.contains("salsa.class_extraction_entries=0"));
     }
 
     #[test]

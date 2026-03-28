@@ -1,7 +1,8 @@
-use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
 
 use dashmap::DashMap;
+use lru::LruCache;
 use tower_lsp::lsp_types::{SemanticToken, Url};
 use tree_sitter::Tree;
 
@@ -12,6 +13,24 @@ use crate::semantic::SemanticContext;
 use super::source_file::SourceFile;
 
 const SEMANTIC_CONTEXT_CACHE_LIMIT: usize = 256;
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct DocumentStoreStats {
+    pub open_document_count: usize,
+    pub text_bytes: usize,
+    pub rope_bytes: usize,
+    pub tree_count: usize,
+    pub semantic_token_entries: usize,
+    pub semantic_token_bytes: usize,
+    pub semantic_context_entries: usize,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct DocumentCacheStats {
+    semantic_token_entries: usize,
+    semantic_token_bytes: usize,
+    semantic_context_entries: usize,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SemanticContextCacheKey {
@@ -46,7 +65,7 @@ pub struct Document {
     pub semantic_token_cache: Option<(String, Vec<SemanticToken>)>,
 
     /// Cached semantic contexts for the current document version.
-    semantic_context_cache: HashMap<SemanticContextCacheKey, Arc<SemanticContext>>,
+    semantic_context_cache: LruCache<SemanticContextCacheKey, Arc<SemanticContext>>,
 }
 
 impl Document {
@@ -55,7 +74,10 @@ impl Document {
         Self {
             source: Arc::new(source),
             semantic_token_cache: None,
-            semantic_context_cache: HashMap::new(),
+            semantic_context_cache: LruCache::new(
+                NonZeroUsize::new(SEMANTIC_CONTEXT_CACHE_LIMIT)
+                    .expect("semantic context cache limit must be non-zero"),
+            ),
         }
     }
 
@@ -74,8 +96,7 @@ impl Document {
     /// Invalidates all version-sensitive caches.
     pub fn update_source(&mut self, source: SourceFile) {
         self.source = Arc::new(source);
-        self.semantic_token_cache = None;
-        self.semantic_context_cache.clear();
+        self.clear_caches();
     }
 
     /// Attach an already-incremented tree to the current source, producing a
@@ -95,7 +116,7 @@ impl Document {
         &self,
         key: &SemanticContextCacheKey,
     ) -> Option<Arc<SemanticContext>> {
-        self.semantic_context_cache.get(key).cloned()
+        self.semantic_context_cache.peek(key).cloned()
     }
 
     pub fn cache_semantic_context(
@@ -103,10 +124,31 @@ impl Document {
         key: SemanticContextCacheKey,
         context: Arc<SemanticContext>,
     ) {
-        if self.semantic_context_cache.len() >= SEMANTIC_CONTEXT_CACHE_LIMIT {
-            self.semantic_context_cache.clear();
+        self.semantic_context_cache.put(key, context);
+    }
+
+    pub fn clear_caches(&mut self) {
+        self.semantic_token_cache = None;
+        self.semantic_context_cache.clear();
+    }
+
+    fn cache_stats(&self) -> DocumentCacheStats {
+        let (semantic_token_entries, semantic_token_bytes) = self
+            .semantic_token_cache
+            .as_ref()
+            .map(|(result_id, tokens)| {
+                (
+                    1,
+                    result_id.len() + tokens.len() * std::mem::size_of::<SemanticToken>(),
+                )
+            })
+            .unwrap_or((0, 0));
+
+        DocumentCacheStats {
+            semantic_token_entries,
+            semantic_token_bytes,
+            semantic_context_entries: self.semantic_context_cache.len(),
         }
-        self.semantic_context_cache.insert(key, context);
     }
 
     // ── Convenience pass-throughs ────────────────────────────────────────
@@ -170,6 +212,28 @@ impl DocumentStore {
                 )
             })
             .collect()
+    }
+
+    pub(crate) fn stats(&self) -> DocumentStoreStats {
+        let mut stats = DocumentStoreStats::default();
+        for entry in &self.docs {
+            let doc = entry.value();
+            let cache_stats = doc.cache_stats();
+            stats.open_document_count += 1;
+            stats.text_bytes += doc.source.text.len();
+            stats.rope_bytes += doc.source.rope.len_bytes();
+            stats.tree_count += usize::from(doc.source.tree.is_some());
+            stats.semantic_token_entries += cache_stats.semantic_token_entries;
+            stats.semantic_token_bytes += cache_stats.semantic_token_bytes;
+            stats.semantic_context_entries += cache_stats.semantic_context_entries;
+        }
+        stats
+    }
+
+    pub(crate) fn clear_lsp_caches(&self) {
+        for mut entry in self.docs.iter_mut() {
+            entry.value_mut().clear_caches();
+        }
     }
 }
 

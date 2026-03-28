@@ -16,6 +16,11 @@ const COMMAND_SET_VINEFLOWER_PATH = `${CONFIG_NAMESPACE}.setVineflowerPath`;
 const COMMAND_SET_CFR_PATH = `${CONFIG_NAMESPACE}.setCfrPath`;
 const COMMAND_SELECT_DECOMPILER_BACKEND = `${CONFIG_NAMESPACE}.selectDecompilerBackend`;
 const COMMAND_SET_SERVER_PATH = `${CONFIG_NAMESPACE}.setServerPath`;
+const COMMAND_SHOW_MEMORY_STATUS = `${CONFIG_NAMESPACE}.showMemoryStatus`;
+const COMMAND_CLEAR_SERVER_CACHES = `${CONFIG_NAMESPACE}.clearServerCaches`;
+
+const SERVER_COMMAND_SHOW_MEMORY_STATUS = `${CONFIG_NAMESPACE}.server.showMemoryStatus`;
+const SERVER_COMMAND_CLEAR_CACHES = `${CONFIG_NAMESPACE}.server.clearCaches`;
 
 interface SelectableItem<T extends string> extends vscode.QuickPickItem {
   value: T;
@@ -38,7 +43,50 @@ export function registerCommands(deps: CommandDependencies): vscode.Disposable[]
       () => selectDecompilerBackend(deps),
     ),
     vscode.commands.registerCommand(COMMAND_SET_SERVER_PATH, () => setServerPath(deps)),
+    vscode.commands.registerCommand(COMMAND_SHOW_MEMORY_STATUS, showMemoryStatus),
+    vscode.commands.registerCommand(COMMAND_CLEAR_SERVER_CACHES, clearServerCaches),
   ];
+}
+
+function extractSummary(result: unknown): string {
+  if (typeof result === "string") {
+    return result;
+  }
+  if (
+    result
+    && typeof result === "object"
+    && "summary" in result
+    && typeof result.summary === "string"
+  ) {
+    return result.summary;
+  }
+  return "Language server command returned no summary.";
+}
+
+async function showMemoryStatus(): Promise<void> {
+  try {
+    const result = await vscode.commands.executeCommand(SERVER_COMMAND_SHOW_MEMORY_STATUS);
+    const summary = extractSummary(result);
+    const doc = await vscode.workspace.openTextDocument({
+      language: "text",
+      content: summary,
+    });
+    await vscode.window.showTextDocument(doc, { preview: false });
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    await vscode.window.showErrorMessage(`Failed to fetch Java Analyzer memory status: ${detail}`);
+  }
+}
+
+async function clearServerCaches(): Promise<void> {
+  try {
+    const result = await vscode.commands.executeCommand(SERVER_COMMAND_CLEAR_CACHES);
+    const summary = extractSummary(result);
+    await vscode.window.showInformationMessage(summary);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    await vscode.window.showErrorMessage(`Failed to clear Java Analyzer caches: ${detail}`);
+  }
 }
 
 async function choosePath(

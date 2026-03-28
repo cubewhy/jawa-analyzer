@@ -38,6 +38,10 @@ impl ModuleQueryCache {
     pub fn insert(&self, internal: Arc<str>, class: Arc<ClassMetadata>) {
         self.by_internal.write().insert(internal, class);
     }
+
+    pub fn clear(&self) {
+        self.by_internal.write().clear();
+    }
 }
 
 struct SourceRootIndex {
@@ -277,6 +281,53 @@ impl ModuleIndex {
             .iter()
             .map(|(id, cp)| (*id, cp.jars.clone()))
             .collect()
+    }
+
+    pub(crate) fn all_bucket_refs(&self) -> Vec<Arc<BucketIndex>> {
+        let state = self.state.read();
+        let mut buckets = Vec::with_capacity(
+            1 + state.source_roots.len()
+                + state
+                    .classpaths
+                    .values()
+                    .map(|classpath| classpath.buckets.len())
+                    .sum::<usize>(),
+        );
+        buckets.push(Arc::clone(&self.source));
+        buckets.extend(
+            state
+                .source_roots
+                .values()
+                .map(|root| Arc::clone(&root.bucket)),
+        );
+        for classpath in state.classpaths.values() {
+            buckets.extend(classpath.buckets.iter().cloned());
+        }
+        buckets
+    }
+
+    pub(crate) fn classpath_jar_count(&self) -> usize {
+        let state = self.state.read();
+        state
+            .classpaths
+            .values()
+            .map(|classpath| classpath.jars.len())
+            .sum()
+    }
+
+    pub(crate) fn clear_query_caches(&self) {
+        self.query_cache.clear();
+        self.source.clear_query_caches();
+
+        let state = self.state.read();
+        for root in state.source_roots.values() {
+            root.bucket.clear_query_caches();
+        }
+        for classpath in state.classpaths.values() {
+            for bucket in &classpath.buckets {
+                bucket.clear_query_caches();
+            }
+        }
     }
 
     #[allow(dead_code)]

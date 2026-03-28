@@ -919,9 +919,13 @@ fn extract_simple_types(desc: &str) -> Vec<String> {
     types
 }
 
-pub(crate) fn intern_str(s: &str) -> Arc<str> {
+fn intern_pool() -> &'static DashSet<Arc<str>> {
     static POOL: OnceLock<DashSet<Arc<str>>> = OnceLock::new();
-    let pool = POOL.get_or_init(DashSet::new);
+    POOL.get_or_init(DashSet::new)
+}
+
+pub(crate) fn intern_str(s: &str) -> Arc<str> {
+    let pool = intern_pool();
 
     if let Some(arc) = pool.get(s) {
         return Arc::clone(&arc);
@@ -930,6 +934,10 @@ pub(crate) fn intern_str(s: &str) -> Arc<str> {
     let arc: Arc<str> = Arc::from(s);
     pool.insert(Arc::clone(&arc));
     arc
+}
+
+pub(crate) fn intern_pool_len() -> usize {
+    intern_pool().len()
 }
 
 /// Lightweight index snapshot: a set of all JVM internal names.
