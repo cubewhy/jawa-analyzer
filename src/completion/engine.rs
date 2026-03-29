@@ -254,13 +254,15 @@ fn is_broad_query(ctx: &SemanticContext, short_prefix_len: usize) -> bool {
         CursorLocation::ConstructorCall { class_prefix, .. } => {
             !class_prefix.contains('.') && class_prefix.len() <= short_prefix_len
         }
+        CursorLocation::Annotation { prefix, .. } => {
+            !prefix.contains('.') && prefix.len() <= short_prefix_len
+        }
         CursorLocation::MemberAccess { .. }
         | CursorLocation::Import { .. }
         | CursorLocation::ImportStatic { .. }
         | CursorLocation::MethodReference { .. }
         | CursorLocation::StatementLabel { .. }
         | CursorLocation::VariableName { .. }
-        | CursorLocation::Annotation { .. }
         | CursorLocation::AnnotationParam { .. }
         | CursorLocation::StringLiteral { .. }
         | CursorLocation::Unknown => false,
@@ -315,6 +317,24 @@ mod tests {
             .filter_text
             .as_deref()
             .unwrap_or(candidate.label.as_ref())
+    }
+
+    #[test]
+    fn test_annotation_short_prefix_is_broad_query() {
+        let ctx = SemanticContext::new(
+            CursorLocation::Annotation {
+                prefix: "O".to_string(),
+                target_element_type: None,
+            },
+            "O",
+            vec![],
+            None,
+            None,
+            None,
+            vec![],
+        );
+
+        assert!(is_broad_query(&ctx, 1));
     }
 
     fn seg_names(expr: &str) -> Vec<(String, Option<usize>)> {

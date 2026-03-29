@@ -1,12 +1,14 @@
 use rust_asm::constants::ACC_ANNOTATION;
+use rustc_hash::FxHashSet;
 
 use crate::{
     completion::{
         CandidateKind, CompletionCandidate, fuzzy,
-        import_utils::is_import_needed,
-        provider::{CompletionProvider, ProviderCompletionResult},
+        import_utils::{is_import_needed, source_fqn_of_meta},
+        provider::{CompletionProvider, ProviderCompletionResult, ProviderSearchSpace},
     },
     index::{ClassMetadata, IndexScope, IndexView},
+    lsp::{request_cancellation::RequestResult, request_context::RequestContext},
     semantic::context::{CursorLocation, SemanticContext},
 };
 use std::sync::Arc;
@@ -18,14 +20,29 @@ impl CompletionProvider for AnnotationProvider {
         "annotation"
     }
 
+    fn is_applicable(&self, ctx: &SemanticContext) -> bool {
+        matches!(ctx.location, CursorLocation::Annotation { .. })
+    }
+
+    fn search_space(&self, _ctx: &SemanticContext) -> ProviderSearchSpace {
+        ProviderSearchSpace::Broad
+    }
+
     fn provide(
         &self,
         _scope: IndexScope,
         ctx: &SemanticContext,
         index: &IndexView,
-        _request: Option<&crate::lsp::request_context::RequestContext>,
-        _limit: Option<usize>,
-    ) -> crate::lsp::request_cancellation::RequestResult<ProviderCompletionResult> {
+        request: Option<&RequestContext>,
+        limit: Option<usize>,
+    ) -> RequestResult<ProviderCompletionResult> {
+        if limit == Some(0) {
+            return Ok(ProviderCompletionResult {
+                candidates: Vec::new(),
+                is_incomplete: true,
+            });
+        }
+
         let (prefix, et) = match &ctx.location {
             CursorLocation::Annotation {
                 prefix,
@@ -34,108 +51,174 @@ impl CompletionProvider for AnnotationProvider {
             _ => return Ok(ProviderCompletionResult::default()),
         };
 
-        let prefix_lower = prefix.to_lowercase();
         let mut results = Vec::new();
+        let mut seen_internals: FxHashSet<Arc<str>> = Default::default();
+        let mut truncated = false;
 
-        // Annotations from imports
         let imported = index.resolve_imports(&ctx.existing_imports);
-        for meta in &imported {
-            if !is_annotation_class(meta) {
-                continue;
+        for (index_in_pass, meta) in imported.iter().enumerate() {
+            maybe_check_cancelled(request, "completion.annotation.imported", index_in_pass)?;
+            if reached_limit(results.len(), limit) {
+                truncated = true;
+                break;
             }
-            let score = match fuzzy::fuzzy_match(&prefix_lower, &meta.name.to_lowercase()) {
-                Some(s) => s,
-                None => continue,
+
+            let Some(score) = annotation_match_score(meta, prefix, et.as_deref()) else {
+                continue;
             };
-            let fqn = fqn_of(meta);
-            if !matches_target(meta, et.as_deref()) {
+            if !seen_internals.insert(Arc::clone(&meta.internal_name)) {
                 continue;
             }
-            results.push(
-                CompletionCandidate::new(
-                    Arc::clone(&meta.name),
-                    meta.name.to_string(),
-                    CandidateKind::Annotation,
-                    self.name(),
-                )
-                .with_detail(fqn)
-                .with_score(80.0 + score as f32 * 0.1),
-            );
-        }
 
-        let imported_internals: std::collections::HashSet<Arc<str>> = imported
-            .iter()
-            .map(|m| Arc::clone(&m.internal_name))
-            .collect();
-
-        // Same package annotations
-        if let Some(pkg) = ctx.enclosing_package.as_deref() {
-            for meta in index.classes_in_package(pkg) {
-                if imported_internals.contains(&meta.internal_name) {
-                    continue;
-                }
-                if !is_annotation_class(&meta) {
-                    continue;
-                }
-                let score = match fuzzy::fuzzy_match(&prefix_lower, &meta.name.to_lowercase()) {
-                    Some(s) => s,
-                    None => continue,
-                };
-                if !matches_target(&meta, et.as_deref()) {
-                    continue;
-                }
-                results.push(
-                    CompletionCandidate::new(
-                        Arc::clone(&meta.name),
-                        meta.name.to_string(),
-                        CandidateKind::Annotation,
-                        self.name(),
-                    )
-                    .with_detail(fqn_of(&meta))
-                    .with_score(70.0 + score as f32 * 0.1),
-                );
-            }
-        }
-
-        // Global index — all annotation classes (require auto-import)
-        for meta in index.iter_all_classes() {
-            if imported_internals.contains(&meta.internal_name) {
-                continue;
-            }
-            if !is_annotation_class(&meta) {
-                continue;
-            }
-            let score = match fuzzy::fuzzy_match(&prefix_lower, &meta.name.to_lowercase()) {
-                Some(s) => s,
-                None => continue,
-            };
-            let fqn = fqn_of(&meta);
-            let needs_import = is_import_needed(
-                &fqn,
-                &ctx.existing_imports,
-                ctx.enclosing_package.as_deref(),
-            );
-            let candidate = CompletionCandidate::new(
-                Arc::clone(&meta.name),
-                meta.name.to_string(),
-                CandidateKind::Annotation,
+            results.push(make_annotation_candidate(
+                meta,
+                index,
                 self.name(),
-            )
-            .with_detail(fqn.clone())
-            .with_score(50.0 + score as f32 * 0.1);
-            if !matches_target(&meta, et.as_deref()) {
-                continue;
-            }
-
-            results.push(if needs_import {
-                candidate.with_import(fqn)
-            } else {
-                candidate
-            });
+                80.0 + score as f32 * 0.1,
+                false,
+            ));
         }
 
-        Ok(results.into())
+        if !truncated && let Some(pkg) = ctx.enclosing_package.as_deref() {
+            for (index_in_pass, meta) in index.classes_in_package(pkg).into_iter().enumerate() {
+                maybe_check_cancelled(
+                    request,
+                    "completion.annotation.same_package",
+                    index_in_pass,
+                )?;
+                if reached_limit(results.len(), limit) {
+                    truncated = true;
+                    break;
+                }
+
+                let Some(score) = annotation_match_score(&meta, prefix, et.as_deref()) else {
+                    continue;
+                };
+                if !seen_internals.insert(Arc::clone(&meta.internal_name)) {
+                    continue;
+                }
+
+                results.push(make_annotation_candidate(
+                    &meta,
+                    index,
+                    self.name(),
+                    70.0 + score as f32 * 0.1,
+                    false,
+                ));
+            }
+        }
+
+        if !truncated {
+            for (index_in_pass, meta) in global_annotation_pool(index, prefix, limit)
+                .into_iter()
+                .enumerate()
+            {
+                maybe_check_cancelled(request, "completion.annotation.global", index_in_pass)?;
+                if reached_limit(results.len(), limit) {
+                    truncated = true;
+                    break;
+                }
+
+                let Some(score) = annotation_match_score(&meta, prefix, et.as_deref()) else {
+                    continue;
+                };
+                if !seen_internals.insert(Arc::clone(&meta.internal_name)) {
+                    continue;
+                }
+
+                let fqn = source_fqn_of_meta(meta.as_ref(), index);
+                let needs_import = is_import_needed(
+                    &fqn,
+                    &ctx.existing_imports,
+                    ctx.enclosing_package.as_deref(),
+                );
+                results.push(make_annotation_candidate(
+                    &meta,
+                    index,
+                    self.name(),
+                    50.0 + score as f32 * 0.1,
+                    needs_import,
+                ));
+            }
+        }
+
+        Ok(ProviderCompletionResult {
+            candidates: results,
+            is_incomplete: truncated,
+        })
     }
+}
+
+fn global_annotation_pool(
+    index: &IndexView,
+    prefix: &str,
+    limit: Option<usize>,
+) -> Vec<Arc<ClassMetadata>> {
+    if prefix.is_empty() {
+        return index.annotation_classes();
+    }
+
+    index.fuzzy_search_classes(prefix, annotation_search_limit(limit))
+}
+
+fn annotation_search_limit(limit: Option<usize>) -> usize {
+    match limit {
+        Some(limit) => limit.saturating_mul(8).min(1024).max(limit),
+        None => 1024,
+    }
+}
+
+fn annotation_match_score(
+    meta: &ClassMetadata,
+    prefix: &str,
+    element_type: Option<&str>,
+) -> Option<u32> {
+    if !is_annotation_class(meta) || !matches_target(meta, element_type) {
+        return None;
+    }
+    fuzzy::fuzzy_match(prefix, meta.direct_name())
+}
+
+fn make_annotation_candidate(
+    meta: &Arc<ClassMetadata>,
+    index: &IndexView,
+    source: &'static str,
+    score: f32,
+    needs_import: bool,
+) -> CompletionCandidate {
+    let label = meta.direct_name();
+    let fqn = source_fqn_of_meta(meta.as_ref(), index);
+    let candidate = CompletionCandidate::new(
+        Arc::clone(&meta.name),
+        label.to_string(),
+        CandidateKind::Annotation,
+        source,
+    )
+    .with_detail(fqn.clone())
+    .with_score(score);
+
+    if needs_import {
+        candidate.with_import(fqn)
+    } else {
+        candidate
+    }
+}
+
+fn maybe_check_cancelled(
+    request: Option<&RequestContext>,
+    phase: &'static str,
+    index: usize,
+) -> RequestResult<()> {
+    if index % 32 == 0
+        && let Some(request) = request
+    {
+        request.check_cancelled(phase)?;
+    }
+    Ok(())
+}
+
+fn reached_limit(len: usize, limit: Option<usize>) -> bool {
+    limit.is_some_and(|limit| len >= limit)
 }
 
 fn matches_target(meta: &ClassMetadata, element_type: Option<&str>) -> bool {
@@ -151,13 +234,6 @@ fn matches_target(meta: &ClassMetadata, element_type: Option<&str>) -> bool {
 
 fn is_annotation_class(meta: &crate::index::ClassMetadata) -> bool {
     meta.access_flags & ACC_ANNOTATION != 0
-}
-
-fn fqn_of(meta: &crate::index::ClassMetadata) -> String {
-    match &meta.package {
-        Some(pkg) => format!("{}.{}", pkg.replace('/', "."), meta.name),
-        None => meta.name.to_string(),
-    }
 }
 
 #[cfg(test)]
@@ -409,5 +485,50 @@ mod tests {
             .provide_test(root_scope(), &ctx, &idx.view(root_scope()), None)
             .candidates;
         assert!(results.iter().all(|c| c.label.as_ref() != "ClassOnly"));
+    }
+
+    #[test]
+    fn test_same_package_annotation_not_duplicated_by_global_pass() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(vec![make_annotation("com/example", "LocalAnn")]);
+
+        let results = AnnotationProvider
+            .provide_test(
+                root_scope(),
+                &annotation_ctx("Local", vec![], "com/example"),
+                &idx.view(root_scope()),
+                None,
+            )
+            .candidates;
+
+        assert_eq!(
+            results
+                .iter()
+                .filter(|candidate| candidate.label.as_ref() == "LocalAnn")
+                .count(),
+            1,
+            "same-package annotations should not be duplicated by the global pass"
+        );
+    }
+
+    #[test]
+    fn test_annotation_provider_limit_marks_incomplete() {
+        let idx = WorkspaceIndex::new();
+        idx.add_classes(builtin_java_annotations());
+        idx.add_classes(vec![
+            make_annotation("org/junit", "Test"),
+            make_annotation("org/junit", "RepeatedTest"),
+            make_annotation("org/junit", "Timeout"),
+        ]);
+
+        let limited = AnnotationProvider.provide_test(
+            root_scope(),
+            &annotation_ctx("", vec![], "com/example"),
+            &idx.view(root_scope()),
+            Some(3),
+        );
+
+        assert_eq!(limited.candidates.len(), 3);
+        assert!(limited.is_incomplete);
     }
 }

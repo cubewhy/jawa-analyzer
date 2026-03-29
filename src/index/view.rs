@@ -2,6 +2,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, OnceLock};
 
 use dashmap::DashMap;
+use rust_asm::constants::ACC_ANNOTATION;
 use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::SmallVec;
 
@@ -36,6 +37,7 @@ struct IndexViewCaches {
     fields_by_name: FieldsByNameCache,
     declaring_method_owner: DeclaringMethodOwnerCache,
     all_classes: OnceLock<Arc<Vec<ClassHandleRef>>>,
+    annotation_classes: OnceLock<Arc<Vec<ClassHandleRef>>>,
 }
 
 #[derive(Clone)]
@@ -723,6 +725,18 @@ impl IndexView {
         self.resolve_class_refs(all_classes.as_ref())
     }
 
+    pub fn annotation_classes(&self) -> Vec<Arc<ClassMetadata>> {
+        let annotation_classes = self.caches.annotation_classes.get_or_init(|| {
+            Arc::new(self.merge_class_refs(|layer| {
+                self.layer_iter_all_class_refs(layer)
+                    .into_iter()
+                    .filter(|class_ref| self.class_ref_is_annotation(class_ref))
+                    .collect()
+            }))
+        });
+        self.resolve_class_refs(annotation_classes.as_ref())
+    }
+
     pub fn build_name_table(&self) -> Arc<NameTable> {
         self.scope.build_name_table()
     }
@@ -787,6 +801,22 @@ impl IndexView {
                 .artifact_reader(handle.artifact_id)
                 .and_then(|reader| reader.class_origin_precedence(*handle))
                 .unwrap_or_default(),
+        }
+    }
+
+    fn class_ref_is_annotation(&self, class_ref: &ClassHandleRef) -> bool {
+        match class_ref {
+            ClassHandleRef::Overlay {
+                bucket,
+                internal_name,
+            } => bucket
+                .get_class(internal_name.as_ref())
+                .is_some_and(|class| class.access_flags & ACC_ANNOTATION != 0),
+            ClassHandleRef::Artifact(handle) => self
+                .scope
+                .artifact_reader(handle.artifact_id)
+                .and_then(|reader| reader.class_access_flags(*handle))
+                .is_some_and(|flags| flags & ACC_ANNOTATION != 0),
         }
     }
 

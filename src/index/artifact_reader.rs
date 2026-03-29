@@ -333,6 +333,10 @@ impl ArtifactScopeReader {
         scored.into_iter().map(|(name, _)| name).collect()
     }
 
+    pub fn class_access_flags(&self, handle: ArtifactClassHandle) -> Option<u16> {
+        self.stub(handle).map(|stub| stub.access_flags)
+    }
+
     pub fn memory_stats(&self) -> ArtifactReaderMemoryStats {
         ArtifactReaderMemoryStats {
             reader_entries: 1,
