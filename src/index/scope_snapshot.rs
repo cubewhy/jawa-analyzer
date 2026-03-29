@@ -11,7 +11,7 @@ use crate::index::{
 
 pub type AnalysisContextKey = (ModuleId, ClasspathId, Option<SourceRootId>);
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum ScopeLayer {
     Overlay(Arc<BucketIndex>),
     Artifact(ArtifactId),

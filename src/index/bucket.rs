@@ -34,6 +34,7 @@ pub(crate) struct BucketStats {
 
 type MroCacheMap = LruCache<Arc<str>, (Vec<Arc<MethodSummary>>, Vec<Arc<FieldSummary>>)>;
 
+#[derive(Debug)]
 enum StoredClassBody {
     Rich(Arc<ClassMetadata>),
     ArchiveStub {
@@ -42,6 +43,7 @@ enum StoredClassBody {
     },
 }
 
+#[derive(Debug)]
 struct StoredClass {
     internal_name: Arc<str>,
     name: Arc<str>,
@@ -87,6 +89,7 @@ impl StoredClass {
     }
 }
 
+#[derive(Debug)]
 struct BucketState {
     classes: Vec<Option<StoredClass>>,
     free_class_ids: Vec<ClassId>,
@@ -99,6 +102,7 @@ struct BucketState {
     mro_cache: MroCacheMap,
 }
 
+#[derive(Debug)]
 pub struct BucketIndex {
     inner: RwLock<BucketState>,
 }
