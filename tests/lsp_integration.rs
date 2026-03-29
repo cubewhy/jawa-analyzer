@@ -197,41 +197,6 @@ public class User {
     }
 }
 
-async fn test_completion_with_empty_workspace() {
-    let workspace = create_test_workspace();
-    let engine = Arc::new(CompletionEngine::new());
-    let registry = Arc::new(LanguageRegistry::new());
-
-    // Don't open any files - workspace is empty
-
-    // Request completion
-    let params = CompletionParams {
-        text_document_position: TextDocumentPositionParams {
-            text_document: TextDocumentIdentifier {
-                uri: Url::parse("file:///test/Empty.java").unwrap(),
-            },
-            position: Position {
-                line: 0,
-                character: 0,
-            },
-        },
-        work_done_progress_params: WorkDoneProgressParams::default(),
-        partial_result_params: PartialResultParams::default(),
-        context: None,
-    };
-
-    let response = run_completion(
-        Arc::clone(&workspace),
-        Arc::clone(&engine),
-        Arc::clone(&registry),
-        params,
-    )
-    .await;
-
-    // Should return None for unopened file
-    assert!(response.is_none(), "Expected None for unopened file");
-}
-
 #[tokio::test]
 async fn test_completion_uses_current_document_overlay_for_nested_inner_constructor() {
     let workspace = create_test_workspace();
