@@ -9,6 +9,8 @@ Extreme fast Java LSP, built in Rust
 
 ## Archived
 
+Update: I'm currently trying to rewrite everything inside the LSP. New updates will be received at the `next` branch
+
 The current architecture design is completely flawed. I believe using a handwritten parser + rowan + salsa would be a better approach. Tree-sitter imposes too many limitations. I simply don't have the bandwidth to refactor it, so I'm archiving the repository.
 
 If you got interest, please contact me, we could restart the project together.
