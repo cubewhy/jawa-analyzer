@@ -640,67 +640,6 @@ impl<'a> JavaLexer<'a> {
         self.push_token(TokenType::CharLiteral);
     }
 
-    // fn handle_text_block(&mut self) {
-    //     if self.reader.peek() != '\n' && self.reader.peek() != '\r' {
-    //         self.report_error(LexicalErrorType::IllegalTextBlockOpen);
-    //     }
-    //
-    //     let mut is_terminated = false;
-    //
-    //     while !self.reader.is_at_end() {
-    //         let c = self.reader.peek();
-    //
-    //         if self.reader.advance_if_matches_str("\"\"\"") {
-    //             is_terminated = true;
-    //             break;
-    //         }
-    //
-    //         if c == '\\' {
-    //             if !self.consume_escape_sequence(true) {
-    //                 self.report_error(LexicalErrorType::InvalidEscapeSequence);
-    //             }
-    //         } else {
-    //             self.reader.advance();
-    //         }
-    //     }
-    //
-    //     if !is_terminated {
-    //         self.report_error(LexicalErrorType::UnterminatedTextBlock);
-    //     }
-    //
-    //     self.push_token(TokenType::TextBlock);
-    // }
-
-    // fn handle_string_literal(&mut self) {
-    //     while !self.reader.is_at_end() {
-    //         let c = self.reader.peek();
-    //
-    //         if c == '"' {
-    //             break;
-    //         }
-    //         if c == '\n' || c == '\r' {
-    //             self.report_error(LexicalErrorType::UnterminatedString);
-    //             return;
-    //         }
-    //
-    //         if c == '\\' {
-    //             if !self.consume_escape_sequence(false) {
-    //                 self.report_error(LexicalErrorType::InvalidEscapeSequence);
-    //             }
-    //         } else {
-    //             self.reader.advance();
-    //         }
-    //     }
-    //
-    //     if self.reader.is_at_end() {
-    //         self.report_error(LexicalErrorType::UnterminatedString);
-    //         return;
-    //     }
-    //
-    //     self.reader.advance(); // "
-    //     self.push_token(TokenType::StringLiteral);
-    // }
-
     fn scan_quoted_content(&mut self, kind: TemplateKind, role: TemplateChunkRole) {
         if kind == TemplateKind::TextBlock
             && role == TemplateChunkRole::FullLiteral
