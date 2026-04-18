@@ -1699,4 +1699,20 @@ mod tests {
             [LexicalErrorType::UnexpectedChar('\u{1a}')]
         );
     }
+
+    #[test]
+    fn test_utf8_bom() {
+        assert_lex!(
+            "\u{FEFF}int x = 1;",
+            [
+                (TokenType::Int, "int"),
+                (TokenType::Identifier, "x"),
+                (TokenType::Equal, "="),
+                (TokenType::NumberLiteral, "1"),
+                (TokenType::Semicolon, ";"),
+            ]
+        );
+
+        assert_lex!("\u{FEFF}", []);
+    }
 }
