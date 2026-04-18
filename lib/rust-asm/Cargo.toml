@@ -1,0 +1,14 @@
+[package]
+name = "rust-asm"
+description = "ObjectWeb ASM implementation in Rust"
+repository = "https://github.com/cubewhy/jawa-analyzer"
+documentation = "https://docs.rs/rust-asm"
+version = "0.2.0"
+edition = "2024"
+license = "MIT"
+
+[features]
+macros = []
+
+[dependencies]
+thiserror = { workspace = true }
