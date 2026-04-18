@@ -6,6 +6,7 @@ publish = false
 
 [dependencies]
 unicode_categories = { workspace = true }
+rowan = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }

@@ -1,7 +1,8 @@
 use crate::{
+    kinds::SyntaxKind,
     lexer::{
         identifier::{is_java_identifier_part, is_java_identifier_start},
-        token::{JavaToken, TokenType},
+        token::Token,
     },
     reader::SourceReader,
 };
@@ -22,31 +23,31 @@ enum TemplateKind {
 }
 
 impl TemplateKind {
-    fn begin_token(self) -> TokenType {
+    fn begin_token(self) -> SyntaxKind {
         match self {
-            TemplateKind::String => TokenType::StringTemplateBegin,
-            TemplateKind::TextBlock => TokenType::TextBlockTemplateBegin,
+            TemplateKind::String => SyntaxKind::STRING_TEMPLATE_BEGIN,
+            TemplateKind::TextBlock => SyntaxKind::TEXT_BLOCK_TEMPLATE_BEGIN,
         }
     }
 
-    fn mid_token(self) -> TokenType {
+    fn mid_token(self) -> SyntaxKind {
         match self {
-            TemplateKind::String => TokenType::StringTemplateMid,
-            TemplateKind::TextBlock => TokenType::TextBlockTemplateMid,
+            TemplateKind::String => SyntaxKind::STRING_TEMPLATE_MID,
+            TemplateKind::TextBlock => SyntaxKind::TEXT_BLOCK_TEMPLATE_MID,
         }
     }
 
-    fn end_token(self) -> TokenType {
+    fn end_token(self) -> SyntaxKind {
         match self {
-            TemplateKind::String => TokenType::StringTemplateEnd,
-            TemplateKind::TextBlock => TokenType::TextBlockTemplateEnd,
+            TemplateKind::String => SyntaxKind::STRING_TEMPLATE_END,
+            TemplateKind::TextBlock => SyntaxKind::TEXT_BLOCK_TEMPLATE_END,
         }
     }
 
-    fn literal_token(self) -> TokenType {
+    fn literal_token(self) -> SyntaxKind {
         match self {
-            TemplateKind::String => TokenType::StringLit,
-            TemplateKind::TextBlock => TokenType::TextBlock,
+            TemplateKind::String => SyntaxKind::STRING_LIT,
+            TemplateKind::TextBlock => SyntaxKind::TEXT_BLOCK,
         }
     }
 
@@ -67,16 +68,16 @@ enum TemplateChunkRole {
     Continuation,
 }
 
-pub struct JavaLexer<'a> {
+pub struct Lexer<'a> {
     reader: SourceReader<'a>,
-    tokens: Vec<JavaToken<'a>>,
-    errors: Vec<JavaLexicalError>,
+    tokens: Vec<Token<'a>>,
+    errors: Vec<LexicalError>,
 
     mode: LexerMode,
     template_stack: Vec<TemplateContext>,
 }
 
-impl<'a> JavaLexer<'a> {
+impl<'a> Lexer<'a> {
     pub fn new(source: &'a str) -> Self {
         Self {
             reader: SourceReader::new(source),
@@ -87,9 +88,7 @@ impl<'a> JavaLexer<'a> {
         }
     }
 
-    pub fn scan_tokens(
-        &mut self,
-    ) -> Result<&[JavaToken<'a>], (&[JavaToken<'a>], &[JavaLexicalError])> {
+    pub fn scan_tokens(&mut self) -> Result<&[Token<'a>], (&[Token<'a>], &[LexicalError])> {
         // consume BOM
         if self.reader.peek() == '\u{FEFF}' {
             self.reader.advance();
@@ -101,14 +100,14 @@ impl<'a> JavaLexer<'a> {
 
         if !self.template_stack.is_empty() {
             // unterminated string/textblock template
-            self.report_error(LexicalErrorType::UnterminatedTemplate);
+            self.report_error(LexicalErrorKind::UnterminatedTemplate);
         }
 
         self.errors.extend(
             self.reader
                 .errors()
                 .iter()
-                .map(|e| JavaLexicalError::new(LexicalErrorType::InvalidUnicodeEscape, e.position)),
+                .map(|e| LexicalError::new(LexicalErrorKind::InvalidUnicodeEscape, e.position)),
         );
 
         if !self.errors.is_empty() {
@@ -132,15 +131,15 @@ impl<'a> JavaLexer<'a> {
 
             _ => {
                 match self.reader.advance() {
-                    '(' => self.push_token(TokenType::LeftParen),
-                    ')' => self.push_token(TokenType::RightParen),
-                    '[' => self.push_token(TokenType::LeftBracket),
-                    ']' => self.push_token(TokenType::RightBracket),
-                    ';' => self.push_token(TokenType::Semicolon),
-                    ',' => self.push_token(TokenType::Comma),
+                    '(' => self.push_token(SyntaxKind::L_PAREN),
+                    ')' => self.push_token(SyntaxKind::R_PAREN),
+                    '[' => self.push_token(SyntaxKind::L_BRACKET),
+                    ']' => self.push_token(SyntaxKind::R_BRACKET),
+                    ';' => self.push_token(SyntaxKind::SEMICOLON),
+                    ',' => self.push_token(SyntaxKind::COMMA),
                     ':' => self.handle_colon(),
-                    '?' => self.push_token(TokenType::Question),
-                    '@' => self.push_token(TokenType::At),
+                    '?' => self.push_token(SyntaxKind::QUESTION),
+                    '@' => self.push_token(SyntaxKind::AT),
                     '+' => self.handle_plus(),
                     '-' => self.handle_minus(),
                     '*' => self.handle_star(),
@@ -172,7 +171,7 @@ impl<'a> JavaLexer<'a> {
                         // https://docs.oracle.com/javase/specs/jls/se17/html/jls-3.html#jls-3.5
                         // Ascii SUB character
                         if !self.reader.is_at_end() {
-                            self.report_error(LexicalErrorType::UnexpectedChar('\x1A'));
+                            self.report_error(LexicalErrorKind::UnexpectedChar('\x1A'));
                         }
                     }
 
@@ -182,8 +181,8 @@ impl<'a> JavaLexer<'a> {
                         if is_java_identifier_start(c) {
                             self.handle_identifier();
                         } else {
-                            self.push_token(TokenType::Unknown);
-                            self.report_error(LexicalErrorType::UnexpectedChar(c));
+                            self.push_token(SyntaxKind::UNKNOWN);
+                            self.report_error(LexicalErrorKind::UnexpectedChar(c));
                         }
                     }
                 }
@@ -196,7 +195,7 @@ impl<'a> JavaLexer<'a> {
         while is_java_whitespace(self.reader.peek()) {
             self.reader.advance();
         }
-        self.push_token(TokenType::Whitespace);
+        self.push_token(SyntaxKind::WHITESPACE);
     }
 
     fn handle_left_brace(&mut self) {
@@ -207,27 +206,27 @@ impl<'a> JavaLexer<'a> {
         }
 
         self.reader.advance();
-        self.push_token(TokenType::LeftBrace);
+        self.push_token(SyntaxKind::L_BRACE);
     }
 
     fn handle_right_brace(&mut self) {
         if self.mode != LexerMode::TemplateExpression {
             self.reader.advance();
-            self.push_token(TokenType::RightBrace);
+            self.push_token(SyntaxKind::R_BRACE);
             return;
         }
 
         let Some(ctx) = self.template_stack.last_mut() else {
             self.mode = LexerMode::Normal;
             self.reader.advance();
-            self.push_token(TokenType::RightBrace);
+            self.push_token(SyntaxKind::R_BRACE);
             return;
         };
 
         if ctx.brace_depth > 0 {
             ctx.brace_depth -= 1;
             self.reader.advance();
-            self.push_token(TokenType::RightBrace);
+            self.push_token(SyntaxKind::R_BRACE);
             return;
         }
 
@@ -275,7 +274,7 @@ impl<'a> JavaLexer<'a> {
                     if num_base == 8 && c.is_ascii_digit() {
                         has_invalid_octal_digit = true;
                     } else {
-                        self.report_error(LexicalErrorType::InvalidNumber);
+                        self.report_error(LexicalErrorKind::InvalidNumber);
                     }
                 }
                 self.reader.advance();
@@ -290,7 +289,7 @@ impl<'a> JavaLexer<'a> {
 
         // Catch trailing underscores on the integer part (e.g., `123_`)
         if last_was_underscore {
-            self.report_error(LexicalErrorType::InvalidNumber);
+            self.report_error(LexicalErrorKind::InvalidNumber);
             last_was_underscore = false;
         }
 
@@ -301,7 +300,7 @@ impl<'a> JavaLexer<'a> {
 
             // Java doesn't allow `1._2`
             if self.reader.peek() == '_' {
-                self.report_error(LexicalErrorType::InvalidNumber);
+                self.report_error(LexicalErrorKind::InvalidNumber);
             }
 
             loop {
@@ -318,7 +317,7 @@ impl<'a> JavaLexer<'a> {
             }
 
             if last_was_underscore {
-                self.report_error(LexicalErrorType::InvalidNumber);
+                self.report_error(LexicalErrorKind::InvalidNumber);
                 last_was_underscore = false;
             }
         }
@@ -340,7 +339,7 @@ impl<'a> JavaLexer<'a> {
 
             // Underscores immediately after exponent indicator are invalid (e.g., `1e_10`)
             if self.reader.peek() == '_' {
-                self.report_error(LexicalErrorType::InvalidNumber);
+                self.report_error(LexicalErrorKind::InvalidNumber);
             }
 
             let mut has_exp_digits = false;
@@ -360,7 +359,7 @@ impl<'a> JavaLexer<'a> {
 
             // Catch missing digits after 'e' or trailing underscores
             if !has_exp_digits || last_was_underscore {
-                self.report_error(LexicalErrorType::InvalidNumber);
+                self.report_error(LexicalErrorKind::InvalidNumber);
             }
         }
 
@@ -374,10 +373,10 @@ impl<'a> JavaLexer<'a> {
         }
 
         if num_base == 8 && has_invalid_octal_digit && !is_float {
-            self.report_error(LexicalErrorType::InvalidNumber);
+            self.report_error(LexicalErrorKind::InvalidNumber);
         }
 
-        self.push_token(TokenType::NumberLiteral);
+        self.push_token(SyntaxKind::NUMBER_LIT);
     }
 
     fn handle_dot(&mut self) {
@@ -390,11 +389,11 @@ impl<'a> JavaLexer<'a> {
 
         let token_type = if self.reader.advance_if_matches_str("...") {
             // ...
-            TokenType::Ellipsis
+            SyntaxKind::ELLIPSIS
         } else {
             // .
             self.reader.advance();
-            TokenType::Dot
+            SyntaxKind::DOT
         };
 
         self.push_token(token_type);
@@ -403,9 +402,9 @@ impl<'a> JavaLexer<'a> {
     fn handle_colon(&mut self) {
         let token_type = if self.reader.advance_if_matches(':') {
             // ::
-            TokenType::ColonColon
+            SyntaxKind::COLON_COLON
         } else {
-            TokenType::Colon
+            SyntaxKind::COLON
         };
 
         self.push_token(token_type);
@@ -413,9 +412,9 @@ impl<'a> JavaLexer<'a> {
 
     fn handle_mod(&mut self) {
         let token_type = if self.reader.advance_if_matches('=') {
-            TokenType::ModuloEqual
+            SyntaxKind::MODULO_EQUAL
         } else {
-            TokenType::Modulo
+            SyntaxKind::MODULO
         };
 
         self.push_token(token_type);
@@ -423,9 +422,9 @@ impl<'a> JavaLexer<'a> {
 
     fn handle_bang(&mut self) {
         let token_type = if self.reader.advance_if_matches('=') {
-            TokenType::NotEqual
+            SyntaxKind::NOT_EQUAL
         } else {
-            TokenType::Not
+            SyntaxKind::NOT
         };
 
         self.push_token(token_type);
@@ -433,11 +432,11 @@ impl<'a> JavaLexer<'a> {
 
     fn handle_or(&mut self) {
         let token_type = if self.reader.advance_if_matches('|') {
-            TokenType::Or
+            SyntaxKind::OR
         } else if self.reader.advance_if_matches('=') {
-            TokenType::OrEqual
+            SyntaxKind::OR_EQUAL
         } else {
-            TokenType::BitOr
+            SyntaxKind::BIT_OR
         };
 
         self.push_token(token_type);
@@ -445,11 +444,11 @@ impl<'a> JavaLexer<'a> {
 
     fn handle_and(&mut self) {
         let token_type = if self.reader.advance_if_matches('&') {
-            TokenType::And
+            SyntaxKind::AND
         } else if self.reader.advance_if_matches('=') {
-            TokenType::AndEqual
+            SyntaxKind::AND_EQUAL
         } else {
-            TokenType::BitAnd
+            SyntaxKind::BIT_AND
         };
 
         self.push_token(token_type);
@@ -457,9 +456,9 @@ impl<'a> JavaLexer<'a> {
 
     fn handle_star(&mut self) {
         let token_type = if self.reader.advance_if_matches('=') {
-            TokenType::MultipleEqual
+            SyntaxKind::MULTIPLE_EQUAL
         } else {
-            TokenType::Star
+            SyntaxKind::STAR
         };
 
         self.push_token(token_type);
@@ -467,11 +466,11 @@ impl<'a> JavaLexer<'a> {
 
     fn handle_plus(&mut self) {
         let token_type = if self.reader.advance_if_matches('=') {
-            TokenType::PlusEqual
+            SyntaxKind::PLUS_EQUAL
         } else if self.reader.advance_if_matches('+') {
-            TokenType::PlusPlus
+            SyntaxKind::PLUS_PLUS
         } else {
-            TokenType::Plus
+            SyntaxKind::PLUS
         };
 
         self.push_token(token_type);
@@ -479,9 +478,9 @@ impl<'a> JavaLexer<'a> {
 
     fn handle_caret(&mut self) {
         let token_type = if self.reader.advance_if_matches('=') {
-            TokenType::XorEqual
+            SyntaxKind::XOR_EQUAL
         } else {
-            TokenType::Caret
+            SyntaxKind::CARET
         };
 
         self.push_token(token_type);
@@ -490,15 +489,15 @@ impl<'a> JavaLexer<'a> {
     fn handle_minus(&mut self) {
         let token_type = if self.reader.advance_if_matches('=') {
             // -=
-            TokenType::MinusEqual
+            SyntaxKind::MINUS_EQUAL
         } else if self.reader.advance_if_matches('-') {
             // --
-            TokenType::MinusMinus
+            SyntaxKind::MINUS_MINUS
         } else if self.reader.advance_if_matches('>') {
             // ->
-            TokenType::Arrow
+            SyntaxKind::ARROW
         } else {
-            TokenType::Minus
+            SyntaxKind::MINUS
         };
 
         self.push_token(token_type);
@@ -506,13 +505,13 @@ impl<'a> JavaLexer<'a> {
 
     fn handle_less(&mut self) {
         let token_type = if self.reader.advance_if_matches('=') {
-            TokenType::LessEq // <=
+            SyntaxKind::LESS_EQUAL // <=
         } else if self.reader.advance_if_matches_str("<=") {
-            TokenType::ShlEqual // <<=
+            SyntaxKind::SHL_EQUAL // <<=
         } else if self.reader.advance_if_matches('<') {
-            TokenType::Shl // <<
+            SyntaxKind::SHL // <<
         } else {
-            TokenType::Less // <
+            SyntaxKind::LESS // <
         };
 
         self.push_token(token_type);
@@ -522,19 +521,19 @@ impl<'a> JavaLexer<'a> {
         let token_type = if self.reader.advance_if_matches('>') {
             if self.reader.advance_if_matches('>') {
                 if self.reader.advance_if_matches('=') {
-                    TokenType::UnsignedShrEqual // >>>=
+                    SyntaxKind::UNSIGNED_SHR_EQUAL // >>>=
                 } else {
-                    TokenType::UnsignedShr // >>>
+                    SyntaxKind::UNSIGNED_SHR // >>>
                 }
             } else if self.reader.advance_if_matches('=') {
-                TokenType::ShrEqual // >>=
+                SyntaxKind::SHR_EQUAL // >>=
             } else {
-                TokenType::Shr // >>
+                SyntaxKind::SHR // >>
             }
         } else if self.reader.advance_if_matches('=') {
-            TokenType::GreaterEq // >=
+            SyntaxKind::GREATER_EQUAL // >=
         } else {
-            TokenType::Greater // >
+            SyntaxKind::GREATER // >
         };
 
         self.push_token(token_type);
@@ -542,9 +541,9 @@ impl<'a> JavaLexer<'a> {
 
     fn handle_eq(&mut self) {
         let token_type = if self.reader.advance_if_matches_str("=") {
-            TokenType::EqualEqual // ==
+            SyntaxKind::EQUAL_EQUAL // ==
         } else {
-            TokenType::Equal // =
+            SyntaxKind::EQUAL // =
         };
 
         self.push_token(token_type);
@@ -560,7 +559,7 @@ impl<'a> JavaLexer<'a> {
             {
                 self.reader.advance();
             }
-            self.push_token(TokenType::LineComment);
+            self.push_token(SyntaxKind::LINE_COMMENT);
         } else if self.reader.advance_if_matches('*') {
             // multiple line comment /* */ or javadoc /** */
             let is_javadoc = self.reader.peek() == '*' && self.reader.peek_next() != '/';
@@ -576,21 +575,21 @@ impl<'a> JavaLexer<'a> {
             }
 
             if !has_terminated {
-                self.report_error(LexicalErrorType::UnterminatedComment);
+                self.report_error(LexicalErrorKind::UnterminatedComment);
             }
 
             let token_type = if is_javadoc {
-                TokenType::Javadoc
+                SyntaxKind::JAVADOC
             } else {
-                TokenType::BlockComment
+                SyntaxKind::BLOCK_COMMENT
             };
             self.push_token(token_type);
         } else if self.reader.advance_if_matches('=') {
             // /=
-            self.push_token(TokenType::DivideEqual);
+            self.push_token(SyntaxKind::DIVIDE_EQUAL);
         } else {
             // /
-            self.push_token(TokenType::Slash);
+            self.push_token(SyntaxKind::SLASH);
         }
     }
 
@@ -600,7 +599,68 @@ impl<'a> JavaLexer<'a> {
         }
 
         let text = self.reader.current_token_lexeme();
-        let token_type = TokenType::parse(text);
+        let token_type = match text {
+            "package" => SyntaxKind::PACKAGE_KW,
+            "import" => SyntaxKind::IMPORT_KW,
+            "class" => SyntaxKind::CLASS_KW,
+            "enum" => SyntaxKind::ENUM_KW,
+            "interface" => SyntaxKind::INTERFACE_KW,
+            "public" => SyntaxKind::PUBLIC_KW,
+            "private" => SyntaxKind::PRIVATE_KW,
+            "final" => SyntaxKind::FINAL_KW,
+            "static" => SyntaxKind::STATIC_KW,
+            "protected" => SyntaxKind::PROTECTED_KW,
+            "abstract" => SyntaxKind::ABSTRACT_KW,
+            "for" => SyntaxKind::FOR_KW,
+            "while" => SyntaxKind::WHILE_KW,
+            "continue" => SyntaxKind::CONTINUE_KW,
+            "break" => SyntaxKind::BREAK_KW,
+            "instanceof" => SyntaxKind::INSTANCEOF_KW,
+            "return" => SyntaxKind::RETURN_KW,
+            "transient" => SyntaxKind::TRANSIENT_KW,
+            "extends" => SyntaxKind::EXTENDS_KW,
+            "implements" => SyntaxKind::IMPLEMENTS_KW,
+            "new" => SyntaxKind::NEW_KW,
+            "assert" => SyntaxKind::ASSERT_KW,
+            "switch" => SyntaxKind::SWITCH_KW,
+            "default" => SyntaxKind::DEFAULT_KW,
+            "synchronized" => SyntaxKind::SYNCHRONIZED_KW,
+            "do" => SyntaxKind::DO_KW,
+            "if" => SyntaxKind::IF_KW,
+            "else" => SyntaxKind::ELSE_KW,
+            "this" => SyntaxKind::THIS_KW,
+            "super" => SyntaxKind::SUPER_KW,
+            "volatile" => SyntaxKind::VOLATILE_KW,
+            "native" => SyntaxKind::NATIVE_KW,
+            "throw" => SyntaxKind::THROW_KW,
+            "throws" => SyntaxKind::THROWS_KW,
+            "try" => SyntaxKind::TRY_KW,
+            "catch" => SyntaxKind::CATCH_KW,
+            "finally" => SyntaxKind::FINALLY_KW,
+            "strictfp" => SyntaxKind::STRICTFP_KW,
+
+            // primitive types
+            "void" => SyntaxKind::VOID_KW,
+            "double" => SyntaxKind::DOUBLE_KW,
+            "int" => SyntaxKind::INT_KW,
+            "short" => SyntaxKind::SHORT_KW,
+            "long" => SyntaxKind::LONG_KW,
+            "float" => SyntaxKind::FLOAT_KW,
+            "char" => SyntaxKind::CHAR_KW,
+            "boolean" => SyntaxKind::BOOLEAN_KW,
+            "byte" => SyntaxKind::BYTE_KW,
+
+            // Seems like keywords but they are actually literals
+            "null" => SyntaxKind::NULL_LIT,
+            "true" => SyntaxKind::TRUE_LIT,
+            "false" => SyntaxKind::FALSE_LIT,
+
+            // reserved keywords
+            "goto" => SyntaxKind::GOTO_KW,
+            "const" => SyntaxKind::CONST_KW,
+
+            _ => SyntaxKind::IDENTIFIER,
+        };
 
         self.push_token(token_type);
     }
@@ -655,13 +715,13 @@ impl<'a> JavaLexer<'a> {
                 break;
             }
             if c == '\n' || c == '\r' {
-                self.report_error(LexicalErrorType::UnterminatedChar);
+                self.report_error(LexicalErrorKind::UnterminatedChar);
                 return;
             }
 
             if c == '\\' {
                 if !self.consume_escape_sequence(false) {
-                    self.report_error(LexicalErrorType::InvalidEscapeSequence);
+                    self.report_error(LexicalErrorKind::InvalidEscapeSequence);
                     has_error = true;
                 }
             } else {
@@ -671,17 +731,17 @@ impl<'a> JavaLexer<'a> {
         }
 
         if self.reader.is_at_end() {
-            self.report_error(LexicalErrorType::UnterminatedChar);
+            self.report_error(LexicalErrorKind::UnterminatedChar);
             return;
         }
 
         self.reader.advance(); // '
 
         if !has_error && logical_char_count != 1 {
-            self.report_error(LexicalErrorType::InvalidChar);
+            self.report_error(LexicalErrorKind::InvalidChar);
         }
 
-        self.push_token(TokenType::CharLit);
+        self.push_token(SyntaxKind::CHAR_LIT);
     }
 
     fn scan_quoted_content(&mut self, kind: TemplateKind, role: TemplateChunkRole) {
@@ -692,7 +752,7 @@ impl<'a> JavaLexer<'a> {
 
             let next_char = self.reader.peek();
             if next_char != '\n' && next_char != '\r' {
-                self.report_error(LexicalErrorType::IllegalTextBlockOpen);
+                self.report_error(LexicalErrorKind::IllegalTextBlockOpen);
             }
         }
 
@@ -708,10 +768,10 @@ impl<'a> JavaLexer<'a> {
             if !kind.allows_newline() && (c == '\n' || c == '\r') {
                 match role {
                     TemplateChunkRole::FullLiteral => {
-                        self.report_error(LexicalErrorType::UnterminatedString);
+                        self.report_error(LexicalErrorKind::UnterminatedString);
                     }
                     TemplateChunkRole::Continuation => {
-                        self.report_error(LexicalErrorType::UnterminatedTemplate);
+                        self.report_error(LexicalErrorKind::UnterminatedTemplate);
                         self.mode = LexerMode::Normal;
                     }
                 }
@@ -732,7 +792,7 @@ impl<'a> JavaLexer<'a> {
                 }
 
                 if !self.consume_escape_sequence(kind == TemplateKind::TextBlock) {
-                    self.report_error(LexicalErrorType::InvalidEscapeSequence);
+                    self.report_error(LexicalErrorKind::InvalidEscapeSequence);
                 }
                 continue;
             }
@@ -742,13 +802,13 @@ impl<'a> JavaLexer<'a> {
 
         match (kind, role) {
             (TemplateKind::String, TemplateChunkRole::FullLiteral) => {
-                self.report_error(LexicalErrorType::UnterminatedString);
+                self.report_error(LexicalErrorKind::UnterminatedString);
             }
             (TemplateKind::TextBlock, TemplateChunkRole::FullLiteral) => {
-                self.report_error(LexicalErrorType::UnterminatedTextBlock);
+                self.report_error(LexicalErrorKind::UnterminatedTextBlock);
             }
             (_, TemplateChunkRole::Continuation) => {
-                self.report_error(LexicalErrorType::UnterminatedTemplate);
+                self.report_error(LexicalErrorKind::UnterminatedTemplate);
                 self.mode = LexerMode::Normal;
             }
         }
@@ -805,37 +865,37 @@ impl<'a> JavaLexer<'a> {
         self.scan_quoted_content(kind, TemplateChunkRole::Continuation);
     }
 
-    fn push_token(&mut self, token_type: TokenType) {
-        self.tokens.push(JavaToken::new(
+    fn push_token(&mut self, token_type: SyntaxKind) {
+        self.tokens.push(Token::new(
             token_type,
             self.reader.current_token_lexeme(),
             self.reader.start(),
         ));
     }
 
-    fn report_error(&mut self, error_type: LexicalErrorType) {
+    fn report_error(&mut self, error_type: LexicalErrorKind) {
         self.errors
-            .push(JavaLexicalError::new(error_type, self.reader.start()));
+            .push(LexicalError::new(error_type, self.reader.start()));
     }
 }
 
 #[derive(Debug)]
-pub struct JavaLexicalError {
-    pub error_type: LexicalErrorType,
+pub struct LexicalError {
+    pub kind: LexicalErrorKind,
     pub at_offset: usize,
 }
 
-impl JavaLexicalError {
-    pub fn new(error_type: LexicalErrorType, offset: usize) -> Self {
+impl LexicalError {
+    pub fn new(error_type: LexicalErrorKind, offset: usize) -> Self {
         Self {
-            error_type,
+            kind: error_type,
             at_offset: offset,
         }
     }
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum LexicalErrorType {
+pub enum LexicalErrorKind {
     UnexpectedChar(char),
     MissingSemicolon,
     UnterminatedString,
@@ -863,10 +923,10 @@ mod tests {
     use insta::assert_debug_snapshot;
 
     /// Helper to lex source and return filtered non-trivia tokens for snapshotting
-    fn lex_tokens(source: &str) -> Vec<(TokenType, &str)> {
-        let mut lexer = JavaLexer::new(source);
+    fn lex_tokens(source: &str) -> Vec<(SyntaxKind, &str)> {
+        let mut lexer = Lexer::new(source);
         match lexer.scan_tokens() {
-            Ok(tokens) => tokens.iter().map(|t| (t.token_type, t.lexeme)).collect(),
+            Ok(tokens) => tokens.iter().map(|t| (t.kind, t.lexeme)).collect(),
             Err((tokens, errors)) => {
                 panic!(
                     "Lexing failed unexpectedly for: '{}'\nTokens: {:#?}\nErrors: {:#?}",
@@ -877,14 +937,14 @@ mod tests {
     }
 
     /// Helper to lex source and return errors for snapshotting
-    fn lex_errors(source: &str) -> Vec<LexicalErrorType> {
-        let mut lexer = JavaLexer::new(source);
+    fn lex_errors(source: &str) -> Vec<LexicalErrorKind> {
+        let mut lexer = Lexer::new(source);
         match lexer.scan_tokens() {
             Ok(tokens) => panic!(
                 "Expected errors but lexing succeeded for: '{}'\nTokens: {:#?}",
                 source, tokens
             ),
-            Err((_, errors)) => errors.iter().map(|e| e.error_type).collect(),
+            Err((_, errors)) => errors.iter().map(|e| e.kind).collect(),
         }
     }
 
