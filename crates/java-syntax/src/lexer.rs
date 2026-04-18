@@ -443,57 +443,74 @@ impl<'a> JavaLexer<'a> {
         self.push_token(token_type);
     }
 
+    fn consume_escape_sequence(&mut self, is_text_block: bool) -> bool {
+        self.reader.advance(); // '\'
+
+        if self.reader.is_at_end() {
+            return false;
+        }
+
+        match self.reader.peek() {
+            'b' | 't' | 'n' | 'f' | 'r' | '"' | '\'' | '\\' => {
+                self.reader.advance();
+                true
+            }
+
+            's' => {
+                self.reader.advance();
+                true
+            }
+
+            '\n' | '\r' if is_text_block => {
+                self.reader.advance();
+                true
+            }
+
+            '0'..='7' => {
+                let first_digit = self.reader.advance();
+
+                if self.reader.peek() >= '0' && self.reader.peek() <= '7' {
+                    self.reader.advance(); // the second num
+
+                    if first_digit <= '3' && self.reader.peek() >= '0' && self.reader.peek() <= '7'
+                    {
+                        self.reader.advance(); // the third num
+                    }
+                }
+                true
+            }
+            _ => {
+                // invalid escape
+                self.reader.advance();
+                false
+            }
+        }
+    }
+
     fn handle_char_literal(&mut self) {
         let mut logical_char_count = 0;
-        let mut has_invalid_escape = false;
+        let mut has_error = false;
 
         while !self.reader.is_at_end() {
             let c = self.reader.peek();
 
+            if c == '\'' {
+                break;
+            }
             if c == '\n' || c == '\r' {
                 self.report_error(LexicalErrorType::UnterminatedChar);
                 return;
             }
 
-            if c == '\'' {
-                break;
-            }
-
             if c == '\\' {
-                self.reader.advance(); // \
-
-                // JLS §3.10.6
-                match self.reader.peek() {
-                    'b' | 't' | 'n' | 'f' | 'r' | '"' | '\'' | '\\' => {
-                        self.reader.advance();
-                    }
-                    '0'..='7' => {
-                        let first_digit = self.reader.peek();
-                        self.reader.advance();
-
-                        if self.reader.peek() >= '0' && self.reader.peek() <= '7' {
-                            self.reader.advance(); // consume the second octal number
-                            if first_digit <= '3'
-                                && self.reader.peek() >= '0'
-                                && self.reader.peek() <= '7'
-                            {
-                                self.reader.advance(); // consume the third octal number
-                            }
-                        }
-                    }
-                    _ => {
-                        // invalid escape
-                        has_invalid_escape = true;
-                        if !self.reader.is_at_end() && self.reader.peek() != '\'' {
-                            self.reader.advance();
-                        }
-                    }
+                if !self.consume_escape_sequence(false) {
+                    self.report_error(LexicalErrorType::InvalidEscapeSequence);
+                    has_error = true;
                 }
-                logical_char_count += 1;
             } else {
                 self.reader.advance();
-                logical_char_count += 1;
             }
+            logical_char_count += 1;
         }
 
         if self.reader.is_at_end() {
@@ -501,9 +518,9 @@ impl<'a> JavaLexer<'a> {
             return;
         }
 
-        self.reader.advance();
+        self.reader.advance(); // '
 
-        if has_invalid_escape || logical_char_count != 1 {
+        if !has_error && logical_char_count != 1 {
             self.report_error(LexicalErrorType::InvalidChar);
         }
 
@@ -515,23 +532,23 @@ impl<'a> JavaLexer<'a> {
             self.report_error(LexicalErrorType::IllegalTextBlockOpen);
         }
 
-        let mut is_escaped = false;
         let mut is_terminated = false;
 
         while !self.reader.is_at_end() {
             let c = self.reader.peek();
 
-            if !is_escaped && self.reader.advance_if_matches_str("\"\"\"") {
+            if self.reader.advance_if_matches_str("\"\"\"") {
                 is_terminated = true;
                 break;
             }
 
             if c == '\\' {
-                is_escaped = !is_escaped;
+                if !self.consume_escape_sequence(true) {
+                    self.report_error(LexicalErrorType::InvalidEscapeSequence);
+                }
             } else {
-                is_escaped = false;
+                self.reader.advance();
             }
-            self.reader.advance();
         }
 
         if !is_terminated {
@@ -542,28 +559,24 @@ impl<'a> JavaLexer<'a> {
     }
 
     fn handle_string_literal(&mut self) {
-        let mut is_escaped = false;
-
         while !self.reader.is_at_end() {
             let c = self.reader.peek();
 
-            if c == '"' && !is_escaped {
+            if c == '"' {
                 break;
             }
-
             if c == '\n' || c == '\r' {
                 self.report_error(LexicalErrorType::UnterminatedString);
-                self.reader.advance();
                 return;
             }
 
             if c == '\\' {
-                is_escaped = !is_escaped;
+                if !self.consume_escape_sequence(false) {
+                    self.report_error(LexicalErrorType::InvalidEscapeSequence);
+                }
             } else {
-                is_escaped = false;
+                self.reader.advance();
             }
-
-            self.reader.advance();
         }
 
         if self.reader.is_at_end() {
@@ -571,9 +584,7 @@ impl<'a> JavaLexer<'a> {
             return;
         }
 
-        // consume last "
-        self.reader.advance();
-
+        self.reader.advance(); // "
         self.push_token(TokenType::StringLiteral);
     }
 
@@ -618,6 +629,7 @@ pub enum LexicalErrorType {
     InvalidNumber,
     InvalidUnicodeEscape,
     UnterminatedChar,
+    InvalidEscapeSequence,
 }
 
 fn is_java_identifier_start(c: char) -> bool {
@@ -681,7 +693,7 @@ mod tests {
                     let mut err_iter = errors.iter();
 
                     $(
-                        let err = err_iter.next().expect(&format!("Not enough errors returned for source: '{}'", $source));
+                        let err = err_iter.next().expect(&format!("Not enough errors returned for source: '{}'\nActual errors: {:#?}", $source, errors));
                         assert!(
                             matches!(&err.error_type, $expected_error_pattern),
                             "Error type mismatch. Expected pattern '{}' but got {:?}\nActual errors: {:#?}",
@@ -1260,6 +1272,104 @@ mod tests {
             [
                 LexicalErrorType::InvalidNumber,
                 LexicalErrorType::InvalidNumber
+            ]
+        );
+    }
+
+    #[test]
+    fn test_char_literal_strict_validation() {
+        assert_lex!(
+            "'a' '\\n' '\\t' '\\\\' '\\''",
+            [
+                (TokenType::CharLiteral, "'a'"),
+                (TokenType::CharLiteral, "'\\n'"),
+                (TokenType::CharLiteral, "'\\t'"),
+                (TokenType::CharLiteral, "'\\\\'"),
+                (TokenType::CharLiteral, "'\\''"),
+            ]
+        );
+
+        // empty char literal
+        assert_lex_errors!("''", [LexicalErrorType::InvalidChar]);
+
+        // multiple chars in a char literal
+        assert_lex_errors!("'ab'", [LexicalErrorType::InvalidChar]);
+        assert_lex_errors!("'\\n\\t'", [LexicalErrorType::InvalidChar]);
+
+        // invalid escape
+        assert_lex_errors!("'\\z'", [LexicalErrorType::InvalidEscapeSequence]);
+    }
+
+    #[test]
+    fn test_string_literal_escapes() {
+        assert_lex!(
+            r#" "\b\t\n\f\r\"\'\\" "#,
+            [(TokenType::StringLiteral, r#""\b\t\n\f\r\"\'\\""#)]
+        );
+
+        assert_lex!(
+            r#" "hello\sworld" "#,
+            [(TokenType::StringLiteral, r#""hello\sworld""#)]
+        );
+
+        // invalid escape seq
+        assert_lex_errors!(
+            r#" "hello \x world" "#,
+            [LexicalErrorType::InvalidEscapeSequence]
+        );
+
+        // \\n is not supported in single-line strings
+        // You may confused why the lexer doesn't throw UnterminatedString in this case
+        // IntelliJ will not throw this error; IntelliJ recognizes it as a string.
+        assert_lex_errors!(
+            "\"hello \\\n world\"",
+            [LexicalErrorType::InvalidEscapeSequence]
+        );
+    }
+
+    #[test]
+    fn test_octal_escapes() {
+        assert_lex!(
+            r#" "\0" "\77" "\177" "\377" "#,
+            [
+                (TokenType::StringLiteral, r#""\0""#),
+                (TokenType::StringLiteral, r#""\77""#),
+                (TokenType::StringLiteral, r#""\177""#),
+                (TokenType::StringLiteral, r#""\377""#),
+            ]
+        );
+
+        assert_lex!(r#" "\400" "#, [(TokenType::StringLiteral, r#""\400""#)]);
+
+        assert_lex!(
+            "'\\377' '\\0'",
+            [
+                (TokenType::CharLiteral, "'\\377'"),
+                (TokenType::CharLiteral, "'\\0'"),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_text_block_specific_escapes() {
+        let valid_text_block = "\"\"\"\n line 1 \\\n line 2 \\s\n\"\"\"";
+        assert_lex!(valid_text_block, [(TokenType::TextBlock, valid_text_block)]);
+
+        // invalid escape (\p)
+        let invalid_text_block = "\"\"\"\n line 1 \\p \n\"\"\"";
+        assert_lex_errors!(
+            invalid_text_block,
+            [LexicalErrorType::InvalidEscapeSequence]
+        );
+    }
+
+    #[test]
+    fn test_multiple_errors_in_string() {
+        assert_lex_errors!(
+            r#" " \q and \z " "#,
+            [
+                LexicalErrorType::InvalidEscapeSequence,
+                LexicalErrorType::InvalidEscapeSequence
             ]
         );
     }
