@@ -454,7 +454,7 @@ impl<'a> JavaLexer<'a> {
             }
 
             if c == '\n' || c == '\r' {
-                self.report_error(LexicalErrorType::InvalidChar);
+                self.report_error(LexicalErrorType::UnterminatedChar);
                 return;
             }
 
