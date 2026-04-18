@@ -1,11 +1,11 @@
 #[derive(Debug)]
-pub struct Token<'source> {
+pub struct JavaToken<'source> {
     pub token_type: TokenType,
     pub lexeme: &'source str,
     pub offset: usize, // the start position of the token
 }
 
-impl<'s> Token<'s> {
+impl<'s> JavaToken<'s> {
     pub fn new(token_type: TokenType, lexeme: &'s str, offset: usize) -> Self {
         Self {
             token_type,

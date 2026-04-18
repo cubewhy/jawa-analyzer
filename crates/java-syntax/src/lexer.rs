@@ -1,17 +1,17 @@
 use crate::{
-    lexer::token::{Token, TokenType},
+    lexer::token::{JavaToken, TokenType},
     reader::SourceReader,
 };
 
 pub mod token;
 
-pub struct Lexer<'a> {
+pub struct JavaLexer<'a> {
     reader: SourceReader<'a>,
-    tokens: Vec<Token<'a>>,
-    errors: Vec<LexicalError>,
+    tokens: Vec<JavaToken<'a>>,
+    errors: Vec<JavaLexicalError>,
 }
 
-impl<'a> Lexer<'a> {
+impl<'a> JavaLexer<'a> {
     pub fn new(source: &'a str) -> Self {
         Self {
             reader: SourceReader::new(source),
@@ -20,7 +20,9 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    pub fn scan_tokens(&mut self) -> Result<&[Token<'a>], (&[Token<'a>], &[LexicalError])> {
+    pub fn scan_tokens(
+        &mut self,
+    ) -> Result<&[JavaToken<'a>], (&[JavaToken<'a>], &[JavaLexicalError])> {
         while !self.reader.is_at_end() {
             self.scan_next_token();
         }
@@ -29,7 +31,7 @@ impl<'a> Lexer<'a> {
             self.reader
                 .errors()
                 .iter()
-                .map(|e| LexicalError::new(LexicalErrorType::InvalidUnicodeEscape, e.position)),
+                .map(|e| JavaLexicalError::new(LexicalErrorType::InvalidUnicodeEscape, e.position)),
         );
 
         if !self.errors.is_empty() {
@@ -567,7 +569,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn push_token(&mut self, token_type: TokenType) {
-        self.tokens.push(Token::new(
+        self.tokens.push(JavaToken::new(
             token_type,
             self.reader.current_token_lexeme(),
             self.reader.start(),
@@ -576,17 +578,17 @@ impl<'a> Lexer<'a> {
 
     fn report_error(&mut self, error_type: LexicalErrorType) {
         self.errors
-            .push(LexicalError::new(error_type, self.reader.start()));
+            .push(JavaLexicalError::new(error_type, self.reader.start()));
     }
 }
 
 #[derive(Debug)]
-pub struct LexicalError {
+pub struct JavaLexicalError {
     pub error_type: LexicalErrorType,
     pub at_offset: usize,
 }
 
-impl LexicalError {
+impl JavaLexicalError {
     pub fn new(error_type: LexicalErrorType, offset: usize) -> Self {
         Self {
             error_type,
@@ -614,7 +616,7 @@ mod tests {
 
     macro_rules! assert_lex {
         ($source:expr, [ $( ($expected_type:expr, $expected_lexeme:expr) ),* $(,)? ]) => {
-            let mut lexer = Lexer::new($source);
+            let mut lexer = JavaLexer::new($source);
             match lexer.scan_tokens() {
                 Ok(tokens) => {
                     let expected: Vec<(TokenType, &str)> = vec![
@@ -649,7 +651,7 @@ mod tests {
 
     macro_rules! assert_lex_errors {
         ($source:expr, [ $( $expected_error_pattern:pat ),* $(,)? ]) => {
-            let mut lexer = Lexer::new($source);
+            let mut lexer = JavaLexer::new($source);
             match lexer.scan_tokens() {
                 Ok(tokens) => panic!("Expected errors but lexing succeeded for: '{}'\nTokens: {:#?}", $source, tokens),
                 Err((_, errors)) => {
