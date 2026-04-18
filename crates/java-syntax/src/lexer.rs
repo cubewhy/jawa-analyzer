@@ -249,12 +249,19 @@ impl<'a> JavaLexer<'a> {
         // Even if it's octal, consume base 10 digits to keep the token intact.
         // The parser/semantic analyzer will catch an invalid octal like '09'.
         let consume_base = if num_base == 8 { 10 } else { num_base };
+        let mut has_invalid_octal_digit = false;
+        // https://docs.oracle.com/javase/specs/jls/se25/html/jls-3.html#jls-3.10.2
+        let mut is_float = false;
 
         loop {
             let c = self.reader.peek();
             if c.is_numeric() || c.is_digit(consume_base) {
                 if !c.is_digit(num_base) {
-                    self.report_error(LexicalErrorType::InvalidNumber);
+                    if num_base == 8 && c.is_ascii_digit() {
+                        has_invalid_octal_digit = true;
+                    } else {
+                        self.report_error(LexicalErrorType::InvalidNumber);
+                    }
                 }
                 self.reader.advance();
                 last_was_underscore = false; // Reset flag when a valid digit is seen
@@ -275,6 +282,7 @@ impl<'a> JavaLexer<'a> {
         // Parse float fractional part
         if self.reader.peek() == '.' {
             self.reader.advance(); // '.'
+            is_float = true;
 
             // Java doesn't allow `1._2`
             if self.reader.peek() == '_' {
@@ -307,6 +315,7 @@ impl<'a> JavaLexer<'a> {
 
         if is_dec_exp || is_hex_exp {
             self.reader.advance(); // consume 'e' or 'p'
+            is_float = true;
 
             // Optional sign
             let sign = self.reader.peek();
@@ -341,8 +350,16 @@ impl<'a> JavaLexer<'a> {
         }
 
         // Parse type suffix
-        if matches!(self.reader.peek().to_ascii_lowercase(), 'l' | 'f' | 'd') {
+        let suffix = self.reader.peek().to_ascii_lowercase();
+        if matches!(suffix, 'l' | 'f' | 'd') {
+            if suffix == 'f' || suffix == 'd' {
+                is_float = true;
+            }
             self.reader.advance();
+        }
+
+        if num_base == 8 && has_invalid_octal_digit && !is_float {
+            self.report_error(LexicalErrorType::InvalidNumber);
         }
 
         self.push_token(TokenType::NumberLiteral);
@@ -1635,6 +1652,18 @@ mod tests {
         assert_lex_errors!("\"Hello \\{name", [LexicalErrorType::UnterminatedTemplate]);
     }
 
+    #[test]
+    fn test_float_starting_with_zero_nine() {
+        assert_lex!(
+            "09.5 09e2 09f 08.0D",
+            [
+                (TokenType::NumberLiteral, "09.5"),
+                (TokenType::NumberLiteral, "09e2"),
+                (TokenType::NumberLiteral, "09f"),
+                (TokenType::NumberLiteral, "08.0D"),
+            ]
+        );
+    }
 
     #[test]
     fn test_text_block_opening_whitespace() {
