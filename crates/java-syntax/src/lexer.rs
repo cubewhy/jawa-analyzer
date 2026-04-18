@@ -850,7 +850,8 @@ pub enum LexicalErrorType {
     UnterminatedTemplate,
 }
 
-// https://docs.oracle.com/javase/specs/jls/se25/html/jls-3.html#jls-3.6
+/// Determinate a char is java whitespace
+/// https://docs.oracle.com/javase/specs/jls/se25/html/jls-3.html#jls-3.6
 fn is_java_whitespace(c: char) -> bool {
     matches!(c, '\u{0020}' | '\u{0009}' | '\u{000C}' | '\n' | '\r')
 }
