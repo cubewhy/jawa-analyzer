@@ -4,11 +4,11 @@ expression: lex_tokens(source)
 ---
 [
     (
-        TextBlock,
+        TEXT_BLOCK,
         "\"\"\"\nHello\n  World\n\"\"\"",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         "\n",
     ),
 ]

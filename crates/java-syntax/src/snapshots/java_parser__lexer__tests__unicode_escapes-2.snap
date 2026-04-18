@@ -4,35 +4,35 @@ expression: "lex_tokens(\"int my\\\\u005Fvar = 1;\")"
 ---
 [
     (
-        Int,
+        INT_KW,
         "int",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Identifier,
+        IDENTIFIER,
         "my_var",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Equal,
+        EQUAL,
         "=",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        NumberLiteral,
+        NUMBER_LIT,
         "1",
     ),
     (
-        Semicolon,
+        SEMICOLON,
         ";",
     ),
 ]

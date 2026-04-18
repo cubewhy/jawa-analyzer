@@ -4,23 +4,23 @@ expression: "lex_tokens(\"$myVar _underscore value123\")"
 ---
 [
     (
-        Identifier,
+        IDENTIFIER,
         "$myVar",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Identifier,
+        IDENTIFIER,
         "_underscore",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Identifier,
+        IDENTIFIER,
         "value123",
     ),
 ]

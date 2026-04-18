@@ -4,11 +4,11 @@ expression: "lex_tokens(\"// this is a line comment\\n\")"
 ---
 [
     (
-        LineComment,
+        LINE_COMMENT,
         "// this is a line comment",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         "\n",
     ),
 ]

@@ -4,35 +4,35 @@ expression: "lex_tokens(\"char \\\\uuuu0061 = 'a';\")"
 ---
 [
     (
-        Char,
+        CHAR_KW,
         "char",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Identifier,
+        IDENTIFIER,
         "a",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Equal,
+        EQUAL,
         "=",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        CharLiteral,
+        CHAR_LIT,
         "'a'",
     ),
     (
-        Semicolon,
+        SEMICOLON,
         ";",
     ),
 ]

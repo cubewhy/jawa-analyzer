@@ -4,43 +4,43 @@ expression: "lex_tokens(\"int a = 1 \\\\u002B\\\\u002B;\")"
 ---
 [
     (
-        Int,
+        INT_KW,
         "int",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Identifier,
+        IDENTIFIER,
         "a",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Equal,
+        EQUAL,
         "=",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        NumberLiteral,
+        NUMBER_LIT,
         "1",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        PlusPlus,
+        PLUS_PLUS,
         "++",
     ),
     (
-        Semicolon,
+        SEMICOLON,
         ";",
     ),
 ]

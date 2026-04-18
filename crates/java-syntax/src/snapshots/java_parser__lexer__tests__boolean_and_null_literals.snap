@@ -4,23 +4,23 @@ expression: "lex_tokens(\"true false null\")"
 ---
 [
     (
-        True,
+        TRUE_LIT,
         "true",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        False,
+        FALSE_LIT,
         "false",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Null,
+        NULL_LIT,
         "null",
     ),
 ]

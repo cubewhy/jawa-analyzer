@@ -4,47 +4,47 @@ expression: "lex_tokens(\"1.23 .5 10. 3.14f 6.022e23 1e-9d\")"
 ---
 [
     (
-        NumberLiteral,
+        NUMBER_LIT,
         "1.23",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        NumberLiteral,
+        NUMBER_LIT,
         ".5",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        NumberLiteral,
+        NUMBER_LIT,
         "10.",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        NumberLiteral,
+        NUMBER_LIT,
         "3.14f",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        NumberLiteral,
+        NUMBER_LIT,
         "6.022e23",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        NumberLiteral,
+        NUMBER_LIT,
         "1e-9d",
     ),
 ]

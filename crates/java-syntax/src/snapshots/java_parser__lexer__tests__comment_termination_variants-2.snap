@@ -4,43 +4,43 @@ expression: "lex_tokens(\"// normal comment \\r int z = 3;\")"
 ---
 [
     (
-        LineComment,
+        LINE_COMMENT,
         "// normal comment ",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         "\r ",
     ),
     (
-        Int,
+        INT_KW,
         "int",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Identifier,
+        IDENTIFIER,
         "z",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Equal,
+        EQUAL,
         "=",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        NumberLiteral,
+        NUMBER_LIT,
         "3",
     ),
     (
-        Semicolon,
+        SEMICOLON,
         ";",
     ),
 ]

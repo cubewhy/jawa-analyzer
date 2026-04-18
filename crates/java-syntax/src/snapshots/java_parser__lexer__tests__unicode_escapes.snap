@@ -4,35 +4,35 @@ expression: "lex_tokens(\"\\\\u0070ublic class Test {}\")"
 ---
 [
     (
-        Public,
+        PUBLIC_KW,
         "public",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Class,
+        CLASS_KW,
         "class",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Identifier,
+        IDENTIFIER,
         "Test",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        LeftBrace,
+        L_BRACE,
         "{",
     ),
     (
-        RightBrace,
+        R_BRACE,
         "}",
     ),
 ]

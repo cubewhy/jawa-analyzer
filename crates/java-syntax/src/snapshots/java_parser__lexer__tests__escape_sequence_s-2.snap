@@ -4,11 +4,11 @@ expression: lex_tokens(text_block)
 ---
 [
     (
-        TextBlock,
+        TEXT_BLOCK,
         "\"\"\"\n    line 1\\s\n    line 2\n\"\"\"",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         "\n",
     ),
 ]

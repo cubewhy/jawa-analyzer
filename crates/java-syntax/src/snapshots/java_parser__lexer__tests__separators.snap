@@ -4,95 +4,95 @@ expression: "lex_tokens(\"( ) { } [ ] ; , . ... :: @\")"
 ---
 [
     (
-        LeftParen,
+        L_PAREN,
         "(",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        RightParen,
+        R_PAREN,
         ")",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        LeftBrace,
+        L_BRACE,
         "{",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        RightBrace,
+        R_BRACE,
         "}",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        LeftBracket,
+        L_BRACKET,
         "[",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        RightBracket,
+        R_BRACKET,
         "]",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Semicolon,
+        SEMICOLON,
         ";",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Comma,
+        COMMA,
         ",",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Dot,
+        DOT,
         ".",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Ellipsis,
+        ELLIPSIS,
         "...",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        ColonColon,
+        COLON_COLON,
         "::",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        At,
+        AT,
         "@",
     ),
 ]

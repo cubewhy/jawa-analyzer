@@ -4,31 +4,31 @@ expression: "lex_tokens(\"0 123 1_000_000 456L\")"
 ---
 [
     (
-        NumberLiteral,
+        NUMBER_LIT,
         "0",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        NumberLiteral,
+        NUMBER_LIT,
         "123",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        NumberLiteral,
+        NUMBER_LIT,
         "1_000_000",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        NumberLiteral,
+        NUMBER_LIT,
         "456L",
     ),
 ]

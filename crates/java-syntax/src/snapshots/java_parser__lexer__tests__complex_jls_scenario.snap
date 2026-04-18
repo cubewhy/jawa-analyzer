@@ -4,71 +4,71 @@ expression: "lex_tokens(\"List<String> list = new ArrayList<>();\")"
 ---
 [
     (
-        Identifier,
+        IDENTIFIER,
         "List",
     ),
     (
-        Less,
+        LESS,
         "<",
     ),
     (
-        Identifier,
+        IDENTIFIER,
         "String",
     ),
     (
-        Greater,
+        GREATER,
         ">",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Identifier,
+        IDENTIFIER,
         "list",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Equal,
+        EQUAL,
         "=",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        New,
+        NEW_KW,
         "new",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Identifier,
+        IDENTIFIER,
         "ArrayList",
     ),
     (
-        Less,
+        LESS,
         "<",
     ),
     (
-        Greater,
+        GREATER,
         ">",
     ),
     (
-        LeftParen,
+        L_PAREN,
         "(",
     ),
     (
-        RightParen,
+        R_PAREN,
         ")",
     ),
     (
-        Semicolon,
+        SEMICOLON,
         ";",
     ),
 ]

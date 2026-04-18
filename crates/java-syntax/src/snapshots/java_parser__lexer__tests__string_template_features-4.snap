@@ -4,31 +4,31 @@ expression: "lex_tokens(\"\\\"Outer \\\\{ \\\"Inner \\\\{x}\\\" }\\\"\")"
 ---
 [
     (
-        StringTemplateBegin,
+        STRING_TEMPLATE_BEGIN,
         "\"Outer \\{",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        StringTemplateBegin,
+        STRING_TEMPLATE_BEGIN,
         "\"Inner \\{",
     ),
     (
-        Identifier,
+        IDENTIFIER,
         "x",
     ),
     (
-        StringTemplateEnd,
+        STRING_TEMPLATE_END,
         "}\"",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        StringTemplateEnd,
+        STRING_TEMPLATE_END,
         "}\"",
     ),
 ]

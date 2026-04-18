@@ -4,35 +4,35 @@ expression: "lex_tokens(\"String s = \\\"\\\\u005C\\\\u0022\\\";\")"
 ---
 [
     (
-        Identifier,
+        IDENTIFIER,
         "String",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Identifier,
+        IDENTIFIER,
         "s",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Equal,
+        EQUAL,
         "=",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        StringLiteral,
+        STRING_LIT,
         "\"\\\"\"",
     ),
     (
-        Semicolon,
+        SEMICOLON,
         ";",
     ),
 ]

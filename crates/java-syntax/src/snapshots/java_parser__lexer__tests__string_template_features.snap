@@ -4,23 +4,23 @@ expression: "lex_tokens(\"STR.\\\"Hello \\\\{name}!\\\"\")"
 ---
 [
     (
-        Identifier,
+        IDENTIFIER,
         "STR",
     ),
     (
-        Dot,
+        DOT,
         ".",
     ),
     (
-        StringTemplateBegin,
+        STRING_TEMPLATE_BEGIN,
         "\"Hello \\{",
     ),
     (
-        Identifier,
+        IDENTIFIER,
         "name",
     ),
     (
-        StringTemplateEnd,
+        STRING_TEMPLATE_END,
         "}!\"",
     ),
 ]

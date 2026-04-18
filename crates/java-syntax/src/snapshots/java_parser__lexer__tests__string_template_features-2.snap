@@ -4,23 +4,23 @@ expression: "lex_tokens(\"\\\"a \\\\{b} c \\\\{d} e\\\"\")"
 ---
 [
     (
-        StringTemplateBegin,
+        STRING_TEMPLATE_BEGIN,
         "\"a \\{",
     ),
     (
-        Identifier,
+        IDENTIFIER,
         "b",
     ),
     (
-        StringTemplateMid,
+        STRING_TEMPLATE_MID,
         "} c \\{",
     ),
     (
-        Identifier,
+        IDENTIFIER,
         "d",
     ),
     (
-        StringTemplateEnd,
+        STRING_TEMPLATE_END,
         "} e\"",
     ),
 ]

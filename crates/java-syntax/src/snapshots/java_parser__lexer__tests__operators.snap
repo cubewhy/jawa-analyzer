@@ -4,283 +4,283 @@ expression: lex_tokens(source)
 ---
 [
     (
-        Plus,
+        PLUS,
         "+",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        PlusEqual,
+        PLUS_EQUAL,
         "+=",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        PlusPlus,
+        PLUS_PLUS,
         "++",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Minus,
+        MINUS,
         "-",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        MinusEqual,
+        MINUS_EQUAL,
         "-=",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        MinusMinus,
+        MINUS_MINUS,
         "--",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Arrow,
+        ARROW,
         "->",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         "\n",
     ),
     (
-        Star,
+        STAR,
         "*",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        MultipleEqual,
+        MULTIPLE_EQUAL,
         "*=",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Slash,
+        SLASH,
         "/",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        DivideEqual,
+        DIVIDE_EQUAL,
         "/=",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Modulo,
+        MODULO,
         "%",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        ModuloEqual,
+        MODULO_EQUAL,
         "%=",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        EqualEqual,
+        EQUAL_EQUAL,
         "==",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Equal,
+        EQUAL,
         "=",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        NotEqual,
+        NOT_EQUAL,
         "!=",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Not,
+        NOT,
         "!",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         "\n",
     ),
     (
-        Less,
+        LESS,
         "<",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        LessEq,
+        LESS_EQUAL,
         "<=",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Shl,
+        SHL,
         "<<",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        ShlEqual,
+        SHL_EQUAL,
         "<<=",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Greater,
+        GREATER,
         ">",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        GreaterEq,
+        GREATER_EQUAL,
         ">=",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Shr,
+        SHR,
         ">>",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        ShrEqual,
+        SHR_EQUAL,
         ">>=",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        UnsignedShr,
+        UNSIGNED_SHR,
         ">>>",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        UnsignedShrEqual,
+        UNSIGNED_SHR_EQUAL,
         ">>>=",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         "\n",
     ),
     (
-        BitAnd,
+        BIT_AND,
         "&",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        AndEqual,
+        AND_EQUAL,
         "&=",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        BitOr,
+        BIT_OR,
         "|",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        OrEqual,
+        OR_EQUAL,
         "|=",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Caret,
+        CARET,
         "^",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        XorEqual,
+        XOR_EQUAL,
         "^=",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        And,
+        AND,
         "&&",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Or,
+        OR,
         "||",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         "\n",
     ),
 ]

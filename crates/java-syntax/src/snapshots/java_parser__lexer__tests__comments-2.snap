@@ -4,7 +4,7 @@ expression: "lex_tokens(\"/* this is a \\n block comment */\")"
 ---
 [
     (
-        BlockComment,
+        BLOCK_COMMENT,
         "/* this is a \n block comment */",
     ),
 ]

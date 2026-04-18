@@ -4,35 +4,35 @@ expression: "lex_tokens(\"\\u{FEFF}int x = 1;\")"
 ---
 [
     (
-        Int,
+        INT_KW,
         "int",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Identifier,
+        IDENTIFIER,
         "x",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Equal,
+        EQUAL,
         "=",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        NumberLiteral,
+        NUMBER_LIT,
         "1",
     ),
     (
-        Semicolon,
+        SEMICOLON,
         ";",
     ),
 ]

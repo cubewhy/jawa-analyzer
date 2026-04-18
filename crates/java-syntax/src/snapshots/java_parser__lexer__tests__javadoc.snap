@@ -4,39 +4,39 @@ expression: lex_tokens(source)
 ---
 [
     (
-        Javadoc,
+        JAVADOC,
         "/**\n * This is a Javadoc comment\n * @param x the value\n */",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         "\n",
     ),
     (
-        Public,
+        PUBLIC_KW,
         "public",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Int,
+        INT_KW,
         "int",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Identifier,
+        IDENTIFIER,
         "x",
     ),
     (
-        Semicolon,
+        SEMICOLON,
         ";",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         "\n",
     ),
 ]

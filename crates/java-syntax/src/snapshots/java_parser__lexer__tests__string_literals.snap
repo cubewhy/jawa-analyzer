@@ -4,31 +4,31 @@ expression: "lex_tokens(r#\" \"hello world\" \"escape \\\" test\" \"\" \"#)"
 ---
 [
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        StringLiteral,
+        STRING_LIT,
         "\"hello world\"",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        StringLiteral,
+        STRING_LIT,
         "\"escape \\\" test\"",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        StringLiteral,
+        STRING_LIT,
         "\"\"",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
 ]

@@ -4,31 +4,31 @@ expression: "lex_tokens(\"class interface enum record\")"
 ---
 [
     (
-        Class,
+        CLASS_KW,
         "class",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Interface,
+        INTERFACE_KW,
         "interface",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Enum,
+        ENUM_KW,
         "enum",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Identifier,
+        IDENTIFIER,
         "record",
     ),
 ]

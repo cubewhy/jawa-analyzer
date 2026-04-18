@@ -4,19 +4,19 @@ expression: lex_tokens(source)
 ---
 [
     (
-        TextBlockTemplateBegin,
+        TEXT_BLOCK_TEMPLATE_BEGIN,
         "\"\"\"\n  Line 1 \\{",
     ),
     (
-        Identifier,
+        IDENTIFIER,
         "a",
     ),
     (
-        TextBlockTemplateEnd,
+        TEXT_BLOCK_TEMPLATE_END,
         "}\n  Line 2\"\"\"",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         "\n",
     ),
 ]

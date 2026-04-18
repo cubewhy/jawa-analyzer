@@ -4,23 +4,23 @@ expression: "lex_tokens(\"'a' '\\\\n' '\\\\''\")"
 ---
 [
     (
-        CharLiteral,
+        CHAR_LIT,
         "'a'",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        CharLiteral,
+        CHAR_LIT,
         "'\\n'",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        CharLiteral,
+        CHAR_LIT,
         "'\\''",
     ),
 ]

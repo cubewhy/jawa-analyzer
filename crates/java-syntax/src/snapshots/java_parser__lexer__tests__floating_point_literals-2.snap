@@ -4,15 +4,15 @@ expression: "lex_tokens(\"0x1.0p3 0x.8P-2f\")"
 ---
 [
     (
-        NumberLiteral,
+        NUMBER_LIT,
         "0x1.0p3",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        NumberLiteral,
+        NUMBER_LIT,
         "0x.8P-2f",
     ),
 ]

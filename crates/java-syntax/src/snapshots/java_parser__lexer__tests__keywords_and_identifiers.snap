@@ -4,31 +4,31 @@ expression: "lex_tokens(\"public static void main\")"
 ---
 [
     (
-        Public,
+        PUBLIC_KW,
         "public",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Static,
+        STATIC_KW,
         "static",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Void,
+        VOID_KW,
         "void",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Identifier,
+        IDENTIFIER,
         "main",
     ),
 ]

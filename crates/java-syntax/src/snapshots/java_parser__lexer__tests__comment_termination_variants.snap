@@ -4,43 +4,43 @@ expression: "lex_tokens(\"// hidden comment \\\\u000A int x = 1;\")"
 ---
 [
     (
-        LineComment,
+        LINE_COMMENT,
         "// hidden comment ",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         "\n ",
     ),
     (
-        Int,
+        INT_KW,
         "int",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Identifier,
+        IDENTIFIER,
         "x",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Equal,
+        EQUAL,
         "=",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        NumberLiteral,
+        NUMBER_LIT,
         "1",
     ),
     (
-        Semicolon,
+        SEMICOLON,
         ";",
     ),
 ]

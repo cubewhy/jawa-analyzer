@@ -4,67 +4,67 @@ expression: lex_tokens(nested)
 ---
 [
     (
-        StringTemplateBegin,
+        STRING_TEMPLATE_BEGIN,
         "\"Result: \\{",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        New,
+        NEW_KW,
         "new",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Int,
+        INT_KW,
         "int",
     ),
     (
-        LeftBracket,
+        L_BRACKET,
         "[",
     ),
     (
-        RightBracket,
+        R_BRACKET,
         "]",
     ),
     (
-        LeftBrace,
+        L_BRACE,
         "{",
     ),
     (
-        NumberLiteral,
+        NUMBER_LIT,
         "1",
     ),
     (
-        Comma,
+        COMMA,
         ",",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        NumberLiteral,
+        NUMBER_LIT,
         "2",
     ),
     (
-        RightBrace,
+        R_BRACE,
         "}",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        StringTemplateEnd,
+        STRING_TEMPLATE_END,
         "}\"",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         "\n",
     ),
 ]

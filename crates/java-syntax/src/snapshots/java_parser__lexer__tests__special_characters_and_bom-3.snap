@@ -4,7 +4,7 @@ expression: "lex_tokens(\"'你'\")"
 ---
 [
     (
-        CharLiteral,
+        CHAR_LIT,
         "'你'",
     ),
 ]

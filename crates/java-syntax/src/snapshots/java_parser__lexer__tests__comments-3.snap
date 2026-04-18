@@ -4,31 +4,31 @@ expression: "lex_tokens(\"int /* comment */ x // line\")"
 ---
 [
     (
-        Int,
+        INT_KW,
         "int",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        BlockComment,
+        BLOCK_COMMENT,
         "/* comment */",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        Identifier,
+        IDENTIFIER,
         "x",
     ),
     (
-        Whitespace,
+        WHITESPACE,
         " ",
     ),
     (
-        LineComment,
+        LINE_COMMENT,
         "// line",
     ),
 ]
