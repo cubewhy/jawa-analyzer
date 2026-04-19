@@ -50,9 +50,7 @@ FinishNode
 AddToken
 FinishNode
 StartNode(TYPE, forward_parent=None)
-StartNode(QUALIFIED_NAME, forward_parent=None)
 AddToken
-FinishNode
 Tombstone
 FinishNode
 AddToken

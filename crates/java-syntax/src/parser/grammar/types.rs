@@ -1,5 +1,5 @@
 use crate::{
-    grammar::error_recover::recover_type_bound,
+    grammar::error_recover::{recover_type_argument, recover_type_bound},
     kinds::SyntaxKind::*,
     parser::{
         ExpectedConstruct, Parser,
@@ -78,24 +78,15 @@ pub fn dimensions(p: &mut Parser) {
 ///
 /// Return `Err(())` if an ERROR node is generated
 pub fn type_(p: &mut Parser) -> Result<(), ()> {
-    let m = p.start();
-
     if at_primitive_type(p) {
+        let m = p.start();
         p.bump();
-    } else if p.at(IDENTIFIER) {
-        qualified_name(p);
-    } else {
-        p.error_expected_construct(ExpectedConstruct::Type);
-        m.complete(p, ERROR);
-        return Err(());
+        dimensions(p);
+        m.complete(p, TYPE);
+        return Ok(());
     }
 
-    // array type
-    dimensions(p);
-
-    m.complete(p, TYPE);
-
-    Ok(())
+    reference_type(p)
 }
 
 pub fn type_parameters_opt(p: &mut Parser) {
@@ -161,21 +152,112 @@ pub fn type_bound(p: &mut Parser) {
 ///
 /// Return Err(()) if the current token is not treated as an reference type (IDENTIFIER)
 pub fn reference_type(p: &mut Parser) -> Result<(), ()> {
-    // <typename>[]
     let m = p.start();
 
-    // <typename>
-    if p.at(IDENTIFIER) {
-        qualified_name(p);
-    } else {
+    if !p.at(IDENTIFIER) {
         p.error_expected_construct(ExpectedConstruct::Type);
         m.complete(p, ERROR);
         return Err(());
     }
 
-    // []
+    p.expect(IDENTIFIER);
+    type_arguments_opt(p);
+
+    while p.eat(DOT) {
+        p.expect(IDENTIFIER);
+        type_arguments_opt(p);
+    }
+
     dimensions(p);
 
     m.complete(p, TYPE);
+    Ok(())
+}
+
+pub fn type_arguments_opt(p: &mut Parser) {
+    if p.at(LESS) {
+        type_arguments(p);
+    }
+}
+
+pub fn type_arguments(p: &mut Parser) {
+    let m = p.start();
+
+    p.expect(LESS);
+
+    if !p.at(GREATER) {
+        if type_argument(p).is_err() {
+            recover_type_argument(p);
+        }
+
+        while p.eat(COMMA) {
+            if p.at(GREATER) {
+                break;
+            }
+
+            if type_argument(p).is_err() {
+                recover_type_argument(p);
+            }
+        }
+    }
+
+    p.expect(GREATER);
+
+    m.complete(p, TYPE_ARGUMENTS);
+}
+
+pub fn type_argument(p: &mut Parser) -> Result<(), ()> {
+    let m = p.start();
+
+    let res = if p.at(QUESTION) {
+        wildcard_type(p)
+    } else {
+        reference_type(p)
+    };
+
+    // types in generics should be reference type
+    if res.is_err() {
+        m.complete(p, ERROR);
+        return Err(());
+    }
+
+    m.complete(p, TYPE_ARGUMENT);
+    Ok(())
+}
+
+pub fn wildcard_type(p: &mut Parser) -> Result<(), ()> {
+    // <? extends/super bound>
+    let m = p.start();
+
+    p.expect(QUESTION); // ?
+
+    // extends or super
+    if p.at(EXTENDS_KW) || p.at(SUPER_KW) {
+        wildcard_bounds(p)?;
+    }
+
+    m.complete(p, WILDCARD_TYPE);
+    Ok(())
+}
+
+fn wildcard_bounds(p: &mut Parser) -> Result<(), ()> {
+    let m = p.start();
+
+    // consume extends or super keyword
+    if p.at(EXTENDS_KW) || p.at(SUPER_KW) {
+        p.bump();
+    } else {
+        p.error_expected(&[EXTENDS_KW, SUPER_KW]);
+        m.complete(p, ERROR);
+        return Err(());
+    }
+
+    // parse bound
+    if reference_type(p).is_err() {
+        m.complete(p, ERROR);
+        return Err(());
+    }
+
+    m.complete(p, WILDCARD_BOUNDS);
     Ok(())
 }

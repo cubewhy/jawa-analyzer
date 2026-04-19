@@ -285,3 +285,43 @@ parser_snapshot!(
     parse_type_parameters_generic_constructor,
     r#"class A { <T> A() {} }"#
 );
+
+parser_snapshot!(
+    parse_field_with_type_argument,
+    r#"class A { List<String> xs; }"#
+);
+
+parser_snapshot!(
+    parse_field_with_multiple_type_arguments,
+    r#"class A { Map<K, V> map; }"#
+);
+
+parser_snapshot!(
+    parse_qualified_type_with_arguments,
+    r#"class A { java.util.List<String> xs; }"#
+);
+
+parser_snapshot!(
+    parse_method_return_type_with_arguments,
+    r#"class A { List<String> f() {} }"#
+);
+
+parser_snapshot!(
+    parse_field_with_unbounded_wildcard,
+    r#"class A { List<?> xs; }"#
+);
+
+parser_snapshot!(
+    parse_field_with_extends_wildcard,
+    r#"class A { List<? extends Number> xs; }"#
+);
+
+parser_snapshot!(
+    parse_field_with_super_wildcard,
+    r#"class A { List<? super Integer> xs; }"#
+);
+
+parser_snapshot!(
+    parse_nested_wildcard_type_argument,
+    r#"class A { Map<String, List<? extends Number>> xs; }"#
+);

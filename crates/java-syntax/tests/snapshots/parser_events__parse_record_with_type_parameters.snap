@@ -61,9 +61,7 @@ StartNode(FORMAL_PARAMETER, forward_parent=None)
 StartNode(MODIFIER_LIST, forward_parent=None)
 FinishNode
 StartNode(TYPE, forward_parent=None)
-StartNode(QUALIFIED_NAME, forward_parent=None)
 AddToken
-FinishNode
 Tombstone
 FinishNode
 AddToken
@@ -73,9 +71,7 @@ StartNode(FORMAL_PARAMETER, forward_parent=None)
 StartNode(MODIFIER_LIST, forward_parent=None)
 FinishNode
 StartNode(TYPE, forward_parent=None)
-StartNode(QUALIFIED_NAME, forward_parent=None)
 AddToken
-FinishNode
 Tombstone
 FinishNode
 AddToken

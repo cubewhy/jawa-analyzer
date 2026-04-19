@@ -43,16 +43,12 @@ AddToken
 StartNode(TYPE_BOUND, forward_parent=None)
 AddToken
 StartNode(TYPE, forward_parent=None)
-StartNode(QUALIFIED_NAME, forward_parent=None)
 AddToken
-FinishNode
 Tombstone
 FinishNode
 AddToken
 StartNode(TYPE, forward_parent=None)
-StartNode(QUALIFIED_NAME, forward_parent=None)
 AddToken
-FinishNode
 Tombstone
 FinishNode
 FinishNode

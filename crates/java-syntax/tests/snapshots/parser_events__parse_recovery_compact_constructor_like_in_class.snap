@@ -37,9 +37,7 @@ StartNode(FIELD_DECL, forward_parent=None)
 StartNode(MODIFIER_LIST, forward_parent=None)
 FinishNode
 StartNode(TYPE, forward_parent=None)
-StartNode(QUALIFIED_NAME, forward_parent=None)
 AddToken
-FinishNode
 Tombstone
 FinishNode
 StartNode(VARIABLE_DECLARATOR_LIST, forward_parent=None)

@@ -71,3 +71,7 @@ pub fn recover_type_bound(p: &mut Parser) {
         ],
     );
 }
+
+pub fn recover_type_argument(p: &mut Parser) {
+    recover_until(p, &[COMMA, GREATER]);
+}
