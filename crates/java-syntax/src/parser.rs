@@ -48,7 +48,7 @@ impl Parse {
     }
 
     pub fn debug_dump(&self) -> String {
-        fn walk(node: rowan::SyntaxNode<crate::parser::Lang>, level: usize, out: &mut String) {
+        fn walk(node: rowan::SyntaxNode<Lang>, level: usize, out: &mut String) {
             let indent = "  ".repeat(level);
             out.push_str(&format!("{indent}{:?}\n", node.kind()));
 
