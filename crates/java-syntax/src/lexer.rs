@@ -534,7 +534,13 @@ impl<'a> Lexer<'a> {
     }
 
     fn handle_slash(&mut self) {
+        // https://docs.oracle.com/javase/specs/jls/se26/html/jls-3.html#jls-3.7
         if self.reader.advance_if_matches('/') {
+            let token_type = if self.reader.advance_if_matches('/') {
+                SyntaxKind::JAVADOC_LINE
+            } else {
+                SyntaxKind::LINE_COMMENT
+            };
             // single-line comment //
             while let c = self.reader.peek()
                 && c != '\n'
@@ -543,7 +549,7 @@ impl<'a> Lexer<'a> {
             {
                 self.reader.advance();
             }
-            self.push_token(SyntaxKind::LINE_COMMENT);
+            self.push_token(token_type);
         } else if self.reader.advance_if_matches('*') {
             // multiple line comment /* */ or javadoc /** */
             let is_javadoc = self.reader.peek() == '*' && self.reader.peek_next() != '/';

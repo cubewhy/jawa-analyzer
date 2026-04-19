@@ -119,6 +119,7 @@ pub enum SyntaxKind {
     // Trivia
     LINE_COMMENT,
     BLOCK_COMMENT,
+    JAVADOC_LINE,
     JAVADOC,
     WHITESPACE,
     UNKNOWN,
