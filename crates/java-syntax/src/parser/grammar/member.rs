@@ -1,3 +1,4 @@
+use crate::grammar::types::{type_parameters, type_parameters_opt};
 use crate::kinds::{ContextualKeyword, SyntaxKind::*};
 use crate::parser::grammar::clauses::{throws_clause, throws_clause_opt};
 use crate::parser::grammar::decl::{
@@ -37,6 +38,7 @@ pub fn at_member_start(p: &Parser) -> bool {
         FINAL_KW,
         ABSTRACT_KW,
         AT,
+        LESS, // type parameters (generics)
     ]) || p.at_contextual_kw(ContextualKeyword::Record)
 }
 
@@ -157,7 +159,11 @@ fn is_constructor_like(p: &Parser) -> bool {
 }
 
 pub fn member_decl_rest(p: &mut Parser, m: Marker) {
-    // TODO: generics, @interface annotation_type_element_declaration
+    // TODO: @interface annotation_type_element_declaration
+
+    // method type parameters (generics), e.g. <T> void f() {}
+    type_parameters_opt(p);
+
     if p.at(VOID_KW) {
         // definitely a method.
         p.bump(); // void

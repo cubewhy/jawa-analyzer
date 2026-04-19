@@ -190,6 +190,11 @@ parser_snapshot!(parse_mixed_array_dimensions, r#"class A { int[] a, b[]; }"#);
 
 parser_snapshot!(parse_type_parameters_class, r#"class A<T> {}"#);
 
+parser_snapshot!(
+    parse_type_parameters_method,
+    r#"class A { <A> void func() {} }"#
+);
+
 parser_snapshot!(parse_type_parameters_multiple, r#"class A<T, U> {}"#);
 
 parser_snapshot!(
@@ -259,4 +264,19 @@ parser_snapshot!(
 parser_snapshot!(
     parse_record_with_type_parameters,
     r#"public record R<T, U>(T x, U y) {}"#
+);
+
+parser_snapshot!(
+    parse_type_parameters_method_void,
+    r#"class A { <A> void func() {} }"#
+);
+
+parser_snapshot!(
+    parse_type_parameters_method_typed_return,
+    r#"class A { <T> T func() {} }"#
+);
+
+parser_snapshot!(
+    parse_type_parameters_method_interface,
+    r#"interface A { <T> T func(); }"#
 );
