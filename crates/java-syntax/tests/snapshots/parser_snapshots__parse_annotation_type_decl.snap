@@ -16,20 +16,15 @@ R_BRACE "}"
 LEX_ERRORS:
 <none>
 
-EVENTS:
-StartNode(ROOT, forward_parent=None)
-StartNode(ANNOTATION_TYPE_DECL, forward_parent=None)
-StartNode(MODIFIER_LIST, forward_parent=None)
-FinishNode
-AddToken
-AddToken
-AddToken
-StartNode(ANNOTATION_TYPE_BODY, forward_parent=None)
-AddToken
-AddToken
-FinishNode
-FinishNode
-FinishNode
-
-PARSE_ERRORS:
-<none>
+SYNTAX_TREE:
+ROOT
+  ANNOTATION_TYPE_DECL
+    MODIFIER_LIST
+    AT "@"
+    INTERFACE_KW "interface"
+    WHITESPACE " "
+    IDENTIFIER "A"
+    ANNOTATION_TYPE_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      R_BRACE "}"

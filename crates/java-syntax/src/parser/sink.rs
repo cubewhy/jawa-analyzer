@@ -43,6 +43,15 @@ impl<'a> Sink<'a> {
     }
 
     fn build(&mut self) {
+        // finish root node event
+        let last_finish_idx = self
+            .events
+            .iter()
+            .enumerate()
+            .rev()
+            .find(|(_, e)| matches!(e, Event::FinishNode))
+            .map(|(i, _)| i);
+
         for idx in 0..self.events.len() {
             let event = std::mem::replace(&mut self.events[idx], Event::Tombstone);
 
@@ -84,12 +93,15 @@ impl<'a> Sink<'a> {
                     }
                 }
                 Event::FinishNode => {
+                    if Some(idx) == last_finish_idx {
+                        // ROOT node
+                        // consume trivia
+                        self.eat_trivia();
+                    }
                     self.builder.finish_node();
                 }
             }
         }
-
-        self.eat_trivia();
     }
 
     pub fn finish(mut self) -> GreenNode {

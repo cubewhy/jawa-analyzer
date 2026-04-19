@@ -27,40 +27,32 @@ R_BRACE "}"
 LEX_ERRORS:
 <none>
 
-EVENTS:
-StartNode(ROOT, forward_parent=None)
-StartNode(INTERFACE_DECL, forward_parent=None)
-StartNode(MODIFIER_LIST, forward_parent=None)
-FinishNode
-AddToken
-AddToken
-StartNode(INTERFACE_BODY, forward_parent=None)
-AddToken
-StartNode(METHOD_DECL, forward_parent=None)
-StartNode(MODIFIER_LIST, forward_parent=None)
-FinishNode
-StartNode(TYPE_PARAMETERS, forward_parent=None)
-AddToken
-StartNode(TYPE_PARAMETER, forward_parent=None)
-AddToken
-FinishNode
-AddToken
-FinishNode
-StartNode(TYPE, forward_parent=None)
-AddToken
-Tombstone
-FinishNode
-AddToken
-StartNode(FORMAL_PARAMETERS, forward_parent=None)
-AddToken
-AddToken
-FinishNode
-AddToken
-FinishNode
-AddToken
-FinishNode
-FinishNode
-FinishNode
-
-PARSE_ERRORS:
-<none>
+SYNTAX_TREE:
+ROOT
+  INTERFACE_DECL
+    MODIFIER_LIST
+    INTERFACE_KW "interface"
+    WHITESPACE " "
+    IDENTIFIER "A"
+    INTERFACE_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      METHOD_DECL
+        MODIFIER_LIST
+        TYPE_PARAMETERS
+          WHITESPACE " "
+          LESS "<"
+          TYPE_PARAMETER
+            IDENTIFIER "T"
+          GREATER ">"
+        TYPE
+          WHITESPACE " "
+          IDENTIFIER "T"
+        WHITESPACE " "
+        IDENTIFIER "func"
+        FORMAL_PARAMETERS
+          L_PAREN "("
+          R_PAREN ")"
+        SEMICOLON ";"
+      WHITESPACE " "
+      R_BRACE "}"

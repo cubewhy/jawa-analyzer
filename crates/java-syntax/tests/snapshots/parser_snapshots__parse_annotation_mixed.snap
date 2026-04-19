@@ -1,0 +1,120 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+@interface Complex {
+    int count() default 0;
+    String[] tags() default 1;
+    double VERSION = 1.0;
+}
+
+TOKENS:
+AT "@"
+INTERFACE_KW "interface"
+WHITESPACE " "
+IDENTIFIER "Complex"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+INT_KW "int"
+WHITESPACE " "
+IDENTIFIER "count"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+DEFAULT_KW "default"
+WHITESPACE " "
+NUMBER_LIT "0"
+SEMICOLON ";"
+WHITESPACE "\n    "
+IDENTIFIER "String"
+L_BRACKET "["
+R_BRACKET "]"
+WHITESPACE " "
+IDENTIFIER "tags"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+DEFAULT_KW "default"
+WHITESPACE " "
+NUMBER_LIT "1"
+SEMICOLON ";"
+WHITESPACE "\n    "
+DOUBLE_KW "double"
+WHITESPACE " "
+IDENTIFIER "VERSION"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+NUMBER_LIT "1.0"
+SEMICOLON ";"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT
+  ANNOTATION_TYPE_DECL
+    MODIFIER_LIST
+    AT "@"
+    INTERFACE_KW "interface"
+    WHITESPACE " "
+    IDENTIFIER "Complex"
+    ANNOTATION_TYPE_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      ANNOTATION_TYPE_ELEMENT_DECL
+        MODIFIER_LIST
+        TYPE
+          WHITESPACE "\n    "
+          INT_KW "int"
+        WHITESPACE " "
+        IDENTIFIER "count"
+        L_PAREN "("
+        R_PAREN ")"
+        WHITESPACE " "
+        DEFAULT_KW "default"
+        ERROR
+          WHITESPACE " "
+          NUMBER_LIT "0"
+        SEMICOLON ";"
+      ANNOTATION_TYPE_ELEMENT_DECL
+        MODIFIER_LIST
+        TYPE
+          WHITESPACE "\n    "
+          IDENTIFIER "String"
+          DIMENSIONS
+            L_BRACKET "["
+            R_BRACKET "]"
+        WHITESPACE " "
+        IDENTIFIER "tags"
+        L_PAREN "("
+        R_PAREN ")"
+        WHITESPACE " "
+        DEFAULT_KW "default"
+        ERROR
+          WHITESPACE " "
+          NUMBER_LIT "1"
+        SEMICOLON ";"
+      FIELD_DECL
+        MODIFIER_LIST
+        TYPE
+          WHITESPACE "\n    "
+          DOUBLE_KW "double"
+        VARIABLE_DECLARATOR_LIST
+          VARIABLE_DECLARATOR
+            WHITESPACE " "
+            IDENTIFIER "VERSION"
+            WHITESPACE " "
+            EQUAL "="
+            ERROR
+              WHITESPACE " "
+              NUMBER_LIT "1.0"
+        SEMICOLON ";"
+      WHITESPACE "\n"
+      R_BRACE "}"
+  WHITESPACE "\n"

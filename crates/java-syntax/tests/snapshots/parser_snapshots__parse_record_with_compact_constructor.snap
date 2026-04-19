@@ -26,41 +26,32 @@ R_BRACE "}"
 LEX_ERRORS:
 <none>
 
-EVENTS:
-StartNode(ROOT, forward_parent=None)
-StartNode(RECORD_DECL, forward_parent=None)
-StartNode(MODIFIER_LIST, forward_parent=None)
-FinishNode
-AddToken
-AddToken
-StartNode(FORMAL_PARAMETERS, forward_parent=None)
-AddToken
-StartNode(FORMAL_PARAMETER, forward_parent=None)
-StartNode(MODIFIER_LIST, forward_parent=None)
-FinishNode
-StartNode(TYPE, forward_parent=None)
-AddToken
-Tombstone
-FinishNode
-AddToken
-FinishNode
-AddToken
-FinishNode
-StartNode(RECORD_BODY, forward_parent=None)
-AddToken
-StartNode(COMPACT_CONSTRUCTOR_DECL, forward_parent=None)
-StartNode(MODIFIER_LIST, forward_parent=None)
-FinishNode
-AddToken
-StartNode(BLOCK, forward_parent=None)
-AddToken
-AddToken
-FinishNode
-FinishNode
-AddToken
-FinishNode
-FinishNode
-FinishNode
-
-PARSE_ERRORS:
-<none>
+SYNTAX_TREE:
+ROOT
+  RECORD_DECL
+    MODIFIER_LIST
+    IDENTIFIER "record"
+    WHITESPACE " "
+    IDENTIFIER "R"
+    FORMAL_PARAMETERS
+      L_PAREN "("
+      FORMAL_PARAMETER
+        MODIFIER_LIST
+        TYPE
+          INT_KW "int"
+        WHITESPACE " "
+        IDENTIFIER "x"
+      R_PAREN ")"
+    RECORD_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      COMPACT_CONSTRUCTOR_DECL
+        MODIFIER_LIST
+        WHITESPACE " "
+        IDENTIFIER "R"
+        BLOCK
+          WHITESPACE " "
+          L_BRACE "{"
+          R_BRACE "}"
+      WHITESPACE " "
+      R_BRACE "}"

@@ -1,0 +1,90 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+@interface Config {
+    String name() default "unknown";
+    int retryCount() default 3;
+}
+
+TOKENS:
+AT "@"
+INTERFACE_KW "interface"
+WHITESPACE " "
+IDENTIFIER "Config"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+IDENTIFIER "String"
+WHITESPACE " "
+IDENTIFIER "name"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+DEFAULT_KW "default"
+WHITESPACE " "
+STRING_LIT "\"unknown\""
+SEMICOLON ";"
+WHITESPACE "\n    "
+INT_KW "int"
+WHITESPACE " "
+IDENTIFIER "retryCount"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+DEFAULT_KW "default"
+WHITESPACE " "
+NUMBER_LIT "3"
+SEMICOLON ";"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT
+  ANNOTATION_TYPE_DECL
+    MODIFIER_LIST
+    AT "@"
+    INTERFACE_KW "interface"
+    WHITESPACE " "
+    IDENTIFIER "Config"
+    ANNOTATION_TYPE_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      ANNOTATION_TYPE_ELEMENT_DECL
+        MODIFIER_LIST
+        TYPE
+          WHITESPACE "\n    "
+          IDENTIFIER "String"
+        WHITESPACE " "
+        IDENTIFIER "name"
+        L_PAREN "("
+        R_PAREN ")"
+        WHITESPACE " "
+        DEFAULT_KW "default"
+        ERROR
+          WHITESPACE " "
+          STRING_LIT "\"unknown\""
+        SEMICOLON ";"
+      ANNOTATION_TYPE_ELEMENT_DECL
+        MODIFIER_LIST
+        TYPE
+          WHITESPACE "\n    "
+          INT_KW "int"
+        WHITESPACE " "
+        IDENTIFIER "retryCount"
+        L_PAREN "("
+        R_PAREN ")"
+        WHITESPACE " "
+        DEFAULT_KW "default"
+        ERROR
+          WHITESPACE " "
+          NUMBER_LIT "3"
+        SEMICOLON ";"
+      WHITESPACE "\n"
+      R_BRACE "}"
+  WHITESPACE "\n"

@@ -1,6 +1,6 @@
 use crate::grammar::error_recover::recover_annotation_type_parameter;
 use crate::grammar::modifiers::expression;
-use crate::grammar::types::type_parameters_opt;
+use crate::grammar::types::{type_or_void, type_parameters_opt};
 use crate::kinds::{ContextualKeyword, SyntaxKind::*};
 use crate::parser::grammar::clauses::{throws_clause, throws_clause_opt};
 use crate::parser::grammar::decl::{
@@ -238,16 +238,17 @@ fn annotation_type_member_decl_rest(p: &mut Parser, m: Marker) {
     // fields and methods without parameter list are supported
 
     // type
-    if type_(p).is_err() {
+    if type_or_void(p).is_err() {
         recover_member(p);
         m.complete(p, ERROR);
         return;
     }
 
     // member name
-    p.expect(IDENTIFIER);
+    if p.at(IDENTIFIER) && p.nth(1) == Some(L_PAREN) {
+        p.expect(IDENTIFIER);
+        p.expect(L_PAREN);
 
-    if p.eat(L_PAREN) {
         if !p.eat(R_PAREN) {
             // the parameter list is not empty, start error recover
             recover_annotation_type_parameter(p);

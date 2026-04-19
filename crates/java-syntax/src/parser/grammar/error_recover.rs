@@ -58,7 +58,15 @@ pub fn recover_parameter(p: &mut Parser) {
 }
 
 pub fn recover_annotation_type_parameter(p: &mut Parser) {
-    recover_until(p, &[R_PAREN, SEMICOLON]);
+    recover_until(p, &[R_PAREN, SEMICOLON, R_BRACE]);
+
+    if p.at(R_PAREN) {
+        p.bump(); // )
+    }
+
+    if p.at(SEMICOLON) {
+        p.bump(); // ;
+    }
 }
 
 pub fn recover_type_bound(p: &mut Parser) {

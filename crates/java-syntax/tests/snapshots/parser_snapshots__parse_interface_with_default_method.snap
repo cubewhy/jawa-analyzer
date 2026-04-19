@@ -27,34 +27,30 @@ R_BRACE "}"
 LEX_ERRORS:
 <none>
 
-EVENTS:
-StartNode(ROOT, forward_parent=None)
-StartNode(INTERFACE_DECL, forward_parent=None)
-StartNode(MODIFIER_LIST, forward_parent=None)
-FinishNode
-AddToken
-AddToken
-StartNode(INTERFACE_BODY, forward_parent=None)
-AddToken
-StartNode(METHOD_DECL, forward_parent=None)
-StartNode(MODIFIER_LIST, forward_parent=None)
-AddToken
-FinishNode
-AddToken
-AddToken
-StartNode(FORMAL_PARAMETERS, forward_parent=None)
-AddToken
-AddToken
-FinishNode
-StartNode(BLOCK, forward_parent=None)
-AddToken
-AddToken
-FinishNode
-FinishNode
-AddToken
-FinishNode
-FinishNode
-FinishNode
-
-PARSE_ERRORS:
-<none>
+SYNTAX_TREE:
+ROOT
+  INTERFACE_DECL
+    MODIFIER_LIST
+    INTERFACE_KW "interface"
+    WHITESPACE " "
+    IDENTIFIER "A"
+    INTERFACE_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      METHOD_DECL
+        MODIFIER_LIST
+          WHITESPACE " "
+          DEFAULT_KW "default"
+        WHITESPACE " "
+        VOID_KW "void"
+        WHITESPACE " "
+        IDENTIFIER "f"
+        FORMAL_PARAMETERS
+          L_PAREN "("
+          R_PAREN ")"
+        BLOCK
+          WHITESPACE " "
+          L_BRACE "{"
+          R_BRACE "}"
+      WHITESPACE " "
+      R_BRACE "}"

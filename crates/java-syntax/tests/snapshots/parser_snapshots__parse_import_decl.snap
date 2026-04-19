@@ -17,20 +17,15 @@ SEMICOLON ";"
 LEX_ERRORS:
 <none>
 
-EVENTS:
-StartNode(ROOT, forward_parent=None)
-StartNode(IMPORT_DECL, forward_parent=None)
-AddToken
-StartNode(IMPORT_PATH, forward_parent=None)
-AddToken
-AddToken
-AddToken
-AddToken
-AddToken
-FinishNode
-AddToken
-FinishNode
-FinishNode
-
-PARSE_ERRORS:
-<none>
+SYNTAX_TREE:
+ROOT
+  IMPORT_DECL
+    IMPORT_KW "import"
+    IMPORT_PATH
+      WHITESPACE " "
+      IDENTIFIER "java"
+      DOT "."
+      IDENTIFIER "util"
+      DOT "."
+      IDENTIFIER "List"
+    SEMICOLON ";"

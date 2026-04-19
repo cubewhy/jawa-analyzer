@@ -37,7 +37,7 @@ AddToken
 AddToken
 StartNode(ANNOTATION_TYPE_BODY, forward_parent=None)
 AddToken
-StartNode(METHOD_DECL, forward_parent=None)
+StartNode(ANNOTATION_TYPE_ELEMENT_DECL, forward_parent=None)
 StartNode(MODIFIER_LIST, forward_parent=None)
 FinishNode
 StartNode(TYPE, forward_parent=None)
@@ -45,10 +45,8 @@ AddToken
 Tombstone
 FinishNode
 AddToken
-StartNode(FORMAL_PARAMETERS, forward_parent=None)
 AddToken
 AddToken
-FinishNode
 AddToken
 FinishNode
 AddToken

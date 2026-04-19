@@ -15,19 +15,14 @@ R_BRACE "}"
 LEX_ERRORS:
 <none>
 
-EVENTS:
-StartNode(ROOT, forward_parent=None)
-StartNode(ENUM_DECL, forward_parent=None)
-StartNode(MODIFIER_LIST, forward_parent=None)
-FinishNode
-AddToken
-AddToken
-StartNode(ENUM_BODY, forward_parent=None)
-AddToken
-AddToken
-FinishNode
-FinishNode
-FinishNode
-
-PARSE_ERRORS:
-<none>
+SYNTAX_TREE:
+ROOT
+  ENUM_DECL
+    MODIFIER_LIST
+    ENUM_KW "enum"
+    WHITESPACE " "
+    IDENTIFIER "E"
+    ENUM_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      R_BRACE "}"

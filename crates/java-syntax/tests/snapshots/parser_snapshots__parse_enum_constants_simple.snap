@@ -24,30 +24,26 @@ R_BRACE "}"
 LEX_ERRORS:
 <none>
 
-EVENTS:
-StartNode(ROOT, forward_parent=None)
-StartNode(ENUM_DECL, forward_parent=None)
-StartNode(MODIFIER_LIST, forward_parent=None)
-FinishNode
-AddToken
-AddToken
-StartNode(ENUM_BODY, forward_parent=None)
-AddToken
-StartNode(ENUM_CONSTANT, forward_parent=None)
-AddToken
-FinishNode
-AddToken
-StartNode(ENUM_CONSTANT, forward_parent=None)
-AddToken
-FinishNode
-AddToken
-StartNode(ENUM_CONSTANT, forward_parent=None)
-AddToken
-FinishNode
-AddToken
-FinishNode
-FinishNode
-FinishNode
-
-PARSE_ERRORS:
-<none>
+SYNTAX_TREE:
+ROOT
+  ENUM_DECL
+    MODIFIER_LIST
+    ENUM_KW "enum"
+    WHITESPACE " "
+    IDENTIFIER "E"
+    ENUM_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      ENUM_CONSTANT
+        WHITESPACE " "
+        IDENTIFIER "A"
+      COMMA ","
+      ENUM_CONSTANT
+        WHITESPACE " "
+        IDENTIFIER "B"
+      COMMA ","
+      ENUM_CONSTANT
+        WHITESPACE " "
+        IDENTIFIER "C"
+      WHITESPACE " "
+      R_BRACE "}"

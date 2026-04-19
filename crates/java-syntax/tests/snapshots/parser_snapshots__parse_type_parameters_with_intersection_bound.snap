@@ -26,38 +26,30 @@ R_BRACE "}"
 LEX_ERRORS:
 <none>
 
-EVENTS:
-StartNode(ROOT, forward_parent=None)
-StartNode(INTERFACE_DECL, forward_parent=None)
-StartNode(MODIFIER_LIST, forward_parent=None)
-FinishNode
-AddToken
-AddToken
-StartNode(TYPE_PARAMETERS, forward_parent=None)
-AddToken
-StartNode(TYPE_PARAMETER, forward_parent=None)
-AddToken
-StartNode(TYPE_BOUND, forward_parent=None)
-AddToken
-StartNode(TYPE, forward_parent=None)
-AddToken
-Tombstone
-FinishNode
-AddToken
-StartNode(TYPE, forward_parent=None)
-AddToken
-Tombstone
-FinishNode
-FinishNode
-FinishNode
-AddToken
-FinishNode
-StartNode(INTERFACE_BODY, forward_parent=None)
-AddToken
-AddToken
-FinishNode
-FinishNode
-FinishNode
-
-PARSE_ERRORS:
-<none>
+SYNTAX_TREE:
+ROOT
+  INTERFACE_DECL
+    MODIFIER_LIST
+    INTERFACE_KW "interface"
+    WHITESPACE " "
+    IDENTIFIER "A"
+    TYPE_PARAMETERS
+      LESS "<"
+      TYPE_PARAMETER
+        IDENTIFIER "T"
+        TYPE_BOUND
+          WHITESPACE " "
+          EXTENDS_KW "extends"
+          TYPE
+            WHITESPACE " "
+            IDENTIFIER "B"
+          WHITESPACE " "
+          BIT_AND "&"
+          TYPE
+            WHITESPACE " "
+            IDENTIFIER "C"
+      GREATER ">"
+    INTERFACE_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      R_BRACE "}"

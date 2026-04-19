@@ -1,0 +1,77 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+@interface ErrorProne {
+    void invalid(int x);
+    String valid();
+}
+
+TOKENS:
+AT "@"
+INTERFACE_KW "interface"
+WHITESPACE " "
+IDENTIFIER "ErrorProne"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "invalid"
+L_PAREN "("
+INT_KW "int"
+WHITESPACE " "
+IDENTIFIER "x"
+R_PAREN ")"
+SEMICOLON ";"
+WHITESPACE "\n    "
+IDENTIFIER "String"
+WHITESPACE " "
+IDENTIFIER "valid"
+L_PAREN "("
+R_PAREN ")"
+SEMICOLON ";"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT
+  ANNOTATION_TYPE_DECL
+    MODIFIER_LIST
+    AT "@"
+    INTERFACE_KW "interface"
+    WHITESPACE " "
+    IDENTIFIER "ErrorProne"
+    ANNOTATION_TYPE_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      ERROR
+        MODIFIER_LIST
+        WHITESPACE "\n    "
+        VOID_KW "void"
+        WHITESPACE " "
+        IDENTIFIER "invalid"
+        L_PAREN "("
+        INT_KW "int"
+        WHITESPACE " "
+        IDENTIFIER "x"
+        R_PAREN ")"
+        SEMICOLON ";"
+      ANNOTATION_TYPE_ELEMENT_DECL
+        MODIFIER_LIST
+        TYPE
+          WHITESPACE "\n    "
+          IDENTIFIER "String"
+        WHITESPACE " "
+        IDENTIFIER "valid"
+        L_PAREN "("
+        R_PAREN ")"
+        SEMICOLON ";"
+      WHITESPACE "\n"
+      R_BRACE "}"
+  WHITESPACE "\n"

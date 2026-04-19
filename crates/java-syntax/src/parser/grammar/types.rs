@@ -3,7 +3,7 @@ use crate::{
     kinds::SyntaxKind::*,
     parser::{
         ExpectedConstruct, Parser,
-        grammar::{error_recover::recover_parameter, modifiers::modifiers, names::qualified_name},
+        grammar::{error_recover::recover_parameter, modifiers::modifiers},
     },
     tokenset,
 };
@@ -72,6 +72,13 @@ pub fn dimensions(p: &mut Parser) {
     } else {
         m.abandon(p);
     }
+}
+
+pub fn type_or_void(p: &mut Parser) -> Result<(), ()> {
+    if p.eat(VOID_KW) {
+        return Ok(());
+    }
+    type_(p)
 }
 
 /// Parse a type identifier

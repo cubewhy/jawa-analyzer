@@ -33,54 +33,42 @@ R_BRACE "}"
 LEX_ERRORS:
 <none>
 
-EVENTS:
-StartNode(ROOT, forward_parent=None)
-StartNode(RECORD_DECL, forward_parent=None)
-StartNode(MODIFIER_LIST, forward_parent=None)
-AddToken
-FinishNode
-AddToken
-AddToken
-StartNode(TYPE_PARAMETERS, forward_parent=None)
-AddToken
-StartNode(TYPE_PARAMETER, forward_parent=None)
-AddToken
-FinishNode
-AddToken
-StartNode(TYPE_PARAMETER, forward_parent=None)
-AddToken
-FinishNode
-AddToken
-FinishNode
-StartNode(FORMAL_PARAMETERS, forward_parent=None)
-AddToken
-StartNode(FORMAL_PARAMETER, forward_parent=None)
-StartNode(MODIFIER_LIST, forward_parent=None)
-FinishNode
-StartNode(TYPE, forward_parent=None)
-AddToken
-Tombstone
-FinishNode
-AddToken
-FinishNode
-AddToken
-StartNode(FORMAL_PARAMETER, forward_parent=None)
-StartNode(MODIFIER_LIST, forward_parent=None)
-FinishNode
-StartNode(TYPE, forward_parent=None)
-AddToken
-Tombstone
-FinishNode
-AddToken
-FinishNode
-AddToken
-FinishNode
-StartNode(RECORD_BODY, forward_parent=None)
-AddToken
-AddToken
-FinishNode
-FinishNode
-FinishNode
-
-PARSE_ERRORS:
-<none>
+SYNTAX_TREE:
+ROOT
+  RECORD_DECL
+    MODIFIER_LIST
+      PUBLIC_KW "public"
+    WHITESPACE " "
+    IDENTIFIER "record"
+    WHITESPACE " "
+    IDENTIFIER "R"
+    TYPE_PARAMETERS
+      LESS "<"
+      TYPE_PARAMETER
+        IDENTIFIER "T"
+      COMMA ","
+      TYPE_PARAMETER
+        WHITESPACE " "
+        IDENTIFIER "U"
+      GREATER ">"
+    FORMAL_PARAMETERS
+      L_PAREN "("
+      FORMAL_PARAMETER
+        MODIFIER_LIST
+        TYPE
+          IDENTIFIER "T"
+        WHITESPACE " "
+        IDENTIFIER "x"
+      COMMA ","
+      FORMAL_PARAMETER
+        MODIFIER_LIST
+        TYPE
+          WHITESPACE " "
+          IDENTIFIER "U"
+        WHITESPACE " "
+        IDENTIFIER "y"
+      R_PAREN ")"
+    RECORD_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      R_BRACE "}"

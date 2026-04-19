@@ -196,3 +196,55 @@ parser_snapshot!(
         }
     "#}
 );
+
+// annotation_type_decl (@interface)
+parser_snapshot!(
+    parse_annotation_simple_method,
+    indoc! {r#"
+        @interface MyAnno {
+            String value();
+            int id();
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_annotation_with_default,
+    indoc! {r#"
+        @interface Config {
+            String name() default "unknown";
+            int retryCount() default 3;
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_annotation_constant,
+    indoc! {r#"
+        @interface Limits {
+            int MAX_SIZE = 100;
+            String DEFAULT_TYPE = "JSON";
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_annotation_error_recovery,
+    indoc! {r#"
+        @interface ErrorProne {
+            void invalid(int x);
+            String valid();
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_annotation_mixed,
+    indoc! {r#"
+        @interface Complex {
+            int count() default 0;
+            String[] tags() default 1;
+            double VERSION = 1.0;
+        }
+    "#}
+);

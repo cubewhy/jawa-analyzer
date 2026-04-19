@@ -3,68 +3,84 @@ source: crates/java-syntax/tests/parser_snapshots.rs
 expression: out
 ---
 SOURCE:
-class A { int a = 1, b = 2; }
+@interface Limits {
+    int MAX_SIZE = 100;
+    String DEFAULT_TYPE = "JSON";
+}
+
 TOKENS:
-CLASS_KW "class"
+AT "@"
+INTERFACE_KW "interface"
 WHITESPACE " "
-IDENTIFIER "A"
+IDENTIFIER "Limits"
 WHITESPACE " "
 L_BRACE "{"
-WHITESPACE " "
+WHITESPACE "\n    "
 INT_KW "int"
 WHITESPACE " "
-IDENTIFIER "a"
+IDENTIFIER "MAX_SIZE"
 WHITESPACE " "
 EQUAL "="
 WHITESPACE " "
-NUMBER_LIT "1"
-COMMA ","
-WHITESPACE " "
-IDENTIFIER "b"
-WHITESPACE " "
-EQUAL "="
-WHITESPACE " "
-NUMBER_LIT "2"
+NUMBER_LIT "100"
 SEMICOLON ";"
+WHITESPACE "\n    "
+IDENTIFIER "String"
 WHITESPACE " "
+IDENTIFIER "DEFAULT_TYPE"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+STRING_LIT "\"JSON\""
+SEMICOLON ";"
+WHITESPACE "\n"
 R_BRACE "}"
+WHITESPACE "\n"
 
 LEX_ERRORS:
 <none>
 
 SYNTAX_TREE:
 ROOT
-  CLASS_DECL
+  ANNOTATION_TYPE_DECL
     MODIFIER_LIST
-    CLASS_KW "class"
+    AT "@"
+    INTERFACE_KW "interface"
     WHITESPACE " "
-    IDENTIFIER "A"
-    CLASS_BODY
+    IDENTIFIER "Limits"
+    ANNOTATION_TYPE_BODY
       WHITESPACE " "
       L_BRACE "{"
       FIELD_DECL
         MODIFIER_LIST
         TYPE
-          WHITESPACE " "
+          WHITESPACE "\n    "
           INT_KW "int"
         VARIABLE_DECLARATOR_LIST
           VARIABLE_DECLARATOR
             WHITESPACE " "
-            IDENTIFIER "a"
+            IDENTIFIER "MAX_SIZE"
             WHITESPACE " "
             EQUAL "="
             ERROR
               WHITESPACE " "
-              NUMBER_LIT "1"
-          COMMA ","
+              NUMBER_LIT "100"
+        SEMICOLON ";"
+      FIELD_DECL
+        MODIFIER_LIST
+        TYPE
+          WHITESPACE "\n    "
+          IDENTIFIER "String"
+        VARIABLE_DECLARATOR_LIST
           VARIABLE_DECLARATOR
             WHITESPACE " "
-            IDENTIFIER "b"
+            IDENTIFIER "DEFAULT_TYPE"
             WHITESPACE " "
             EQUAL "="
             ERROR
               WHITESPACE " "
-              NUMBER_LIT "2"
+              STRING_LIT "\"JSON\""
         SEMICOLON ";"
-      WHITESPACE " "
+      WHITESPACE "\n"
       R_BRACE "}"
+  WHITESPACE "\n"

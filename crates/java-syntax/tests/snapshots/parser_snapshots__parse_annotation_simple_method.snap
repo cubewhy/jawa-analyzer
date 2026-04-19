@@ -3,23 +3,35 @@ source: crates/java-syntax/tests/parser_snapshots.rs
 expression: out
 ---
 SOURCE:
-@interface A { int value(); }
+@interface MyAnno {
+    String value();
+    int id();
+}
+
 TOKENS:
 AT "@"
 INTERFACE_KW "interface"
 WHITESPACE " "
-IDENTIFIER "A"
+IDENTIFIER "MyAnno"
 WHITESPACE " "
 L_BRACE "{"
-WHITESPACE " "
-INT_KW "int"
+WHITESPACE "\n    "
+IDENTIFIER "String"
 WHITESPACE " "
 IDENTIFIER "value"
 L_PAREN "("
 R_PAREN ")"
 SEMICOLON ";"
+WHITESPACE "\n    "
+INT_KW "int"
 WHITESPACE " "
+IDENTIFIER "id"
+L_PAREN "("
+R_PAREN ")"
+SEMICOLON ";"
+WHITESPACE "\n"
 R_BRACE "}"
+WHITESPACE "\n"
 
 LEX_ERRORS:
 <none>
@@ -31,19 +43,30 @@ ROOT
     AT "@"
     INTERFACE_KW "interface"
     WHITESPACE " "
-    IDENTIFIER "A"
+    IDENTIFIER "MyAnno"
     ANNOTATION_TYPE_BODY
       WHITESPACE " "
       L_BRACE "{"
       ANNOTATION_TYPE_ELEMENT_DECL
         MODIFIER_LIST
         TYPE
-          WHITESPACE " "
-          INT_KW "int"
+          WHITESPACE "\n    "
+          IDENTIFIER "String"
         WHITESPACE " "
         IDENTIFIER "value"
         L_PAREN "("
         R_PAREN ")"
         SEMICOLON ";"
-      WHITESPACE " "
+      ANNOTATION_TYPE_ELEMENT_DECL
+        MODIFIER_LIST
+        TYPE
+          WHITESPACE "\n    "
+          INT_KW "int"
+        WHITESPACE " "
+        IDENTIFIER "id"
+        L_PAREN "("
+        R_PAREN ")"
+        SEMICOLON ";"
+      WHITESPACE "\n"
       R_BRACE "}"
+  WHITESPACE "\n"

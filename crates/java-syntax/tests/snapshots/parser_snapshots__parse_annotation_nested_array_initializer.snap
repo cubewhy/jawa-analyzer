@@ -30,48 +30,37 @@ R_BRACE "}"
 LEX_ERRORS:
 <none>
 
-EVENTS:
-StartNode(ROOT, forward_parent=None)
-StartNode(CLASS_DECL, forward_parent=None)
-StartNode(MODIFIER_LIST, forward_parent=None)
-StartNode(ANNOTATION, forward_parent=None)
-AddToken
-StartNode(QUALIFIED_NAME, forward_parent=None)
-AddToken
-FinishNode
-StartNode(ANNOTATION_ARGUMENT_LIST, forward_parent=None)
-AddToken
-StartNode(ARRAY_INITIALIZER, forward_parent=None)
-AddToken
-StartNode(ARRAY_INITIALIZER, forward_parent=None)
-AddToken
-StartNode(ERROR, forward_parent=None)
-AddToken
-FinishNode
-AddToken
-FinishNode
-AddToken
-StartNode(ARRAY_INITIALIZER, forward_parent=None)
-AddToken
-StartNode(ERROR, forward_parent=None)
-AddToken
-FinishNode
-AddToken
-FinishNode
-AddToken
-FinishNode
-AddToken
-FinishNode
-FinishNode
-FinishNode
-AddToken
-AddToken
-StartNode(CLASS_BODY, forward_parent=None)
-AddToken
-AddToken
-FinishNode
-FinishNode
-FinishNode
-
-PARSE_ERRORS:
-<none>
+SYNTAX_TREE:
+ROOT
+  CLASS_DECL
+    MODIFIER_LIST
+      ANNOTATION
+        AT "@"
+        QUALIFIED_NAME
+          IDENTIFIER "A"
+        ANNOTATION_ARGUMENT_LIST
+          L_PAREN "("
+          ARRAY_INITIALIZER
+            L_BRACE "{"
+            ARRAY_INITIALIZER
+              L_BRACE "{"
+              ERROR
+                NUMBER_LIT "1"
+              R_BRACE "}"
+            COMMA ","
+            ARRAY_INITIALIZER
+              WHITESPACE " "
+              L_BRACE "{"
+              ERROR
+                NUMBER_LIT "2"
+              R_BRACE "}"
+            R_BRACE "}"
+          R_PAREN ")"
+    WHITESPACE " "
+    CLASS_KW "class"
+    WHITESPACE " "
+    IDENTIFIER "B"
+    CLASS_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      R_BRACE "}"

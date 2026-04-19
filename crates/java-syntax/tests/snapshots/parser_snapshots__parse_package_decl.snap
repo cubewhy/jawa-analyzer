@@ -15,18 +15,13 @@ SEMICOLON ";"
 LEX_ERRORS:
 <none>
 
-EVENTS:
-StartNode(ROOT, forward_parent=None)
-StartNode(PACKAGE_DECL, forward_parent=None)
-AddToken
-StartNode(QUALIFIED_NAME, forward_parent=None)
-AddToken
-AddToken
-AddToken
-FinishNode
-AddToken
-FinishNode
-FinishNode
-
-PARSE_ERRORS:
-<none>
+SYNTAX_TREE:
+ROOT
+  PACKAGE_DECL
+    PACKAGE_KW "package"
+    QUALIFIED_NAME
+      WHITESPACE " "
+      IDENTIFIER "a"
+      DOT "."
+      IDENTIFIER "b"
+    SEMICOLON ";"
