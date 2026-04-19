@@ -47,6 +47,11 @@ fn parameter(p: &mut Parser) {
 
     // parameter name
     if p.eat(IDENTIFIER) {
+        // c-style array
+        if p.at(L_BRACKET) {
+            dimensions(p);
+        }
+
         let kind = if is_spread {
             SPREAD_PARAMETER
         } else {

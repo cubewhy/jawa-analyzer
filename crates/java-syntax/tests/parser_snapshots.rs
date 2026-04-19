@@ -266,3 +266,12 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_c_style_array,
+    indoc! {r#"
+        class A {
+            void func(String args[]) {}
+        }
+    "#}
+);
