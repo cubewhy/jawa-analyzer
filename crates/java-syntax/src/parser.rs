@@ -35,8 +35,12 @@ pub struct Parse {
 }
 
 impl Parse {
-    pub fn syntax_node(&self) -> rowan::SyntaxNode<crate::parser::Lang> {
+    pub fn syntax_node(&self) -> rowan::SyntaxNode<Lang> {
         rowan::SyntaxNode::new_root(self.green_node.clone())
+    }
+
+    pub fn into_syntax_node(self) -> rowan::SyntaxNode<Lang> {
+        rowan::SyntaxNode::new_root(self.green_node)
     }
 
     pub fn errors(&self) -> &[ParseError] {
