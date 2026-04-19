@@ -1,5 +1,5 @@
 use crate::{
-    grammar::types::type_parameters_opt,
+    grammar::{member::annotation_type_member_decl, types::type_parameters_opt},
     kinds::{ContextualKeyword, SyntaxKind::*},
     parser::{
         ExpectedConstruct, Parser,
@@ -59,7 +59,7 @@ fn annotation_type_body(p: &mut Parser) {
     let m = p.start();
     p.expect(L_BRACE);
     while !p.is_at_end() && !p.at(R_BRACE) {
-        interface_member_decl(p);
+        annotation_type_member_decl(p);
     }
     p.expect(R_BRACE);
     m.complete(p, ANNOTATION_TYPE_BODY);

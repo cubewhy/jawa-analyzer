@@ -1,4 +1,6 @@
-use crate::grammar::types::{type_parameters, type_parameters_opt};
+use crate::grammar::error_recover::recover_annotation_type_parameter;
+use crate::grammar::modifiers::expression;
+use crate::grammar::types::type_parameters_opt;
 use crate::kinds::{ContextualKeyword, SyntaxKind::*};
 use crate::parser::grammar::clauses::{throws_clause, throws_clause_opt};
 use crate::parser::grammar::decl::{
@@ -159,8 +161,6 @@ fn is_constructor_like(p: &Parser) -> bool {
 }
 
 pub fn member_decl_rest(p: &mut Parser, m: Marker) {
-    // TODO: @interface annotation_type_element_declaration
-
     // method type parameters (generics), e.g. <T> void f() {}
     type_parameters_opt(p);
 
@@ -231,5 +231,65 @@ pub fn interface_member_decl(p: &mut Parser) {
         m.complete(p, EMPTY_DECL);
     } else {
         member_decl_rest(p, m);
+    }
+}
+
+fn annotation_type_member_decl_rest(p: &mut Parser, m: Marker) {
+    // fields and methods without parameter list are supported
+
+    // type
+    if type_(p).is_err() {
+        recover_member(p);
+        m.complete(p, ERROR);
+        return;
+    }
+
+    // member name
+    p.expect(IDENTIFIER);
+
+    if p.eat(L_PAREN) {
+        if !p.eat(R_PAREN) {
+            // the parameter list is not empty, start error recover
+            recover_annotation_type_parameter(p);
+            m.complete(p, ERROR);
+        } else {
+            // <type> <identifier>() [default] [default value];
+
+            // optional default
+            if p.eat(DEFAULT_KW) {
+                expression(p); // default value
+            }
+
+            p.expect(SEMICOLON);
+
+            m.complete(p, ANNOTATION_TYPE_ELEMENT_DECL);
+        }
+    } else {
+        // field
+        variable_declarator_list(p);
+        p.expect(SEMICOLON);
+        m.complete(p, FIELD_DECL);
+    }
+}
+
+pub fn annotation_type_member_decl(p: &mut Parser) {
+    let m = p.start();
+    modifiers(p);
+
+    if p.at(CLASS_KW) {
+        class_decl_rest(p, m);
+    } else if p.at(INTERFACE_KW) {
+        interface_decl_rest(p, m);
+    } else if p.at(ENUM_KW) {
+        enum_decl_rest(p, m);
+    } else if p.at_contextual_kw(ContextualKeyword::Record) {
+        record_decl_rest(p, m);
+    } else if p.at(AT) && p.nth(1) == Some(INTERFACE_KW) {
+        annotation_type_decl_rest(p, m);
+    } else if p.at(SEMICOLON) {
+        p.bump();
+        m.complete(p, EMPTY_DECL);
+    } else {
+        annotation_type_member_decl_rest(p, m);
     }
 }
