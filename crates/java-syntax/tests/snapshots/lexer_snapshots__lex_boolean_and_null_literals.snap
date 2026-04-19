@@ -1,0 +1,15 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+true false null
+TOKENS:
+TRUE_LIT "true"
+WHITESPACE " "
+FALSE_LIT "false"
+WHITESPACE " "
+NULL_LIT "null"
+
+LEX_ERRORS:
+<none>

@@ -1,0 +1,20 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+// normal comment  int z = 3;
+TOKENS:
+LINE_COMMENT "// normal comment "
+WHITESPACE "\r "
+INT_KW "int"
+WHITESPACE " "
+IDENTIFIER "z"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+NUMBER_LIT "3"
+SEMICOLON ";"
+
+LEX_ERRORS:
+<none>

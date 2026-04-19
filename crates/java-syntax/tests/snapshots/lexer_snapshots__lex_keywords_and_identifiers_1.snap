@@ -1,0 +1,17 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+public static void main
+TOKENS:
+PUBLIC_KW "public"
+WHITESPACE " "
+STATIC_KW "static"
+WHITESPACE " "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "main"
+
+LEX_ERRORS:
+<none>

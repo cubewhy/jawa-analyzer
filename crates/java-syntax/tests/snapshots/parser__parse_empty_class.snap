@@ -1,0 +1,14 @@
+---
+source: crates/java-syntax/tests/parser.rs
+expression: actual
+---
+ROOT
+  CLASS_DECL
+    MODIFIER_LIST
+    CLASS_KW "class"
+    WHITESPACE " "
+    IDENTIFIER "A"
+    CLASS_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      R_BRACE "}"

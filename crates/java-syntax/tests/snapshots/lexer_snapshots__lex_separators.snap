@@ -1,0 +1,33 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+( ) { } [ ] ; , . ... :: @
+TOKENS:
+L_PAREN "("
+WHITESPACE " "
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE " "
+R_BRACE "}"
+WHITESPACE " "
+L_BRACKET "["
+WHITESPACE " "
+R_BRACKET "]"
+WHITESPACE " "
+SEMICOLON ";"
+WHITESPACE " "
+COMMA ","
+WHITESPACE " "
+DOT "."
+WHITESPACE " "
+ELLIPSIS "..."
+WHITESPACE " "
+COLON_COLON "::"
+WHITESPACE " "
+AT "@"
+
+LEX_ERRORS:
+<none>

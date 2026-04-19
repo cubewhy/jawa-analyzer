@@ -1,0 +1,13 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+ "trailing space\s" 
+TOKENS:
+WHITESPACE " "
+STRING_LIT "\"trailing space\\s\""
+WHITESPACE " "
+
+LEX_ERRORS:
+<none>

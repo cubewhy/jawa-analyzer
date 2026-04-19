@@ -1,0 +1,15 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+"a \{b} c \{d} e"
+TOKENS:
+STRING_TEMPLATE_BEGIN "\"a \\{"
+IDENTIFIER "b"
+STRING_TEMPLATE_MID "} c \\{"
+IDENTIFIER "d"
+STRING_TEMPLATE_END "} e\""
+
+LEX_ERRORS:
+<none>

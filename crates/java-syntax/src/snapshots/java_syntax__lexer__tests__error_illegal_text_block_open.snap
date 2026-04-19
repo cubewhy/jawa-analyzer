@@ -1,8 +1,0 @@
----
-source: crates/java-syntax/src/lexer.rs
-expression: "lex_errors(\"\\\"\\\"\\\"illegal\")"
----
-[
-    IllegalTextBlockOpen,
-    UnterminatedTextBlock,
-]

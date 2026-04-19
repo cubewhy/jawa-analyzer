@@ -1,0 +1,18 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+char \uuuu0061 = 'a';
+TOKENS:
+CHAR_KW "char"
+WHITESPACE " "
+IDENTIFIER "a"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+CHAR_LIT "'a'"
+SEMICOLON ";"
+
+LEX_ERRORS:
+<none>

@@ -1,0 +1,11 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+123_
+TOKENS:
+NUMBER_LIT "123_"
+
+LEX_ERRORS:
+LexicalError { kind: InvalidNumber, at_offset: 0 }

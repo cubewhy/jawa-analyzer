@@ -1,0 +1,11 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+"""illegal
+TOKENS:
+
+LEX_ERRORS:
+LexicalError { kind: IllegalTextBlockOpen, at_offset: 0 }
+LexicalError { kind: UnterminatedTextBlock, at_offset: 0 }

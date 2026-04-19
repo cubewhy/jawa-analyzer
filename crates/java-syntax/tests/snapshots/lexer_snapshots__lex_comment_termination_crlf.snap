@@ -1,0 +1,21 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+// normal comment 
+ int w = 4;
+TOKENS:
+LINE_COMMENT "// normal comment "
+WHITESPACE "\r\n "
+INT_KW "int"
+WHITESPACE " "
+IDENTIFIER "w"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+NUMBER_LIT "4"
+SEMICOLON ";"
+
+LEX_ERRORS:
+<none>

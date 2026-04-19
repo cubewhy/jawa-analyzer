@@ -1,4 +1,4 @@
-use rowan::GreenNode;
+use rowan::{GreenNode, NodeOrToken};
 
 use crate::{
     kinds::{
@@ -32,6 +32,45 @@ pub struct Parse {
     green_node: GreenNode,
     #[allow(unused)]
     errors: Vec<ParseError>,
+}
+
+impl Parse {
+    pub fn syntax_node(&self) -> rowan::SyntaxNode<crate::parser::Lang> {
+        rowan::SyntaxNode::new_root(self.green_node.clone())
+    }
+
+    pub fn errors(&self) -> &[ParseError] {
+        &self.errors
+    }
+
+    pub fn debug_dump(&self) -> String {
+        fn walk(node: rowan::SyntaxNode<crate::parser::Lang>, level: usize, out: &mut String) {
+            let indent = "  ".repeat(level);
+            out.push_str(&format!("{indent}{:?}\n", node.kind()));
+
+            for child in node.children_with_tokens() {
+                match child {
+                    NodeOrToken::Node(n) => walk(n, level + 1, out),
+                    NodeOrToken::Token(t) => {
+                        let indent = "  ".repeat(level + 1);
+                        out.push_str(&format!("{indent}{:?} {:?}\n", t.kind(), t.text()));
+                    }
+                }
+            }
+        }
+
+        let mut out = String::new();
+        walk(self.syntax_node(), 0, &mut out);
+
+        if !self.errors.is_empty() {
+            out.push_str("errors:\n");
+            for err in &self.errors {
+                out.push_str(&format!("  {:?}\n", err));
+            }
+        }
+
+        out
+    }
 }
 
 pub enum Event {
@@ -173,6 +212,14 @@ impl<'a> Parser<'a> {
             false
         }
     }
+}
+
+pub fn parse(input: &str) -> Parse {
+    let tokens = match crate::lexer::lex(input) {
+        Ok(tokens) => tokens,
+        Err((tokens, _errors)) => tokens,
+    };
+    crate::parser::Parser::new(tokens).parse()
 }
 
 #[derive(Clone, Copy)]

@@ -1,0 +1,20 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+int \u006G = 1;
+TOKENS:
+INT_KW "int"
+WHITESPACE " "
+UNKNOWN "\\"
+IDENTIFIER "u006G"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+NUMBER_LIT "1"
+SEMICOLON ";"
+
+LEX_ERRORS:
+LexicalError { kind: UnexpectedChar('\\'), at_offset: 4 }
+LexicalError { kind: InvalidUnicodeEscape, at_offset: 4 }

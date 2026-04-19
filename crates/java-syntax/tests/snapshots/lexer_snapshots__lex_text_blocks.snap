@@ -1,0 +1,16 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+"""
+Hello
+  World
+"""
+
+TOKENS:
+TEXT_BLOCK "\"\"\"\nHello\n  World\n\"\"\""
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>

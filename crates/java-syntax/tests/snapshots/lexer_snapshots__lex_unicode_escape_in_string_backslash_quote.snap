@@ -1,0 +1,18 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+String s = "\u005C\u0022";
+TOKENS:
+IDENTIFIER "String"
+WHITESPACE " "
+IDENTIFIER "s"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+STRING_LIT "\"\\\"\""
+SEMICOLON ";"
+
+LEX_ERRORS:
+<none>

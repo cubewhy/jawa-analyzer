@@ -1,0 +1,10 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+
+TOKENS:
+
+LEX_ERRORS:
+<none>

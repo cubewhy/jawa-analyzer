@@ -1,0 +1,24 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+/**
+ * This is a Javadoc comment
+ * @param x the value
+ */
+public int x;
+
+TOKENS:
+JAVADOC "/**\n * This is a Javadoc comment\n * @param x the value\n */"
+WHITESPACE "\n"
+PUBLIC_KW "public"
+WHITESPACE " "
+INT_KW "int"
+WHITESPACE " "
+IDENTIFIER "x"
+SEMICOLON ";"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>

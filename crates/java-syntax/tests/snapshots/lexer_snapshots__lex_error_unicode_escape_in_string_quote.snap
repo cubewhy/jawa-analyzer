@@ -1,0 +1,17 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+String s = "\u0022";
+TOKENS:
+IDENTIFIER "String"
+WHITESPACE " "
+IDENTIFIER "s"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+STRING_LIT "\"\""
+
+LEX_ERRORS:
+LexicalError { kind: UnterminatedString, at_offset: 18 }

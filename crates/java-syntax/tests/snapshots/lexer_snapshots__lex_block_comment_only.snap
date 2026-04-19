@@ -1,0 +1,12 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+/* this is a 
+ block comment */
+TOKENS:
+BLOCK_COMMENT "/* this is a \n block comment */"
+
+LEX_ERRORS:
+<none>

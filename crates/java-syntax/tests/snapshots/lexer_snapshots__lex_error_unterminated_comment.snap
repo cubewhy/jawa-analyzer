@@ -1,0 +1,11 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+/* this block comment never ends 
+TOKENS:
+BLOCK_COMMENT "/* this block comment never ends "
+
+LEX_ERRORS:
+LexicalError { kind: UnterminatedComment, at_offset: 0 }

@@ -1,0 +1,13 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+0x1.0p3 0x.8P-2f
+TOKENS:
+NUMBER_LIT "0x1.0p3"
+WHITESPACE " "
+NUMBER_LIT "0x.8P-2f"
+
+LEX_ERRORS:
+<none>

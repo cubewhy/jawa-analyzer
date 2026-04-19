@@ -1,0 +1,11 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+''
+TOKENS:
+CHAR_LIT "''"
+
+LEX_ERRORS:
+LexicalError { kind: InvalidChar, at_offset: 0 }

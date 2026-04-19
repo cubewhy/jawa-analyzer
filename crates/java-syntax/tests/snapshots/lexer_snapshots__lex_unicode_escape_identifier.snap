@@ -1,0 +1,18 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+int my\u005Fvar = 1;
+TOKENS:
+INT_KW "int"
+WHITESPACE " "
+IDENTIFIER "my_var"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+NUMBER_LIT "1"
+SEMICOLON ";"
+
+LEX_ERRORS:
+<none>

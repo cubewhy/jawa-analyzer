@@ -1,0 +1,15 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+$myVar _underscore value123
+TOKENS:
+IDENTIFIER "$myVar"
+WHITESPACE " "
+IDENTIFIER "_underscore"
+WHITESPACE " "
+IDENTIFIER "value123"
+
+LEX_ERRORS:
+<none>

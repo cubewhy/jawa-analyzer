@@ -1,0 +1,18 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+\u0070ublic class Test {}
+TOKENS:
+PUBLIC_KW "public"
+WHITESPACE " "
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+
+LEX_ERRORS:
+<none>

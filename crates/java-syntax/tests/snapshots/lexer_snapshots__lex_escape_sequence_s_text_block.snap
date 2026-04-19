@@ -1,0 +1,16 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+"""
+    line 1\s
+    line 2
+"""
+
+TOKENS:
+TEXT_BLOCK "\"\"\"\n    line 1\\s\n    line 2\n\"\"\""
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>

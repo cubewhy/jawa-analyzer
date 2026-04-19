@@ -1,0 +1,100 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class A { Map<String, List<? extends Number>> xs; }
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "A"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE " "
+IDENTIFIER "Map"
+LESS "<"
+IDENTIFIER "String"
+COMMA ","
+WHITESPACE " "
+IDENTIFIER "List"
+LESS "<"
+QUESTION "?"
+WHITESPACE " "
+EXTENDS_KW "extends"
+WHITESPACE " "
+IDENTIFIER "Number"
+GREATER ">"
+GREATER ">"
+WHITESPACE " "
+IDENTIFIER "xs"
+SEMICOLON ";"
+WHITESPACE " "
+R_BRACE "}"
+
+LEX_ERRORS:
+<none>
+
+EVENTS:
+StartNode(ROOT, forward_parent=None)
+StartNode(CLASS_DECL, forward_parent=None)
+StartNode(MODIFIER_LIST, forward_parent=None)
+FinishNode
+AddToken
+AddToken
+StartNode(CLASS_BODY, forward_parent=None)
+AddToken
+StartNode(FIELD_DECL, forward_parent=None)
+StartNode(MODIFIER_LIST, forward_parent=None)
+FinishNode
+StartNode(TYPE, forward_parent=None)
+AddToken
+StartNode(TYPE_ARGUMENTS, forward_parent=None)
+AddToken
+StartNode(TYPE_ARGUMENT, forward_parent=None)
+StartNode(TYPE, forward_parent=None)
+AddToken
+Tombstone
+FinishNode
+FinishNode
+AddToken
+StartNode(TYPE_ARGUMENT, forward_parent=None)
+StartNode(TYPE, forward_parent=None)
+AddToken
+StartNode(TYPE_ARGUMENTS, forward_parent=None)
+AddToken
+StartNode(TYPE_ARGUMENT, forward_parent=None)
+StartNode(WILDCARD_TYPE, forward_parent=None)
+AddToken
+StartNode(WILDCARD_BOUNDS, forward_parent=None)
+AddToken
+StartNode(TYPE, forward_parent=None)
+AddToken
+Tombstone
+FinishNode
+FinishNode
+FinishNode
+FinishNode
+AddToken
+FinishNode
+Tombstone
+FinishNode
+FinishNode
+AddToken
+FinishNode
+Tombstone
+FinishNode
+StartNode(VARIABLE_DECLARATOR_LIST, forward_parent=None)
+StartNode(VARIABLE_DECLARATOR, forward_parent=None)
+AddToken
+Tombstone
+FinishNode
+FinishNode
+AddToken
+FinishNode
+AddToken
+FinishNode
+FinishNode
+FinishNode
+
+PARSE_ERRORS:
+<none>

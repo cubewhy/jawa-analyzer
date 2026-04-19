@@ -1,0 +1,17 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+class interface enum record
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+INTERFACE_KW "interface"
+WHITESPACE " "
+ENUM_KW "enum"
+WHITESPACE " "
+IDENTIFIER "record"
+
+LEX_ERRORS:
+<none>

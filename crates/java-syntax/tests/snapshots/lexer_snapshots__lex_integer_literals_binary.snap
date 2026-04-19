@@ -1,0 +1,15 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+0b0 0B1010_0101 0b11L
+TOKENS:
+NUMBER_LIT "0b0"
+WHITESPACE " "
+NUMBER_LIT "0B1010_0101"
+WHITESPACE " "
+NUMBER_LIT "0b11L"
+
+LEX_ERRORS:
+<none>

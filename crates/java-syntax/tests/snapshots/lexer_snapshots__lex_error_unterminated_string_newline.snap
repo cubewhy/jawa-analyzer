@@ -1,0 +1,14 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+"line1
+line2"
+TOKENS:
+WHITESPACE "\n"
+IDENTIFIER "line2"
+
+LEX_ERRORS:
+LexicalError { kind: UnterminatedString, at_offset: 0 }
+LexicalError { kind: UnterminatedString, at_offset: 12 }

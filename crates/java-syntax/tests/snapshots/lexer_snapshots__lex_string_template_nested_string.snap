@@ -1,0 +1,17 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+"Outer \{ "Inner \{x}" }"
+TOKENS:
+STRING_TEMPLATE_BEGIN "\"Outer \\{"
+WHITESPACE " "
+STRING_TEMPLATE_BEGIN "\"Inner \\{"
+IDENTIFIER "x"
+STRING_TEMPLATE_END "}\""
+WHITESPACE " "
+STRING_TEMPLATE_END "}\""
+
+LEX_ERRORS:
+<none>

@@ -1,0 +1,17 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+int /* comment */ x // line
+TOKENS:
+INT_KW "int"
+WHITESPACE " "
+BLOCK_COMMENT "/* comment */"
+WHITESPACE " "
+IDENTIFIER "x"
+WHITESPACE " "
+LINE_COMMENT "// line"
+
+LEX_ERRORS:
+<none>

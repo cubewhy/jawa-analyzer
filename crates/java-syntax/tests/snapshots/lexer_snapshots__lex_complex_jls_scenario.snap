@@ -1,0 +1,27 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+List<String> list = new ArrayList<>();
+TOKENS:
+IDENTIFIER "List"
+LESS "<"
+IDENTIFIER "String"
+GREATER ">"
+WHITESPACE " "
+IDENTIFIER "list"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+NEW_KW "new"
+WHITESPACE " "
+IDENTIFIER "ArrayList"
+LESS "<"
+GREATER ">"
+L_PAREN "("
+R_PAREN ")"
+SEMICOLON ";"
+
+LEX_ERRORS:
+<none>

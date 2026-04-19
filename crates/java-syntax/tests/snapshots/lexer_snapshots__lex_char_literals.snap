@@ -1,0 +1,15 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+'a' '\n' '\''
+TOKENS:
+CHAR_LIT "'a'"
+WHITESPACE " "
+CHAR_LIT "'\\n'"
+WHITESPACE " "
+CHAR_LIT "'\\''"
+
+LEX_ERRORS:
+<none>

@@ -1,0 +1,17 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+ "hello world" "escape \" test" "" 
+TOKENS:
+WHITESPACE " "
+STRING_LIT "\"hello world\""
+WHITESPACE " "
+STRING_LIT "\"escape \\\" test\""
+WHITESPACE " "
+STRING_LIT "\"\""
+WHITESPACE " "
+
+LEX_ERRORS:
+<none>

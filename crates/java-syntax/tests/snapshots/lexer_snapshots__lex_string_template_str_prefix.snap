@@ -1,0 +1,15 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+STR."Hello \{name}!"
+TOKENS:
+IDENTIFIER "STR"
+DOT "."
+STRING_TEMPLATE_BEGIN "\"Hello \\{"
+IDENTIFIER "name"
+STRING_TEMPLATE_END "}!\""
+
+LEX_ERRORS:
+<none>

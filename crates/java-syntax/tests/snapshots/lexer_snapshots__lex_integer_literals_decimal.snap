@@ -1,0 +1,17 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+0 123 1_000_000 456L
+TOKENS:
+NUMBER_LIT "0"
+WHITESPACE " "
+NUMBER_LIT "123"
+WHITESPACE " "
+NUMBER_LIT "1_000_000"
+WHITESPACE " "
+NUMBER_LIT "456L"
+
+LEX_ERRORS:
+<none>

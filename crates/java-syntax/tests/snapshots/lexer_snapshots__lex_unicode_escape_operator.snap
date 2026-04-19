@@ -1,0 +1,20 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+int a = 1 \u002B\u002B;
+TOKENS:
+INT_KW "int"
+WHITESPACE " "
+IDENTIFIER "a"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+NUMBER_LIT "1"
+WHITESPACE " "
+PLUS_PLUS "++"
+SEMICOLON ";"
+
+LEX_ERRORS:
+<none>
