@@ -9,7 +9,7 @@ use crate::{
     parser::{marker::Marker, reader::TokenSource, sink::Sink},
 };
 
-mod grammar;
+pub mod grammar;
 mod marker;
 mod reader;
 mod sink;
@@ -47,8 +47,8 @@ pub enum Event {
 
 pub struct Parser<'a> {
     source: TokenSource<'a>,
-    events: Vec<Event>,
-    errors: Vec<ParseError>,
+    pub events: Vec<Event>,
+    pub errors: Vec<ParseError>,
 }
 
 impl<'a> Parser<'a> {

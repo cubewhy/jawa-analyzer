@@ -863,7 +863,7 @@ impl<'a> Lexer<'a> {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub struct LexicalError {
     pub kind: LexicalErrorKind,
     pub at_offset: usize,
@@ -898,6 +898,10 @@ pub enum LexicalErrorKind {
 /// https://docs.oracle.com/javase/specs/jls/se25/html/jls-3.html#jls-3.6
 fn is_java_whitespace(c: char) -> bool {
     matches!(c, '\u{0020}' | '\u{0009}' | '\u{000C}' | '\n' | '\r')
+}
+
+pub fn lex(src: &str) -> Result<Vec<Token<'_>>, (Vec<Token<'_>>, Vec<LexicalError>)> {
+    Lexer::new(src).scan_tokens()
 }
 
 #[cfg(test)]

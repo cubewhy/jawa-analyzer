@@ -16,6 +16,7 @@ pub fn at_member_start(p: &Parser) -> bool {
     p.at_set(tokenset![
         CLASS_KW,
         INTERFACE_KW,
+        DEFAULT_KW,
         ENUM_KW,
         VOID_KW,
         INT_KW,
