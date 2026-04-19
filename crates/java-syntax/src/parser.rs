@@ -1,7 +1,10 @@
 use rowan::GreenNode;
 
 use crate::{
-    kinds::SyntaxKind::{self, *},
+    kinds::{
+        ContextualKeyword,
+        SyntaxKind::{self, *},
+    },
     lexer::token::Token,
     parser::{marker::Marker, reader::TokenSource, sink::Sink},
 };
@@ -44,7 +47,6 @@ pub enum Event {
 
 pub struct Parser<'a> {
     source: TokenSource<'a>,
-    pos: usize,
     events: Vec<Event>,
     errors: Vec<ParseError>,
 }
@@ -55,7 +57,6 @@ impl<'a> Parser<'a> {
             source: TokenSource::new(tokens),
             errors: Vec::new(),
             events: Vec::new(),
-            pos: 0,
         }
     }
 
@@ -75,12 +76,20 @@ impl<'a> Parser<'a> {
         Marker::new(pos)
     }
 
+    pub(crate) fn pos(&self) -> usize {
+        self.source.pos()
+    }
+
     pub(crate) fn current(&self) -> Option<SyntaxKind> {
         self.source.current()
     }
 
+    pub(crate) fn current_lexeme(&'a self) -> Option<&'a str> {
+        self.source.current_lexeme()
+    }
+
     pub(crate) fn nth(&self, n: usize) -> Option<SyntaxKind> {
-        self.source.nth(n)
+        self.source.nth(n).map(|token| token.kind)
     }
 
     pub(crate) fn bump(&mut self) {
@@ -90,8 +99,31 @@ impl<'a> Parser<'a> {
         }
     }
 
+    pub(crate) fn at_contextual_kw(&self, kw: ContextualKeyword) -> bool {
+        self.current() == Some(IDENTIFIER) && self.current_lexeme() == Some(kw.as_str())
+    }
+
+    pub(crate) fn eat_contextual_kw(&mut self, kw: ContextualKeyword) -> bool {
+        if self.at_contextual_kw(kw) {
+            self.bump();
+            true
+        } else {
+            false
+        }
+    }
+
+    pub(crate) fn expect_contextual_kw(&mut self, kw: ContextualKeyword) {
+        if !self.eat_contextual_kw(kw) {
+            self.error_message("expected contextual keyword");
+        }
+    }
+
+    pub(crate) fn error_message(&mut self, msg: &'static str) {
+        self.error(ParseErrorKind::Message(msg));
+    }
+
     pub(crate) fn error(&mut self, error_kind: ParseErrorKind) {
-        let error = ParseError::new(error_kind, self.pos);
+        let error = ParseError::new(error_kind, self.pos());
 
         self.errors.push(error.clone());
         self.events.push(Event::Error(error));
@@ -104,7 +136,14 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn error_expected(&mut self, expected: &[SyntaxKind]) {
-        self.error(ParseErrorKind::Expected(expected.to_vec()));
+        self.error(ParseErrorKind::ExpectedToken {
+            expected: expected.to_vec(),
+            found: self.current(),
+        });
+    }
+
+    pub(crate) fn error_expected_construct(&mut self, construct: ExpectedConstruct) {
+        self.error(ParseErrorKind::ExpectedConstruct(construct));
     }
 
     pub(crate) fn error_and_bump(&mut self, msg: &'static str) {
@@ -123,7 +162,7 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn at_set(&self, set: TokenSet) -> bool {
-        self.current().is_some_and(|kind| set.contains(kind))
+        self.current().is_some_and(|kind| set.contains(kind as u16))
     }
 
     pub(crate) fn eat(&mut self, kind: SyntaxKind) -> bool {
@@ -136,17 +175,30 @@ impl<'a> Parser<'a> {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct TokenSet(&'static [SyntaxKind]);
+#[derive(Clone, Copy)]
+pub struct TokenSet {
+    bits: [u64; 4],
+}
 
 impl TokenSet {
-    pub const fn new(kinds: &'static [SyntaxKind]) -> Self {
-        Self(kinds)
-    }
+    pub fn contains(&self, kind: u16) -> bool {
+        let index = (kind >> 6) as usize;
+        let mask = 1u64 << (kind & 63);
 
-    pub fn contains(self, kind: SyntaxKind) -> bool {
-        self.0.contains(&kind)
+        index < 4 && (self.bits[index] & mask) != 0
     }
+}
+
+#[macro_export]
+macro_rules! tokenset {
+    ($($kind:expr),* $(,)?) => {{
+        let mut bits = [0u64; 4];
+        $(
+            let k = $kind as u16;
+            bits[(k >> 6) as usize] |= 1u64 << (k & 63);
+        )*
+        $crate::parser::TokenSet { bits }
+    }};
 }
 
 #[derive(Clone, Debug)]
@@ -163,6 +215,25 @@ impl ParseError {
 
 #[derive(Clone, Debug)]
 pub enum ParseErrorKind {
-    Expected(Vec<SyntaxKind>),
+    ExpectedToken {
+        expected: Vec<SyntaxKind>,
+        found: Option<SyntaxKind>,
+    },
+    ExpectedContextualKeyword {
+        keyword: ContextualKeyword,
+        found: Option<SyntaxKind>,
+    },
+    ExpectedConstruct(ExpectedConstruct),
     Message(&'static str),
+}
+
+#[derive(Debug, Clone)]
+pub enum ExpectedConstruct {
+    Declaration,
+    TypeDeclaration,
+    MemberDeclaration,
+    Expression,
+    Statement,
+    Type,
+    QualifiedName,
 }

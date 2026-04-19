@@ -22,12 +22,16 @@ impl<'a> TokenSource<'a> {
     }
 
     pub fn current(&self) -> Option<SyntaxKind> {
-        self.nth(0)
+        self.nth(0).map(|token| token.kind)
     }
 
-    pub fn nth(&self, n: usize) -> Option<SyntaxKind> {
+    pub fn current_lexeme(&'a self) -> Option<&'a str> {
+        self.nth(0).map(|token| token.lexeme)
+    }
+
+    pub fn nth(&self, n: usize) -> Option<&Token> {
         let idx = *self.indices.get(self.cursor + n)?;
-        Some(self.tokens[idx].kind)
+        Some(&self.tokens[idx])
     }
 
     pub fn bump(&mut self) {
@@ -46,5 +50,9 @@ impl<'a> TokenSource<'a> {
 
     pub fn into_inner(self) -> Vec<Token<'a>> {
         self.tokens
+    }
+
+    pub fn pos(&self) -> usize {
+        self.cursor
     }
 }

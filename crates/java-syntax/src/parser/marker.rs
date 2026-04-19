@@ -28,7 +28,7 @@ impl Marker {
         CompletedMarker::new(self.pos)
     }
 
-    fn abandon(self, p: &mut Parser) {
+    pub fn abandon(self, p: &mut Parser) {
         let idx = self.pos as usize;
         if !matches!(p.events[idx], Event::Tombstone) {
             unreachable!("abandon on completed marker");

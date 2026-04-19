@@ -1,0 +1,124 @@
+use crate::{
+    kinds::SyntaxKind::*,
+    parser::{Parser, grammar::names::qualified_name},
+    tokenset,
+};
+
+pub fn modifiers(p: &mut Parser) {
+    // [public] [private] [protected] [final] [static] [abstract] [default] [@<annotation>[(<arguments>)]]
+    let m = p.start();
+
+    loop {
+        if p.at_set(tokenset![
+            PUBLIC_KW,
+            PRIVATE_KW,
+            PROTECTED_KW,
+            FINAL_KW,
+            STATIC_KW,
+            ABSTRACT_KW,
+            DEFAULT_KW,
+        ]) {
+            p.bump();
+        } else if p.at(AT) && p.nth(1) != Some(INTERFACE_KW) {
+            annotation(p);
+        } else {
+            break;
+        }
+    }
+
+    m.complete(p, MODIFIER_LIST);
+}
+
+pub fn annotation(p: &mut Parser) {
+    // @<identifier>[(<arguments>)]
+    let m = p.start();
+
+    p.expect(AT);
+
+    qualified_name(p);
+
+    if p.at(L_PAREN) {
+        // annotation_argument_list
+        annotation_argument_list(p);
+
+        m.complete(p, ANNOTATION);
+    } else {
+        m.complete(p, MARKER_ANNOTATION);
+    }
+}
+
+fn annotation_argument_list(p: &mut Parser) {
+    // (k = v, a = b) or (v)
+    let m = p.start();
+
+    p.expect(L_PAREN);
+
+    if p.nth(1) == Some(EQUAL) {
+        element_value_pair(p);
+
+        while p.eat(COMMA) {
+            element_value_pair(p);
+        }
+    } else {
+        // single argument annotation
+        element_value(p);
+    }
+
+    p.expect(R_PAREN);
+
+    m.complete(p, ANNOTATION_ARGUMENT_LIST);
+}
+
+fn element_value(p: &mut Parser) {
+    if p.at(AT) {
+        annotation(p);
+    } else if p.at(L_BRACE) {
+        array_initializer(p);
+    } else {
+        expression(p);
+    }
+}
+
+fn element_value_pair(p: &mut Parser) {
+    // key = value
+    let m = p.start();
+
+    p.expect(IDENTIFIER);
+    p.expect(EQUAL);
+
+    element_value(p);
+
+    m.complete(p, ELEMENT_VALUE_PAIR);
+}
+
+fn array_initializer(p: &mut Parser) {
+    let m = p.start();
+
+    p.expect(L_BRACE); // {
+
+    if !p.at(R_BRACE) {
+        element_value(p);
+
+        while p.eat(COMMA) {
+            if p.at(R_BRACE) {
+                break; // trailing comma
+            }
+            element_value(p);
+        }
+    }
+
+    p.expect(R_BRACE);
+
+    m.complete(p, ARRAY_INITIALIZER);
+}
+
+pub fn expression(p: &mut Parser) {
+    // TODO: make the expression parser JLS compactable
+    let m = p.start();
+
+    while !p.is_at_end() && !p.at(COMMA) && !p.at(SEMICOLON) && !p.at(R_PAREN) && !p.at(R_BRACE) {
+        p.bump();
+    }
+
+    m.complete(p, ERROR);
+}

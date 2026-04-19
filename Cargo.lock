@@ -274,6 +274,7 @@ dependencies = [
  "indoc",
  "insta",
  "rowan",
+ "smallvec",
  "unicode_categories",
 ]
 

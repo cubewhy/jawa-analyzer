@@ -1,16 +1,12 @@
-use crate::{kinds::SyntaxKind::*, parser::Parser};
+mod clauses;
+mod compilation_unit;
+mod decl;
+mod error_recover;
+mod expr;
+mod member;
+mod modifiers;
+mod names;
+mod stmt;
+mod types;
 
-pub fn root(p: &mut Parser) {
-    // the root node
-    let m = p.start();
-
-    while !p.is_at_end() {
-        item(p);
-    }
-
-    m.complete(p, ROOT);
-}
-
-fn item(p: &mut Parser) {
-    // TODO: parse tree
-}
+pub use compilation_unit::root;

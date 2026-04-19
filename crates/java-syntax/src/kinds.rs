@@ -131,6 +131,61 @@ pub enum SyntaxKind {
     ROOT,
     MISSING,
     ERROR,
+
+    QUALIFIED_NAME,
+    TYPE,
+    NAME_REF,
+
+    VARIABLE_DECLARATOR_LIST,
+    VARIABLE_DECLARATOR,
+
+    DIMENSIONS,
+    ARRAY_TYPE,
+    ARRAY_ACCESS_EXPR,
+    ARRAY_INITIALIZER,
+
+    MODIFIER_LIST,
+    ARGUMENT_LIST,
+    FORMAL_PARAMETERS,
+    FORMAL_PARAMETER,
+    ANNOTATION,
+    MARKER_ANNOTATION,
+    ANNOTATION_ARGUMENT_LIST,
+    ELEMENT_VALUE_PAIR,
+
+    CLASS_DECL,
+    PACKAGE_DECL,
+    IMPORT_DECL,
+    FIELD_DECL,
+    METHOD_DECL,
+    INTERFACE_DECL,
+    ANNOTATION_TYPE_DECL,
+    RECORD_DECL,
+    ENUM_DECL,
+    MODULE_DECL,
+
+    COMPACT_CONSTRUCTOR_DECL,
+    CONSTRUCTOR_DECL,
+    EMPTY_DECL,
+
+    ENUM_CONSTANT,
+
+    STATIC_INITIALIZER,
+    INSTANCE_INITIALIZER,
+
+    BLOCK, // { ... }
+
+    CLASS_BODY,
+    ENUM_BODY,
+    INTERFACE_BODY,
+    RECORD_BODY,
+    ANNOTATION_TYPE_BODY,
+    MODULE_BODY,
+
+    EXTENDS_CLAUSE,           // extends <super>
+    THROWS_CLAUSE,            // throws <exception a>, <exception b>
+    INTERFACE_EXTENDS_CLAUSE, // interface <identifier> extends A, B
+    IMPLEMENTS_CLAUSE,        // implements <interface 1>, <interface 2>
 }
 
 impl SyntaxKind {
@@ -145,5 +200,28 @@ impl SyntaxKind {
 impl From<SyntaxKind> for rowan::SyntaxKind {
     fn from(kind: SyntaxKind) -> Self {
         Self(kind as u16)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContextualKeyword {
+    Record,
+    Sealed,
+    Permits,
+    Yield,
+    Var,
+    When,
+}
+
+impl ContextualKeyword {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ContextualKeyword::Record => "record",
+            ContextualKeyword::Sealed => "sealed",
+            ContextualKeyword::Permits => "permits",
+            ContextualKeyword::Yield => "yield",
+            ContextualKeyword::Var => "var",
+            ContextualKeyword::When => "when",
+        }
     }
 }
