@@ -245,3 +245,18 @@ parser_snapshot!(
     parse_recovery_compact_constructor_like_in_class,
     r#"class A { A {} }"#
 );
+
+parser_snapshot!(
+    parse_class_with_type_parameters,
+    r#"public class A<A, B> {}"#
+);
+
+parser_snapshot!(
+    parse_interface_with_type_parameters,
+    r#"public interface A<T, U> {}"#
+);
+
+parser_snapshot!(
+    parse_record_with_type_parameters,
+    r#"public record R<T, U>(T x, U y) {}"#
+);
