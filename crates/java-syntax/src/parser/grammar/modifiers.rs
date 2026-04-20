@@ -1,6 +1,6 @@
 use crate::{
     kinds::SyntaxKind::*,
-    parser::{Parser, grammar::names::qualified_name},
+    parser::{ExpectedConstruct, Parser, grammar::names::qualified_name},
     tokenset,
 };
 
@@ -112,13 +112,21 @@ fn array_initializer(p: &mut Parser) {
     m.complete(p, ARRAY_INITIALIZER);
 }
 
-pub fn expression(p: &mut Parser) {
-    // TODO: make the expression parser JLS compactable
+pub fn expression(p: &mut Parser) -> Result<(), ()> {
     let m = p.start();
+    let start_pos = p.pos();
 
+    // TODO: parse java expressions
     while !p.is_at_end() && !p.at(COMMA) && !p.at(SEMICOLON) && !p.at(R_PAREN) && !p.at(R_BRACE) {
         p.bump();
     }
 
-    m.complete(p, ERROR);
+    if p.pos() == start_pos {
+        p.error_expected_construct(ExpectedConstruct::Expression);
+        m.complete(p, ERROR);
+        Err(())
+    } else {
+        m.complete(p, EXPRESSION);
+        Ok(())
+    }
 }

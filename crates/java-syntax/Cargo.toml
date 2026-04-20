@@ -8,6 +8,7 @@ publish = false
 unicode_categories = { workspace = true }
 rowan = { workspace = true }
 smallvec = { workspace = true }
+stacksafe = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }

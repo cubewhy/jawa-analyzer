@@ -87,3 +87,31 @@ pub fn recover_type_bound(p: &mut Parser) {
 pub fn recover_type_argument(p: &mut Parser) {
     recover_until(p, &[COMMA, GREATER]);
 }
+
+pub fn recover_block_statement(p: &mut Parser) {
+    // TODO: recover contextual keyword like var, yield, record
+    recover_until_or_eat(
+        p,
+        &[
+            SEMICOLON,
+            R_BRACE,
+            L_BRACE,
+            IF_KW,
+            WHILE_KW,
+            DO_KW,
+            FOR_KW,
+            TRY_KW,
+            SWITCH_KW,
+            SYNCHRONIZED_KW,
+            RETURN_KW,
+            THROW_KW,
+            BREAK_KW,
+            CONTINUE_KW,
+            ASSERT_KW,
+            CLASS_KW,
+            INTERFACE_KW,
+            ENUM_KW,
+        ],
+        SEMICOLON,
+    );
+}
