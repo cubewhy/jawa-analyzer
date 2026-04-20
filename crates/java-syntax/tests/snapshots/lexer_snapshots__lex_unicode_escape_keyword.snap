@@ -5,7 +5,7 @@ expression: out
 SOURCE:
 \u0070ublic class Test {}
 TOKENS:
-PUBLIC_KW "public"
+PUBLIC_KW "\\u0070ublic"
 WHITESPACE " "
 CLASS_KW "class"
 WHITESPACE " "

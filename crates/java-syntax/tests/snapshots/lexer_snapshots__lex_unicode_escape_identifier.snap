@@ -7,7 +7,7 @@ int my\u005Fvar = 1;
 TOKENS:
 INT_KW "int"
 WHITESPACE " "
-IDENTIFIER "my_var"
+IDENTIFIER "my\\u005Fvar"
 WHITESPACE " "
 EQUAL "="
 WHITESPACE " "

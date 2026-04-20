@@ -7,7 +7,7 @@ char \uuuu0061 = 'a';
 TOKENS:
 CHAR_KW "char"
 WHITESPACE " "
-IDENTIFIER "a"
+IDENTIFIER "\\uuuu0061"
 WHITESPACE " "
 EQUAL "="
 WHITESPACE " "

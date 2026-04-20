@@ -6,7 +6,7 @@ SOURCE:
 // hidden comment \u000A int x = 1;
 TOKENS:
 LINE_COMMENT "// hidden comment "
-WHITESPACE "\n "
+WHITESPACE "\\u000A "
 INT_KW "int"
 WHITESPACE " "
 IDENTIFIER "x"

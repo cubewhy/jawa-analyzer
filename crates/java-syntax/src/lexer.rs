@@ -858,7 +858,7 @@ impl<'a> Lexer<'a> {
     fn push_token(&mut self, token_type: SyntaxKind) {
         self.tokens.push(Token::new(
             token_type,
-            self.reader.current_token_lexeme(),
+            self.reader.current_token_lexeme_raw(),
             self.reader.start(),
         ));
     }
