@@ -9,9 +9,14 @@ pub fn argument_list(p: &mut Parser) {
     p.expect(L_PAREN);
 
     if !p.at(R_PAREN) {
-        expression(p);
-        while p.eat(COMMA) {
-            expression(p);
+        loop {
+            if expression(p).is_err() {
+                recover_parameter(p);
+            }
+
+            if !p.eat(COMMA) {
+                break;
+            }
         }
     }
 
