@@ -272,8 +272,6 @@ fn interface_body(p: &mut Parser) {
 pub fn variable_declarator_list(p: &mut Parser) -> Result<(), ()> {
     let m = p.start();
 
-    if type_(p).is_err() {}
-
     if variable_declarator(p).is_err() {
         m.complete(p, VARIABLE_DECLARATOR_LIST);
         return Err(());
