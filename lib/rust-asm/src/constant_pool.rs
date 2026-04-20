@@ -421,7 +421,7 @@ impl ConstantPoolBuilder {
             return *index;
         }
         let reference_index = match handle.reference_kind {
-            1 | 2 | 3 | 4 => self.field_ref(&handle.owner, &handle.name, &handle.descriptor),
+            1..=4 => self.field_ref(&handle.owner, &handle.name, &handle.descriptor),
             9 => self.interface_method_ref(&handle.owner, &handle.name, &handle.descriptor),
             _ => self.method_ref(&handle.owner, &handle.name, &handle.descriptor),
         };

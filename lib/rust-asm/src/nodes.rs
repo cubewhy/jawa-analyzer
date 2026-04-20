@@ -69,6 +69,12 @@ pub struct ClassNode {
     pub module: Option<ModuleNode>,
 }
 
+impl Default for ClassNode {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ClassNode {
     pub fn new() -> Self {
         Self {
