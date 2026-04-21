@@ -130,6 +130,9 @@ fn do_statement(p: &mut Parser) {
     m.complete(p, DO_STMT);
 }
 
+/// SynchronizedStatement:
+///   synchronized ( Expression ) Block
+///
 /// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.19
 fn synchronized_statement(p: &mut Parser) {
     let m = p.start();
@@ -153,7 +156,11 @@ fn synchronized_statement(p: &mut Parser) {
     m.complete(p, SYNCHRONIZED_STMT);
 }
 
-/// https://docs.oracle.com/javase/specs/jls/se8/html/jls-14.html#jls-14.10
+/// AssertStatement:
+///   assert Expression ;
+///   assert Expression : Expression ;
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.10
 fn assert_statement(p: &mut Parser) {
     // assert <condition expr> [: <msg expr>];
     let m = p.start();
@@ -176,6 +183,13 @@ fn assert_statement(p: &mut Parser) {
     m.complete(p, ASSERT_STMT);
 }
 
+/// WhileStatement:
+///   while ( Expression ) Statement
+///
+/// WhileStatementNoShortIf:
+///   while ( Expression ) StatementNoShortIf
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.12
 #[stacksafe]
 fn while_statement(p: &mut Parser) {
     let m = p.start();
@@ -194,6 +208,16 @@ fn while_statement(p: &mut Parser) {
     m.complete(p, WHILE_STMT);
 }
 
+/// IfThenStatement:
+///   if ( Expression ) Statement
+///
+/// IfThenElseStatement:
+///   if ( Expression ) StatementNoShortIf else Statement
+///
+/// IfThenElseStatementNoShortIf:
+///   if ( Expression ) StatementNoShortIf else StatementNoShortIf
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.9
 #[stacksafe]
 fn if_statement(p: &mut Parser) {
     let m = p.start();
@@ -238,6 +262,19 @@ fn parenthesized_expression(p: &mut Parser) {
     m.complete(p, PARENTHESIZED_EXPR);
 }
 
+/// ExpressionStatement:
+///   StatementExpression ;
+///
+/// StatementExpression:
+///   Assignment
+///   PreIncrementExpression
+///   PreDecrementExpression
+///   PostIncrementExpression
+///   PostDecrementExpression
+///   MethodInvocation
+///   ClassInstanceCreationExpression
+///
+/// docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.8
 fn expression_statement(p: &mut Parser) {
     let m = p.start();
 
@@ -252,12 +289,20 @@ fn expression_statement(p: &mut Parser) {
     m.complete(p, EXPRESSION_STMT);
 }
 
+/// EmptyStatement:
+///   ;
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.8
 fn empty_statement(p: &mut Parser) {
     let m = p.start();
     p.expect(SEMICOLON);
     m.complete(p, EMPTY_STMT);
 }
 
+/// YieldStatement:
+///   yield Expression ;
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.21
 fn yield_statement(p: &mut Parser) {
     let m = p.start();
     p.expect_contextual_kw(ContextualKeyword::Yield);
@@ -272,6 +317,10 @@ fn yield_statement(p: &mut Parser) {
     m.complete(p, YIELD_STMT);
 }
 
+/// ReturnStatement:
+///   return [Expression] ;
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.17
 fn return_statement(p: &mut Parser) {
     let m = p.start();
     p.expect(RETURN_KW);
@@ -286,6 +335,10 @@ fn return_statement(p: &mut Parser) {
     m.complete(p, RETURN_STMT);
 }
 
+/// ThrowStatement:
+///   throw Expression ;
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.18
 fn throw_statement(p: &mut Parser) {
     // throw <exception>;
     // exception could be an expr
@@ -302,6 +355,10 @@ fn throw_statement(p: &mut Parser) {
     m.complete(p, THROW_STMT);
 }
 
+/// BreakStatement:
+///   break [Identifier] ;
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.15
 fn break_statement(p: &mut Parser) {
     // break [label];
     let m = p.start();
@@ -311,6 +368,10 @@ fn break_statement(p: &mut Parser) {
     m.complete(p, BREAK_STMT);
 }
 
+/// ContinueStatement:
+///   continue [Identifier] ;
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.16
 fn continue_statement(p: &mut Parser) {
     // continue [label];
     let m = p.start();
