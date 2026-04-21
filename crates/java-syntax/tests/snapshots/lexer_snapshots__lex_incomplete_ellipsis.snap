@@ -1,0 +1,14 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+..
+
+TOKENS:
+DOT "."
+DOT "."
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>

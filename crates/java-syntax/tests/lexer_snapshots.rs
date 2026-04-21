@@ -171,3 +171,10 @@ lexer_snapshot!(
         """
     "#}
 );
+
+lexer_snapshot!(
+    lex_incomplete_ellipsis,
+    indoc! {r#"
+        ..
+    "#}
+);
