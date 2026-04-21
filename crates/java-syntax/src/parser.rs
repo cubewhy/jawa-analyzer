@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 use rowan::{GreenNode, NodeOrToken};
 
 use crate::{
@@ -228,6 +230,18 @@ impl<'a> Parser<'a> {
 
     pub(crate) fn at_set(&self, set: TokenSet) -> bool {
         self.current().is_some_and(|kind| set.contains(kind as u16))
+    }
+
+    pub fn at_contextual_kw_set(&self, set: TokenSet) -> bool {
+        if self.at(IDENTIFIER) {
+            let Some(text) = self.current_lexeme() else {
+                return false;
+            };
+            if let Ok(kw) = ContextualKeyword::from_str(text) {
+                return set.contains(kw as u16);
+            }
+        }
+        false
     }
 
     pub(crate) fn eat(&mut self, kind: SyntaxKind) -> bool {

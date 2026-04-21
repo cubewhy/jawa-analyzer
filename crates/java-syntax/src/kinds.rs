@@ -1,3 +1,5 @@
+use std::str::FromStr;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(u16)]
 #[allow(non_camel_case_types)]
@@ -244,9 +246,11 @@ impl From<SyntaxKind> for rowan::SyntaxKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u16)]
 pub enum ContextualKeyword {
     Record,
     Sealed,
+    NonSealed,
     Permits,
     Yield,
     Var,
@@ -258,10 +262,27 @@ impl ContextualKeyword {
         match self {
             ContextualKeyword::Record => "record",
             ContextualKeyword::Sealed => "sealed",
+            ContextualKeyword::NonSealed => "non-sealed",
             ContextualKeyword::Permits => "permits",
             ContextualKeyword::Yield => "yield",
             ContextualKeyword::Var => "var",
             ContextualKeyword::When => "when",
+        }
+    }
+}
+
+impl FromStr for ContextualKeyword {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "sealed" => Ok(Self::Sealed),
+            "non-sealed" => Ok(Self::NonSealed),
+            "yield" => Ok(Self::Yield),
+            "record" => Ok(Self::Record),
+            "var" => Ok(Self::Var),
+            "permits" => Ok(Self::Permits),
+            _ => Err(()),
         }
     }
 }

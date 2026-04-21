@@ -1,4 +1,5 @@
 use crate::{
+    ContextualKeyword,
     grammar::expr::element_value,
     kinds::SyntaxKind::*,
     parser::{Parser, grammar::names::qualified_name},
@@ -18,6 +19,14 @@ pub fn modifiers(p: &mut Parser) {
             STATIC_KW,
             ABSTRACT_KW,
             DEFAULT_KW,
+            NATIVE_KW,
+            SYNCHRONIZED_KW,
+            TRANSIENT_KW,
+            VOLATILE_KW,
+            STRICTFP_KW,
+        ]) || p.at_contextual_kw_set(tokenset![
+            ContextualKeyword::Sealed,
+            ContextualKeyword::NonSealed
         ]) {
             p.bump();
         } else if p.at(AT) && p.nth(1) != Some(INTERFACE_KW) {
