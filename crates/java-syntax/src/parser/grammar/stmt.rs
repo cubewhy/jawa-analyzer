@@ -1,6 +1,5 @@
 use stacksafe::stacksafe;
 
-use crate::ContextualKeyword;
 use crate::grammar::decl::{
     class_decl_rest, enum_decl_rest, interface_decl_rest, record_decl_rest,
     variable_declarator_list, variable_declarator_no_init_expr,
@@ -13,6 +12,7 @@ use crate::grammar::modifiers::variable_modifier;
 use crate::grammar::types::{dimensions, type_};
 use crate::kinds::SyntaxKind::*;
 use crate::parser::{ExpectedConstruct, Parser};
+use crate::{ContextualKeyword, SyntaxKind};
 
 pub fn method_body_or_semicolon(p: &mut Parser) {
     if p.at(L_BRACE) {
@@ -102,65 +102,59 @@ fn statement(p: &mut Parser) {
 /// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.14
 fn for_statement(p: &mut Parser) {
     let m = p.start();
-
     p.expect(FOR_KW);
     p.expect(L_PAREN);
 
-    let node_kind = if is_basic_for_stmt(p) {
-        basic_for_stmt(p).ok();
-        FOR_STMT
-    } else if is_enhanced_for_stmt(p) {
-        enhanced_for_stmt(p).ok();
-        ENHANCED_FOR_STMT
-    } else {
-        recover_until(p, &[R_PAREN, L_BRACE]);
-        FOR_STMT
+    let separator = scan_for_separator(p);
+
+    let node_kind = match separator {
+        Some(SEMICOLON) => {
+            basic_for_stmt(p).ok();
+            FOR_STMT
+        }
+        Some(COLON) => {
+            enhanced_for_stmt(p).ok();
+            ENHANCED_FOR_STMT
+        }
+        _ => {
+            recover_until(p, &[R_PAREN, L_BRACE]);
+            FOR_STMT
+        }
     };
 
     if !p.expect(R_PAREN) {
         recover_block_statement(p);
     }
     statement(p);
-
     m.complete(p, node_kind);
 }
 
-fn is_basic_for_stmt(p: &mut Parser) -> bool {
-    let ckpt = p.checkpoint();
-    let ok = basic_for_stmt(p).is_ok();
-    p.rewind(ckpt);
-    ok
-}
-
-fn is_enhanced_for_stmt(p: &mut Parser) -> bool {
-    let ckpt = p.checkpoint();
-    let mut paren_depth = 0;
-    let mut found_colon = false;
-
-    while !p.at(EOF) && !p.at(R_PAREN) {
-        if p.at(L_PAREN) {
-            paren_depth += 1;
-        } else if p.at(R_PAREN) {
-            paren_depth -= 1;
-        }
-
-        if paren_depth == 0 {
-            if p.at(SEMICOLON) {
-                // got semicolon, this must be the basic for statement
-                p.rewind(ckpt);
-                return false;
+fn scan_for_separator(p: &mut Parser) -> Option<SyntaxKind> {
+    fn inner(p: &mut Parser) -> Option<SyntaxKind> {
+        let mut paren_depth = 0;
+        while !p.at(EOF) && !p.at(R_PAREN) {
+            if p.at(L_PAREN) {
+                paren_depth += 1;
+            } else if p.at(R_PAREN) {
+                paren_depth -= 1;
+            } else if paren_depth == 0 {
+                if p.at(SEMICOLON) {
+                    return Some(SEMICOLON);
+                }
+                if p.at(COLON) {
+                    return Some(COLON);
+                }
             }
-
-            if p.at(COLON) {
-                found_colon = true;
-                break;
-            }
+            p.bump();
         }
-        p.bump();
+        None
     }
 
+    let ckpt = p.checkpoint();
+    let sep_type = inner(p);
     p.rewind(ckpt);
-    found_colon
+
+    sep_type
 }
 
 /// EnhancedForStatement:
