@@ -55,47 +55,42 @@ fn block_statement(p: &mut Parser) {
     } else if p.at_contextual_kw(ContextualKeyword::Record) {
         let m = p.start();
         record_decl_rest(p, m);
-    } else if is_local_variable_declaration(p) {
-        local_variable_declaration_statement(p);
-    } else {
-        statement(p);
     }
+
+    let cp = p.checkpoint();
+    // try local variable decl
+    if local_variable_declaration_statement(p).is_ok() {
+        return;
+    }
+    p.rewind(cp);
+
+    // not local variable decl, parse statement
+    statement(p);
 }
 
 #[stacksafe]
 fn statement(p: &mut Parser) {
-    if p.at(L_BRACE) {
-        block(p);
-    } else if p.at(SEMICOLON) {
-        empty_statement(p);
-    } else if p.at(IF_KW) {
-        if_statement(p);
-    } else if p.at(WHILE_KW) {
-        while_statement(p);
-    } else if p.at(DO_KW) {
-        do_statement(p);
-    } else if p.at(FOR_KW) {
-        for_statement(p);
-    } else if p.at(TRY_KW) {
-        try_statement(p);
-    // } else if p.at(SWITCH_KW) {
-    //     switch_statement(p);
-    } else if p.at(SYNCHRONIZED_KW) {
-        synchronized_statement(p);
-    } else if p.at(RETURN_KW) {
-        return_statement(p);
-    } else if p.at(THROW_KW) {
-        throw_statement(p);
-    } else if p.at(BREAK_KW) {
-        break_statement(p);
-    } else if p.at(CONTINUE_KW) {
-        continue_statement(p);
-    } else if p.at(ASSERT_KW) {
-        assert_statement(p);
-    } else if p.at_contextual_kw(ContextualKeyword::Yield) {
-        yield_statement(p);
-    } else {
-        expression_statement(p);
+    match p.current() {
+        Some(L_BRACE) => block(p),
+        Some(SEMICOLON) => empty_statement(p),
+        Some(IF_KW) => if_statement(p),
+        Some(WHILE_KW) => while_statement(p),
+        Some(DO_KW) => do_statement(p),
+        Some(FOR_KW) => for_statement(p),
+        Some(TRY_KW) => try_statement(p),
+        Some(SYNCHRONIZED_KW) => synchronized_statement(p),
+        Some(RETURN_KW) => return_statement(p),
+        Some(THROW_KW) => throw_statement(p),
+        Some(BREAK_KW) => break_statement(p),
+        Some(CONTINUE_KW) => continue_statement(p),
+        Some(ASSERT_KW) => assert_statement(p),
+        _ => {
+            if p.at_contextual_kw(ContextualKeyword::Yield) {
+                yield_statement(p);
+            } else {
+                expression_statement(p);
+            }
+        }
     }
 }
 
@@ -679,17 +674,19 @@ fn is_local_variable_declaration(p: &mut Parser) -> bool {
     ok
 }
 
-fn local_variable_declaration_statement(p: &mut Parser) {
+fn local_variable_declaration_statement(p: &mut Parser) -> Result<(), ()> {
     let m = p.start();
 
     if local_variable_declaration(p).is_err() {
         recover_block_statement(p);
         m.complete(p, ERROR);
-        return;
+        return Err(());
     }
 
     p.expect(SEMICOLON);
     m.complete(p, LOCAL_VARIABLE_DECLARATION_STMT);
+
+    Ok(())
 }
 
 fn local_variable_declaration(p: &mut Parser) -> Result<(), ()> {
