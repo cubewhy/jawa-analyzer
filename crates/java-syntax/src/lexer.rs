@@ -613,6 +613,7 @@ impl<'a> Lexer<'a> {
             "new" => SyntaxKind::NEW_KW,
             "assert" => SyntaxKind::ASSERT_KW,
             "switch" => SyntaxKind::SWITCH_KW,
+            "case" => SyntaxKind::CASE_KW,
             "default" => SyntaxKind::DEFAULT_KW,
             "synchronized" => SyntaxKind::SYNCHRONIZED_KW,
             "do" => SyntaxKind::DO_KW,

@@ -91,6 +91,7 @@ pub enum SyntaxKind {
     NEW_KW,          // new
     ASSERT_KW,       // assert
     SWITCH_KW,       // switch
+    CASE_KW,         // case
     DEFAULT_KW,      // default
     SYNCHRONIZED_KW, // synchronized
     DO_KW,           // do
