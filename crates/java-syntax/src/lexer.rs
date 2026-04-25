@@ -650,6 +650,8 @@ impl<'a> Lexer<'a> {
             "goto" => SyntaxKind::GOTO_KW,
             "const" => SyntaxKind::CONST_KW,
 
+            "_" => SyntaxKind::UNDERSCORE,
+
             _ => SyntaxKind::IDENTIFIER,
         };
 

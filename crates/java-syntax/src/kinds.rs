@@ -64,6 +64,7 @@ pub enum SyntaxKind {
     COLON,          // :
     ELLIPSIS,       // ...
     TEXT_BLOCK,     // """ """
+    UNDERSCORE,     // _
 
     // Keywords
     PACKAGE_KW,      // package

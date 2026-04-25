@@ -1,0 +1,16 @@
+---
+source: crates/java-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+String _;
+
+TOKENS:
+IDENTIFIER "String"
+WHITESPACE " "
+UNDERSCORE "_"
+SEMICOLON ";"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>

@@ -178,3 +178,10 @@ lexer_snapshot!(
         ..
     "#}
 );
+
+lexer_snapshot!(
+    lex_underscope,
+    indoc! {r#"
+        String _;
+    "#}
+);
