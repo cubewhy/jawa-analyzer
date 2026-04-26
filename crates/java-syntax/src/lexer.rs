@@ -166,6 +166,7 @@ impl<'a> Lexer<'a> {
                     '&' => self.handle_and(),
                     '%' => self.handle_mod(),
                     '!' => self.handle_bang(),
+                    '~' => self.push_token(SyntaxKind::TILDE),
 
                     '\x1A' => {
                         // https://docs.oracle.com/javase/specs/jls/se17/html/jls-3.html#jls-3.5

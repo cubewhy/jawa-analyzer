@@ -185,3 +185,10 @@ lexer_snapshot!(
         String _;
     "#}
 );
+
+lexer_snapshot!(
+    lex_tilde,
+    indoc! {r#"
+        ~1
+    "#}
+);

@@ -46,6 +46,7 @@ pub enum SyntaxKind {
     BIT_AND,        // &
     AND_EQUAL,      // &=
     NOT,            // !
+    TILDE,          // ~
     MODULO,         //
     CARET,          // ^
     DIVIDE_EQUAL,   // /=
