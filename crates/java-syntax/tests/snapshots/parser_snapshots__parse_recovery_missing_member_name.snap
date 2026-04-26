@@ -41,4 +41,4 @@ ROOT
       WHITESPACE " "
       R_BRACE "}"
 errors:
-  ParseError { kind: ExpectedToken { expected: [IDENTIFIER], found: Some(SEMICOLON) }, pos: 4 }
+  ParseError { kind: ExpectedToken { expected: [IDENTIFIER, UNDERSCORE], found: Some(SEMICOLON) }, pos: 4 }

@@ -1,0 +1,197 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    public static void main(String[] args) {
+        Test t = new Test();
+        synchronized(t) {
+            synchronized(t) {
+                System.out.println("made it!");
+            }
+        }
+    }
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+PUBLIC_KW "public"
+WHITESPACE " "
+STATIC_KW "static"
+WHITESPACE " "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "main"
+L_PAREN "("
+IDENTIFIER "String"
+L_BRACKET "["
+R_BRACKET "]"
+WHITESPACE " "
+IDENTIFIER "args"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+IDENTIFIER "Test"
+WHITESPACE " "
+IDENTIFIER "t"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+NEW_KW "new"
+WHITESPACE " "
+IDENTIFIER "Test"
+L_PAREN "("
+R_PAREN ")"
+SEMICOLON ";"
+WHITESPACE "\n        "
+SYNCHRONIZED_KW "synchronized"
+L_PAREN "("
+IDENTIFIER "t"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n            "
+SYNCHRONIZED_KW "synchronized"
+L_PAREN "("
+IDENTIFIER "t"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n                "
+IDENTIFIER "System"
+DOT "."
+IDENTIFIER "out"
+DOT "."
+IDENTIFIER "println"
+L_PAREN "("
+STRING_LIT "\"made it!\""
+R_PAREN ")"
+SEMICOLON ";"
+WHITESPACE "\n            "
+R_BRACE "}"
+WHITESPACE "\n        "
+R_BRACE "}"
+WHITESPACE "\n    "
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT
+  CLASS_DECL
+    CLASS_KW "class"
+    WHITESPACE " "
+    IDENTIFIER "Test"
+    CLASS_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      METHOD_DECL
+        MODIFIER_LIST
+          WHITESPACE "\n    "
+          PUBLIC_KW "public"
+          WHITESPACE " "
+          STATIC_KW "static"
+        WHITESPACE " "
+        VOID_KW "void"
+        WHITESPACE " "
+        IDENTIFIER "main"
+        FORMAL_PARAMETERS
+          L_PAREN "("
+          FORMAL_PARAMETER
+            TYPE
+              IDENTIFIER "String"
+              DIMENSIONS
+                L_BRACKET "["
+                R_BRACKET "]"
+            WHITESPACE " "
+            IDENTIFIER "args"
+          R_PAREN ")"
+        BLOCK
+          WHITESPACE " "
+          L_BRACE "{"
+          LOCAL_VARIABLE_DECLARATION_STMT
+            LOCAL_VARIABLE_DECLARATION
+              TYPE
+                WHITESPACE "\n        "
+                IDENTIFIER "Test"
+              VARIABLE_DECLARATOR_LIST
+                VARIABLE_DECLARATOR
+                  WHITESPACE " "
+                  IDENTIFIER "t"
+                  WHITESPACE " "
+                  EQUAL "="
+                  EXPRESSION
+                    WHITESPACE " "
+                    NEW_KW "new"
+                    WHITESPACE " "
+                    IDENTIFIER "Test"
+                    L_PAREN "("
+            MISSING
+          ERROR
+            ERROR
+            R_PAREN ")"
+            SEMICOLON ";"
+          SYNCHRONIZED_STMT
+            WHITESPACE "\n        "
+            SYNCHRONIZED_KW "synchronized"
+            PARENTHESIZED_EXPR
+              L_PAREN "("
+              EXPRESSION
+                IDENTIFIER "t"
+              R_PAREN ")"
+            BLOCK
+              WHITESPACE " "
+              L_BRACE "{"
+              SYNCHRONIZED_STMT
+                WHITESPACE "\n            "
+                SYNCHRONIZED_KW "synchronized"
+                PARENTHESIZED_EXPR
+                  L_PAREN "("
+                  EXPRESSION
+                    IDENTIFIER "t"
+                  R_PAREN ")"
+                BLOCK
+                  WHITESPACE " "
+                  L_BRACE "{"
+                  EXPRESSION_STMT
+                    EXPRESSION
+                      WHITESPACE "\n                "
+                      IDENTIFIER "System"
+                      DOT "."
+                      IDENTIFIER "out"
+                      DOT "."
+                      IDENTIFIER "println"
+                      L_PAREN "("
+                      STRING_LIT "\"made it!\""
+                    MISSING
+                  ERROR
+                    ERROR
+                    R_PAREN ")"
+                    SEMICOLON ";"
+                  WHITESPACE "\n            "
+                  R_BRACE "}"
+              WHITESPACE "\n        "
+              R_BRACE "}"
+          WHITESPACE "\n    "
+          R_BRACE "}"
+      WHITESPACE "\n"
+      R_BRACE "}"
+  WHITESPACE "\n"
+errors:
+  ParseError { kind: ExpectedToken { expected: [SEMICOLON], found: Some(R_PAREN) }, pos: 20 }
+  ParseError { kind: ExpectedConstruct(Expression), pos: 20 }
+  ParseError { kind: ExpectedConstruct(Statement), pos: 20 }
+  ParseError { kind: ExpectedToken { expected: [SEMICOLON], found: Some(R_PAREN) }, pos: 39 }
+  ParseError { kind: ExpectedConstruct(Expression), pos: 39 }
+  ParseError { kind: ExpectedConstruct(Statement), pos: 39 }
