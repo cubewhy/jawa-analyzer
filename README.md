@@ -1,6 +1,6 @@
-# Jawa-analyzer
+# Caffeine-ls
 
-[The old LSP (tree-sitter based)](https://github.com/cubewhy/jawa-analyzer/tree/legacy)
+[The old LSP (tree-sitter based)](https://github.com/cubewhy/caffeine-ls/tree/legacy)
 
 The next-gen LSP for JVM family languages
 
