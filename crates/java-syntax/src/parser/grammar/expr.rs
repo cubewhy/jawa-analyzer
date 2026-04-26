@@ -1,4 +1,5 @@
 use crate::{
+    SyntaxKind,
     grammar::{
         error_recover::{recover_parameter, recover_until},
         modifiers::annotation,
@@ -66,6 +67,25 @@ pub fn expression(p: &mut Parser) -> Result<(), ()> {
         m.complete(p, EXPRESSION);
         Ok(())
     }
+}
+
+pub fn is_expression_start(kind: SyntaxKind) -> bool {
+    matches!(
+        kind,
+        IDENTIFIER
+            | NUMBER_LIT
+            | STRING_LIT
+            | TRUE_LIT
+            | FALSE_LIT
+            | NULL_LIT
+            | THIS_KW
+            | SUPER_KW
+            | NEW_KW
+            | NOT
+            | TILDE
+            | PLUS
+            | MINUS
+    )
 }
 
 pub fn element_value(p: &mut Parser) {

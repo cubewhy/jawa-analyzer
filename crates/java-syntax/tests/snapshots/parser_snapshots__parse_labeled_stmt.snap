@@ -1,0 +1,123 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    void func() {
+        label: {
+            func();
+        }
+
+        labelNoShortIf: func();
+    }
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "func"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+IDENTIFIER "label"
+COLON ":"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n            "
+IDENTIFIER "func"
+L_PAREN "("
+R_PAREN ")"
+SEMICOLON ";"
+WHITESPACE "\n        "
+R_BRACE "}"
+WHITESPACE "\n\n        "
+IDENTIFIER "labelNoShortIf"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "func"
+L_PAREN "("
+R_PAREN ")"
+SEMICOLON ";"
+WHITESPACE "\n    "
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT
+  CLASS_DECL
+    CLASS_KW "class"
+    WHITESPACE " "
+    IDENTIFIER "Test"
+    CLASS_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      METHOD_DECL
+        WHITESPACE "\n    "
+        VOID_KW "void"
+        WHITESPACE " "
+        IDENTIFIER "func"
+        FORMAL_PARAMETERS
+          L_PAREN "("
+          R_PAREN ")"
+        BLOCK
+          WHITESPACE " "
+          L_BRACE "{"
+          LABELED_STMT
+            WHITESPACE "\n        "
+            IDENTIFIER "label"
+            COLON ":"
+            BLOCK
+              WHITESPACE " "
+              L_BRACE "{"
+              EXPRESSION_STMT
+                EXPRESSION
+                  WHITESPACE "\n            "
+                  IDENTIFIER "func"
+                  L_PAREN "("
+                MISSING
+              ERROR
+                ERROR
+                R_PAREN ")"
+                SEMICOLON ";"
+              WHITESPACE "\n        "
+              R_BRACE "}"
+          LABELED_STMT
+            WHITESPACE "\n\n        "
+            IDENTIFIER "labelNoShortIf"
+            COLON ":"
+            EXPRESSION_STMT
+              EXPRESSION
+                WHITESPACE " "
+                IDENTIFIER "func"
+                L_PAREN "("
+              MISSING
+          ERROR
+            ERROR
+            R_PAREN ")"
+            SEMICOLON ";"
+          WHITESPACE "\n    "
+          R_BRACE "}"
+      WHITESPACE "\n"
+      R_BRACE "}"
+  WHITESPACE "\n"
+errors:
+  ParseError { kind: ExpectedToken { expected: [SEMICOLON], found: Some(R_PAREN) }, pos: 13 }
+  ParseError { kind: ExpectedConstruct(Expression), pos: 13 }
+  ParseError { kind: ExpectedConstruct(Statement), pos: 13 }
+  ParseError { kind: ExpectedToken { expected: [SEMICOLON], found: Some(R_PAREN) }, pos: 20 }
+  ParseError { kind: ExpectedConstruct(Expression), pos: 20 }
+  ParseError { kind: ExpectedConstruct(Statement), pos: 20 }

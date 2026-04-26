@@ -252,6 +252,13 @@ impl<'a> Parser<'a> {
             false
         }
     }
+
+    pub(crate) fn matches(&self, kinds: &[SyntaxKind]) -> bool {
+        kinds
+            .iter()
+            .enumerate()
+            .all(|(i, &kind)| self.nth(i) == Some(kind))
+    }
 }
 
 pub fn parse(input: &str) -> Parse {

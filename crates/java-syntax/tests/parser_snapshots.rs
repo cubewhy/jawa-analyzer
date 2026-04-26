@@ -511,3 +511,18 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_labeled_stmt,
+    indoc! {r#"
+        class Test {
+            void func() {
+                label: {
+                    func();
+                }
+
+                labelNoShortIf: func();
+            }
+        }
+    "#}
+);

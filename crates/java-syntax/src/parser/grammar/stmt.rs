@@ -9,7 +9,7 @@ use crate::grammar::error_recover::{
     recover_until_or_eat,
 };
 use crate::grammar::expr::{
-    case_pattern_or_constant, expression, expression_list, variable_access,
+    case_pattern_or_constant, expression, expression_list, is_expression_start, variable_access,
 };
 use crate::grammar::modifiers::variable_modifier;
 use crate::grammar::types::{dimensions, type_};
@@ -89,13 +89,37 @@ fn statement(p: &mut Parser) {
         Some(CONTINUE_KW) => continue_statement(p),
         Some(ASSERT_KW) => assert_statement(p),
         _ => {
-            if p.at_contextual_kw(ContextualKeyword::Yield) {
+            if is_at_yield_stmt_start(p) {
                 yield_statement(p);
+            } else if is_at_labeled_stmt_start(p) {
+                labeled_statement(p);
             } else {
                 expression_statement(p);
             }
         }
     }
+}
+
+fn is_at_labeled_stmt_start(p: &Parser) -> bool {
+    p.matches(&[IDENTIFIER, COLON])
+}
+
+/// LabeledStatement:
+///   Identifier : Statement
+///
+/// LabeledStatementNoShortIf:
+///   Identifier : StatementNoShortIf
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-14.html#jls-14.7
+fn labeled_statement(p: &mut Parser) {
+    let m = p.start();
+
+    p.expect(IDENTIFIER);
+    p.expect(COLON);
+
+    statement(p);
+
+    m.complete(p, LABELED_STMT);
 }
 
 /// SwitchStatement:
@@ -766,6 +790,19 @@ fn yield_statement(p: &mut Parser) {
 
     p.expect(SEMICOLON);
     m.complete(p, YIELD_STMT);
+}
+
+fn is_at_yield_stmt_start(p: &Parser) -> bool {
+    if !p.at_contextual_kw(ContextualKeyword::Yield) {
+        return false;
+    }
+
+    match p.nth(1) {
+        Some(L_PAREN) => false,
+        Some(EQUAL) => false,
+        Some(kind) => is_expression_start(kind),
+        None => false,
+    }
 }
 
 /// ReturnStatement:
