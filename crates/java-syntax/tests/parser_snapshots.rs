@@ -482,3 +482,32 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_switch_pattern_case,
+    indoc! {r#"
+        class Test {
+            void func(Object obj) {
+                switch (obj) {
+                    case String s -> System.out.println(s);
+                    case Integer _ -> System.out.println("Integer");
+                    default -> {}
+                }
+            }
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_nested_record_pattern_in_switch,
+    indoc! {r#"
+        class Test {
+            void func(Object obj) {
+                switch (obj) {
+                    case Box(Item(String name), _) -> System.out.println(name);
+                    default -> {}
+                }
+            }
+        }
+    "#}
+);

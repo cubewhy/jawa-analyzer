@@ -1,0 +1,180 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    void func(Object obj) {
+        switch (obj) {
+            case Box(Item(String name), _) -> System.out.println(name);
+            default -> {}
+        }
+    }
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "func"
+L_PAREN "("
+IDENTIFIER "Object"
+WHITESPACE " "
+IDENTIFIER "obj"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+SWITCH_KW "switch"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "obj"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n            "
+CASE_KW "case"
+WHITESPACE " "
+IDENTIFIER "Box"
+L_PAREN "("
+IDENTIFIER "Item"
+L_PAREN "("
+IDENTIFIER "String"
+WHITESPACE " "
+IDENTIFIER "name"
+R_PAREN ")"
+COMMA ","
+WHITESPACE " "
+UNDERSCORE "_"
+R_PAREN ")"
+WHITESPACE " "
+ARROW "->"
+WHITESPACE " "
+IDENTIFIER "System"
+DOT "."
+IDENTIFIER "out"
+DOT "."
+IDENTIFIER "println"
+L_PAREN "("
+IDENTIFIER "name"
+R_PAREN ")"
+SEMICOLON ";"
+WHITESPACE "\n            "
+DEFAULT_KW "default"
+WHITESPACE " "
+ARROW "->"
+WHITESPACE " "
+L_BRACE "{"
+R_BRACE "}"
+WHITESPACE "\n        "
+R_BRACE "}"
+WHITESPACE "\n    "
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT
+  CLASS_DECL
+    CLASS_KW "class"
+    WHITESPACE " "
+    IDENTIFIER "Test"
+    CLASS_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      METHOD_DECL
+        WHITESPACE "\n    "
+        VOID_KW "void"
+        WHITESPACE " "
+        IDENTIFIER "func"
+        FORMAL_PARAMETERS
+          L_PAREN "("
+          FORMAL_PARAMETER
+            TYPE
+              IDENTIFIER "Object"
+            WHITESPACE " "
+            IDENTIFIER "obj"
+          R_PAREN ")"
+        BLOCK
+          WHITESPACE " "
+          L_BRACE "{"
+          SWITCH_STMT
+            WHITESPACE "\n        "
+            SWITCH_KW "switch"
+            WHITESPACE " "
+            L_PAREN "("
+            EXPRESSION
+              IDENTIFIER "obj"
+            R_PAREN ")"
+            SWITCH_BLOCK
+              WHITESPACE " "
+              L_BRACE "{"
+              SWITCH_RULE
+                SWITCH_LABEL
+                  WHITESPACE "\n            "
+                  CASE_KW "case"
+                  RECORD_PATTERN
+                    TYPE
+                      WHITESPACE " "
+                      IDENTIFIER "Box"
+                    L_PAREN "("
+                    RECORD_PATTERN
+                      TYPE
+                        IDENTIFIER "Item"
+                      L_PAREN "("
+                      TYPE_PATTERN
+                        TYPE
+                          IDENTIFIER "String"
+                        WHITESPACE " "
+                        IDENTIFIER "name"
+                      R_PAREN ")"
+                    COMMA ","
+                    MATCH_ALL_PATTERN
+                      WHITESPACE " "
+                      UNDERSCORE "_"
+                    R_PAREN ")"
+                WHITESPACE " "
+                ARROW "->"
+                EXPRESSION_STMT
+                  EXPRESSION
+                    WHITESPACE " "
+                    IDENTIFIER "System"
+                    DOT "."
+                    IDENTIFIER "out"
+                    DOT "."
+                    IDENTIFIER "println"
+                    L_PAREN "("
+                    IDENTIFIER "name"
+                  MISSING
+              MISSING
+              R_PAREN ")"
+              SEMICOLON ";"
+              SWITCH_RULE
+                SWITCH_LABEL
+                  WHITESPACE "\n            "
+                  DEFAULT_KW "default"
+                WHITESPACE " "
+                ARROW "->"
+                BLOCK
+                  WHITESPACE " "
+                  L_BRACE "{"
+                  R_BRACE "}"
+              WHITESPACE "\n        "
+              R_BRACE "}"
+          WHITESPACE "\n    "
+          R_BRACE "}"
+      WHITESPACE "\n"
+      R_BRACE "}"
+  WHITESPACE "\n"
+errors:
+  ParseError { kind: ExpectedToken { expected: [SEMICOLON], found: Some(R_PAREN) }, pos: 34 }
+  ParseError { kind: ExpectedToken { expected: [CASE_KW, DEFAULT_KW], found: Some(R_PAREN) }, pos: 34 }
