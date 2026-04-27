@@ -22,6 +22,10 @@ pub fn dump_events(events: &[Event]) -> String {
         match ev {
             Event::Tombstone => out.push_str("Tombstone\n"),
             Event::AddToken => out.push_str("AddToken\n"),
+            Event::AddVirtualToken { kind, lexeme } => {
+                out.push_str(&format!("AddVirtualToken({kind:?}, {lexeme:?})\n"))
+            }
+            Event::AdvanceSource => out.push_str("AdvanceSource\n"),
             Event::FinishNode => out.push_str("FinishNode\n"),
             Event::Error(err) => out.push_str(&format!("Error({err:?})\n")),
             Event::StartNode {

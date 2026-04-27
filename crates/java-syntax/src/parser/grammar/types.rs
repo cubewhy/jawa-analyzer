@@ -121,6 +121,24 @@ pub fn type_(p: &mut Parser) -> Result<(), ()> {
     reference_type(p)
 }
 
+pub fn expect_gt(p: &mut Parser) {
+    match p.current() {
+        Some(GREATER) => p.bump(),
+
+        Some(RIGHT_SHIFT) => {
+            // >>
+            p.split_token(RIGHT_SHIFT, 1, GREATER);
+        }
+
+        Some(UNSIGNED_RIGHT_SHIFT) => {
+            // >>>
+            p.split_token(RIGHT_SHIFT, 1, RIGHT_SHIFT);
+        }
+
+        _ => p.error_expected(&[GREATER]),
+    }
+}
+
 pub fn type_parameters_opt(p: &mut Parser) {
     if p.at(LESS) {
         type_parameters(p);
@@ -137,7 +155,7 @@ pub fn type_parameters(p: &mut Parser) {
         type_parameter(p);
     }
 
-    p.expect(GREATER);
+    expect_gt(p);
 
     m.complete(p, TYPE_PARAMETERS);
 }
@@ -233,7 +251,7 @@ pub fn type_arguments(p: &mut Parser) {
         }
     }
 
-    p.expect(GREATER);
+    expect_gt(p);
 
     m.complete(p, TYPE_ARGUMENTS);
 }

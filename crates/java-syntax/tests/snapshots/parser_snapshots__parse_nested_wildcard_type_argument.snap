@@ -23,8 +23,7 @@ WHITESPACE " "
 EXTENDS_KW "extends"
 WHITESPACE " "
 IDENTIFIER "Number"
-GREATER ">"
-GREATER ">"
+RIGHT_SHIFT ">>"
 WHITESPACE " "
 IDENTIFIER "xs"
 SEMICOLON ";"
@@ -72,7 +71,7 @@ ROOT
                           QUALIFIED_NAME
                             WHITESPACE " "
                             IDENTIFIER "Number"
-                  GREATER ">"
+                  RIGHT_SHIFT ">"
             GREATER ">"
         VARIABLE_DECLARATOR_LIST
           VARIABLE_DECLARATOR

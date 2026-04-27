@@ -4,13 +4,13 @@ use crate::{lexer::token::Token, parser::Event};
 
 pub struct Sink<'a> {
     tokens: Vec<Token<'a>>,
-    events: Vec<Event>,
+    events: Vec<Event<'a>>,
     builder: GreenNodeBuilder<'static>,
     cursor: usize, // raw token cursor, includes trivia
 }
 
 impl<'a> Sink<'a> {
-    pub fn new(tokens: Vec<Token<'a>>, events: Vec<Event>) -> Self {
+    pub fn new(tokens: Vec<Token<'a>>, events: Vec<Event<'a>>) -> Self {
         Self {
             tokens,
             events,
@@ -60,6 +60,8 @@ impl<'a> Sink<'a> {
                 Event::AddToken => {
                     self.token();
                 }
+                Event::AddVirtualToken { kind, lexeme } => self.builder.token(kind.into(), lexeme),
+                Event::AdvanceSource => self.cursor += 1,
                 Event::Error(_err) => {
                     continue;
                 }

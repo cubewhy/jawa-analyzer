@@ -23,8 +23,7 @@ WHITESPACE " "
 EXTENDS_KW "extends"
 WHITESPACE " "
 IDENTIFIER "Number"
-GREATER ">"
-GREATER ">"
+RIGHT_SHIFT ">>"
 WHITESPACE " "
 IDENTIFIER "xs"
 SEMICOLON ";"
@@ -78,11 +77,12 @@ FinishNode
 FinishNode
 FinishNode
 FinishNode
-AddToken
+AddVirtualToken(RIGHT_SHIFT, ">")
 FinishNode
 FinishNode
 FinishNode
-AddToken
+AddVirtualToken(GREATER, ">")
+AdvanceSource
 FinishNode
 FinishNode
 StartNode(VARIABLE_DECLARATOR_LIST, forward_parent=None)

@@ -80,9 +80,14 @@ impl Parse {
     }
 }
 
-pub enum Event {
+pub enum Event<'a> {
     Tombstone,
     AddToken,
+    AddVirtualToken {
+        kind: SyntaxKind,
+        lexeme: &'a str,
+    },
+    AdvanceSource,
     Error(ParseError),
     StartNode {
         kind: SyntaxKind,
@@ -93,8 +98,9 @@ pub enum Event {
 
 pub struct Parser<'a> {
     source: TokenSource<'a>,
-    pub events: Vec<Event>,
+    pub events: Vec<Event<'a>>,
     pub errors: Vec<ParseError>,
+    override_token: Option<Token<'a>>,
 }
 
 impl<'a> Parser<'a> {
@@ -103,6 +109,7 @@ impl<'a> Parser<'a> {
             source: TokenSource::new(tokens),
             errors: Vec::new(),
             events: Vec::new(),
+            override_token: None,
         }
     }
 
@@ -141,7 +148,10 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn current(&self) -> Option<SyntaxKind> {
-        self.source.current()
+        self.override_token
+            .as_ref()
+            .map(|it| it.kind)
+            .or_else(|| self.source.current())
     }
 
     pub(crate) fn current_lexeme(&'a self) -> Option<&'a str> {
@@ -149,11 +159,25 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn nth(&self, n: usize) -> Option<SyntaxKind> {
-        self.source.nth(n).map(|token| token.kind)
+        if let Some(over) = &self.override_token {
+            if n == 0 {
+                return Some(over.kind);
+            }
+            return self.source.nth(n - 1).map(|t| t.kind);
+        }
+        self.source.nth(n).map(|t| t.kind)
     }
 
     pub(crate) fn bump(&mut self) {
-        if !self.source.is_at_end() {
+        if let Some(over) = self.override_token.take() {
+            self.events.push(Event::AddVirtualToken {
+                kind: over.kind,
+                lexeme: over.lexeme,
+            });
+
+            self.events.push(Event::AdvanceSource);
+            self.source.bump();
+        } else if !self.source.is_at_end() {
             self.events.push(Event::AddToken);
             self.source.bump();
         }
@@ -266,6 +290,29 @@ impl<'a> Parser<'a> {
             .iter()
             .enumerate()
             .all(|(i, &kind)| self.nth(i) == Some(kind))
+    }
+
+    pub(crate) fn split_token(
+        &mut self,
+        first_kind: SyntaxKind,
+        first_len: usize,
+        rest_kind: SyntaxKind,
+    ) {
+        let Some(old_token) = self.source.nth(0) else {
+            return;
+        };
+        let (head, tail) = old_token.lexeme.split_at(first_len);
+
+        self.events.push(Event::AddVirtualToken {
+            kind: first_kind,
+            lexeme: head,
+        });
+
+        self.override_token = Some(Token {
+            kind: rest_kind,
+            lexeme: tail,
+            offset: old_token.offset + first_len,
+        });
     }
 }
 

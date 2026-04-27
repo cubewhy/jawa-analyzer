@@ -29,7 +29,7 @@ impl<'a> TokenSource<'a> {
         self.nth(0).map(|token| token.lexeme)
     }
 
-    pub fn nth(&'_ self, n: usize) -> Option<&'_ Token<'_>> {
+    pub fn nth(&self, n: usize) -> Option<&'_ Token<'a>> {
         let idx = *self.indices.get(self.cursor + n)?;
         Some(&self.tokens[idx])
     }

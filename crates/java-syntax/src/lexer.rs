@@ -506,9 +506,15 @@ impl<'a> Lexer<'a> {
 
     fn handle_less(&mut self) {
         let token_type = if self.reader.advance_if_matches('=') {
-            SyntaxKind::LESS_EQUAL // <=
+            SyntaxKind::LESS_EQUAL
+        } else if self.reader.advance_if_matches('<') {
+            if self.reader.advance_if_matches('=') {
+                SyntaxKind::LEFT_SHIFT_EQUAL // <<=
+            } else {
+                SyntaxKind::LEFT_SHIFT
+            }
         } else {
-            SyntaxKind::LESS // <
+            SyntaxKind::LESS
         };
 
         self.push_token(token_type);
@@ -516,9 +522,29 @@ impl<'a> Lexer<'a> {
 
     fn handle_greater(&mut self) {
         let token_type = if self.reader.advance_if_matches('=') {
-            SyntaxKind::GREATER_EQUAL // >=
+            // >=
+            SyntaxKind::GREATER_EQUAL
+        } else if self.reader.advance_if_matches('>') {
+            // >>
+            if self.reader.advance_if_matches('>') {
+                // >>>
+                if self.reader.advance_if_matches('=') {
+                    // >>>=
+                    SyntaxKind::UNSIGNED_RIGHT_SHIFT_EQUAL
+                } else {
+                    // >>>
+                    SyntaxKind::UNSIGNED_RIGHT_SHIFT
+                }
+            } else if self.reader.advance_if_matches('=') {
+                // >>=
+                SyntaxKind::RIGHT_SHIFT_EQUAL
+            } else {
+                // >>
+                SyntaxKind::RIGHT_SHIFT
+            }
         } else {
-            SyntaxKind::GREATER // >
+            // >
+            SyntaxKind::GREATER
         };
 
         self.push_token(token_type);
