@@ -377,7 +377,9 @@ pub fn expression_list(p: &mut Parser) {
 
 pub fn is_pattern(p: &mut Parser) -> bool {
     let ckpt = p.checkpoint();
-    type_(p);
+    if type_(p).is_err() {
+        return false;
+    };
 
     let Some(next_token) = p.current() else {
         return false;
