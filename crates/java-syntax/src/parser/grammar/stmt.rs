@@ -322,7 +322,7 @@ fn for_statement(p: &mut Parser) {
 fn scan_for_separator(p: &mut Parser) -> Option<SyntaxKind> {
     fn inner(p: &mut Parser) -> Option<SyntaxKind> {
         let mut paren_depth = 0;
-        while !p.at(EOF) && !p.at(R_PAREN) {
+        while !p.at(EOF) {
             if p.at(L_PAREN) {
                 paren_depth += 1;
             } else if p.at(R_PAREN) {
@@ -967,7 +967,7 @@ pub fn local_variable_declaration(p: &mut Parser) -> Result<(), ()> {
     //   var
     // consume type
     if p.at_contextual_kw(ContextualKeyword::Var) {
-        p.bump();
+        p.bump(); // var (identifier)
     } else if type_(p).is_err() {
         p.error_expected_construct(ExpectedConstruct::Type);
         m.complete(p, ERROR);
