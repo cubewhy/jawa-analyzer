@@ -568,3 +568,27 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_postfix_expr,
+    indoc! {r#"
+        class Test {
+            void test() {
+                i++;
+                i--;
+            }
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_prefix_expr,
+    indoc! {r#"
+        class Test {
+            void test() {
+                ++i;
+                --i;
+            }
+        }
+    "#}
+);
