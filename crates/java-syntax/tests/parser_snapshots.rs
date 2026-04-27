@@ -557,3 +557,14 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_class_literal,
+    indoc! {r#"
+        class Test {
+            void test() {
+                Test.class;
+            }
+        }
+    "#}
+);
