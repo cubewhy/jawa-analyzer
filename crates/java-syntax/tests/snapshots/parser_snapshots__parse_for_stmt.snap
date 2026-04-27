@@ -33,14 +33,14 @@ IDENTIFIER "i"
 WHITESPACE " "
 EQUAL "="
 WHITESPACE " "
-NUMBER_LIT "0"
+NUMBER_LITERAL "0"
 SEMICOLON ";"
 WHITESPACE " "
 IDENTIFIER "i"
 WHITESPACE " "
 LESS "<"
 WHITESPACE " "
-NUMBER_LIT "10"
+NUMBER_LITERAL "10"
 SEMICOLON ";"
 WHITESPACE " "
 IDENTIFIER "i"
@@ -92,21 +92,24 @@ ROOT
                   IDENTIFIER "i"
                   WHITESPACE " "
                   EQUAL "="
-                  EXPRESSION
+                  LITERAL
                     WHITESPACE " "
-                    NUMBER_LIT "0"
+                    NUMBER_LITERAL "0"
             SEMICOLON ";"
-            EXPRESSION
-              WHITESPACE " "
-              IDENTIFIER "i"
+            BINARY_EXPR
+              LITERAL
+                WHITESPACE " "
+                IDENTIFIER "i"
               WHITESPACE " "
               LESS "<"
-              WHITESPACE " "
-              NUMBER_LIT "10"
+              LITERAL
+                WHITESPACE " "
+                NUMBER_LITERAL "10"
             SEMICOLON ";"
-            EXPRESSION
-              WHITESPACE " "
-              IDENTIFIER "i"
+            POSTFIX_EXPR
+              LITERAL
+                WHITESPACE " "
+                IDENTIFIER "i"
               PLUS_PLUS "++"
             R_PAREN ")"
             BLOCK

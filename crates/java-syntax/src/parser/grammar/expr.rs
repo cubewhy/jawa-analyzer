@@ -98,7 +98,13 @@ fn get_infix_bp(kind: SyntaxKind) -> Option<(u8, u8)> {
 
 fn expr_prefix(p: &mut Parser) -> Result<CompletedMarker, ()> {
     let m = p.start();
-    let kind = p.current().ok_or(())?;
+    let kind = match p.current() {
+        Some(kind) => kind,
+        None => {
+            m.abandon(p);
+            return Err(());
+        }
+    };
 
     match kind {
         NUMBER_LITERAL | STRING_LITERAL | IDENTIFIER | THIS_KW | SUPER_KW | TRUE_LITERAL
@@ -115,14 +121,27 @@ fn expr_prefix(p: &mut Parser) -> Result<CompletedMarker, ()> {
             p.expect(R_PAREN);
             Ok(m.complete(p, PAREN_EXPR))
         }
-        MINUS | NOT | TILDE => {
+
+        // JLS 15.15.1 & 15.15.2: PreIncrement & PreDecrement
+        PLUS_PLUS | MINUS_MINUS => {
             p.bump();
-            if expr_bp(p, 13).is_err() {
+            if expr_bp(p, 25).is_err() {
+                m.complete(p, ERROR);
+                return Err(());
+            }
+            Ok(m.complete(p, PREFIX_EXPR))
+        }
+
+        // JLS 15.15.3 - 15.15.6: +, -, ~, !
+        PLUS | MINUS | TILDE | NOT => {
+            p.bump();
+            if expr_bp(p, 25).is_err() {
                 m.complete(p, ERROR);
                 return Err(());
             }
             Ok(m.complete(p, UNARY_EXPR))
         }
+
         NEW_KW => {
             p.bump(); // new
 
@@ -222,6 +241,15 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
                     p.expect(R_BRACKET); // ]
                     left = m.complete(p, ARRAY_ACCESS);
                 }
+                PLUS_PLUS => {
+                    p.bump();
+                    left = m.complete(p, POSTFIX_EXPR);
+                }
+                MINUS_MINUS => {
+                    p.bump();
+                    left = m.complete(p, POSTFIX_EXPR);
+                }
+
                 _ => {
                     p.bump();
                     if expr_bp(p, r_bp).is_err() {

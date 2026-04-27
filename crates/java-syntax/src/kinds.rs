@@ -142,10 +142,8 @@ pub enum SyntaxKind {
     NAME_REF,
 
     ASSIGNMENT_EXPR, // a = 1
-    PRE_INC_EXPR,    // ++i
-    PRE_DEC_EXPR,    // --i
-    POST_INC_EXPR,   // i++
-    POST_DEC_EXPR,   // i--
+    POSTFIX_EXPR,    // i++, i--
+    PREFIX_EXPR,     // ++i, --i
     METHOD_CALL,     // method()
     NEW_EXPR,        // new Object()
     LITERAL,

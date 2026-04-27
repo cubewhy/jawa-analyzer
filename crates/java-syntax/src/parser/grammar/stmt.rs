@@ -811,10 +811,8 @@ fn expression_statement(p: &mut Parser) {
 fn is_legal_statement_expression(kind: SyntaxKind) -> bool {
     match kind {
         ASSIGNMENT_EXPR |      // a = 1
-        PRE_INC_EXPR |         // ++i
-        PRE_DEC_EXPR |         // --i
-        POST_INC_EXPR |        // i++
-        POST_DEC_EXPR |        // i--
+        POSTFIX_EXPR |
+        PREFIX_EXPR |
         METHOD_CALL |    // method()
         NEW_EXPR => true,      // new Object()
         _ => false,

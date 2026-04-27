@@ -31,7 +31,7 @@ IDENTIFIER "i"
 WHITESPACE " "
 EQUAL "="
 WHITESPACE " "
-NUMBER_LIT "0"
+NUMBER_LITERAL "0"
 SEMICOLON ";"
 WHITESPACE "\n        "
 DO_KW "do"
@@ -43,7 +43,7 @@ WHITESPACE " "
 WHILE_KW "while"
 WHITESPACE " "
 L_PAREN "("
-TRUE_LIT "true"
+TRUE_LITERAL "true"
 R_PAREN ")"
 SEMICOLON ";"
 WHITESPACE "\n    "
@@ -86,17 +86,18 @@ ROOT
                   IDENTIFIER "i"
                   WHITESPACE " "
                   EQUAL "="
-                  EXPRESSION
+                  LITERAL
                     WHITESPACE " "
-                    NUMBER_LIT "0"
+                    NUMBER_LITERAL "0"
             SEMICOLON ";"
           DO_STMT
             WHITESPACE "\n        "
             DO_KW "do"
             EXPRESSION_STMT
-              EXPRESSION
-                WHITESPACE " "
-                IDENTIFIER "i"
+              POSTFIX_EXPR
+                LITERAL
+                  WHITESPACE " "
+                  IDENTIFIER "i"
                 PLUS_PLUS "++"
               SEMICOLON ";"
             WHITESPACE " "
@@ -104,8 +105,8 @@ ROOT
             PARENTHESIZED_EXPR
               WHITESPACE " "
               L_PAREN "("
-              EXPRESSION
-                TRUE_LIT "true"
+              LITERAL
+                TRUE_LITERAL "true"
               R_PAREN ")"
             SEMICOLON ";"
           WHITESPACE "\n    "
