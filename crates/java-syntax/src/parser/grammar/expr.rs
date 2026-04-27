@@ -108,13 +108,19 @@ fn expr_prefix(p: &mut Parser) -> Result<CompletedMarker, ()> {
         }
         L_PAREN => {
             p.bump();
-            expression(p)?;
+            if expression(p).is_err() {
+                m.complete(p, ERROR);
+                return Err(());
+            }
             p.expect(R_PAREN);
             Ok(m.complete(p, PAREN_EXPR))
         }
         MINUS | NOT | TILDE => {
             p.bump();
-            expr_bp(p, 13)?;
+            if expr_bp(p, 13).is_err() {
+                m.complete(p, ERROR);
+                return Err(());
+            }
             Ok(m.complete(p, UNARY_EXPR))
         }
         NEW_KW => {
@@ -208,13 +214,20 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
                 L_BRACKET => {
                     // array access
                     p.expect(L_BRACKET); // [
-                    expression(p)?; // expr inside []
+                    // expr inside []
+                    if expression(p).is_err() {
+                        left = m.complete(p, ERROR);
+                        return Err(());
+                    }
                     p.expect(R_BRACKET); // ]
                     left = m.complete(p, ARRAY_ACCESS);
                 }
                 _ => {
                     p.bump();
-                    expr_bp(p, r_bp)?;
+                    if expr_bp(p, r_bp).is_err() {
+                        left = m.complete(p, ERROR);
+                        return Err(());
+                    }
                     left = m.complete(p, BINARY_EXPR);
                 }
             }
@@ -255,30 +268,6 @@ pub fn element_value(p: &mut Parser) {
             recover_parameter(p);
         }
     }
-}
-
-pub fn variable_access(p: &mut Parser) {
-    // TODO: Stub variable access
-    let m = p.start();
-
-    if p.at(IDENTIFIER) || p.at(THIS_KW) || p.at(SUPER_KW) {
-        p.bump();
-    } else {
-        p.error_expected(&[IDENTIFIER, THIS_KW, SUPER_KW]);
-        m.complete(p, ERROR);
-        return;
-    }
-
-    while p.eat(DOT) {
-        if p.at(IDENTIFIER) || p.at(THIS_KW) || p.at(SUPER_KW) {
-            p.bump();
-        } else {
-            p.error_expected(&[IDENTIFIER]);
-            break;
-        }
-    }
-
-    m.complete(p, VARIABLE_ACCESS);
 }
 
 pub fn expression_list(p: &mut Parser) {
