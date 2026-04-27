@@ -61,10 +61,10 @@ ROOT
           ASSERT_STMT
             WHITESPACE "\n        "
             ASSERT_KW "assert"
-            EXPRESSION
+            LITERAL
               WHITESPACE " "
               TRUE_LIT "true"
-              COLON ":"
+            COLON ":"
             SEMICOLON ";"
           WHITESPACE "\n    "
           R_BRACE "}"

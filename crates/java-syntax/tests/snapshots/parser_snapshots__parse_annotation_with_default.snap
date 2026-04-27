@@ -65,7 +65,7 @@ ROOT
         R_PAREN ")"
         WHITESPACE " "
         DEFAULT_KW "default"
-        EXPRESSION
+        LITERAL
           WHITESPACE " "
           STRING_LIT "\"unknown\""
         SEMICOLON ";"
@@ -79,7 +79,7 @@ ROOT
         R_PAREN ")"
         WHITESPACE " "
         DEFAULT_KW "default"
-        EXPRESSION
+        LITERAL
           WHITESPACE " "
           NUMBER_LIT "3"
         SEMICOLON ";"

@@ -57,8 +57,9 @@ ROOT
             WHITESPACE " "
             IDENTIFIER "args"
             DIMENSIONS
-              L_BRACKET "["
-              R_BRACKET "]"
+              DIMENSION
+                L_BRACKET "["
+                R_BRACKET "]"
           R_PAREN ")"
         BLOCK
           WHITESPACE " "

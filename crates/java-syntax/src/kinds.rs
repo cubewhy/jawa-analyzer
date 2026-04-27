@@ -139,8 +139,21 @@ pub enum SyntaxKind {
 
     QUALIFIED_NAME,
     TYPE,
-    EXPRESSION,
     NAME_REF,
+
+    ASSIGNMENT_EXPR, // a = 1
+    PRE_INC_EXPR,    // ++i
+    PRE_DEC_EXPR,    // --i
+    POST_INC_EXPR,   // i++
+    POST_DEC_EXPR,   // i--
+    METHOD_CALL,     // method()
+    NEW_EXPR,        // new Object()
+    LITERAL,
+    PAREN_EXPR,
+    UNARY_EXPR,
+    FIELD_ACCESS,
+    ARRAY_ACCESS,
+    BINARY_EXPR,
 
     TYPE_PARAMETERS,
     TYPE_PARAMETER,
@@ -178,6 +191,7 @@ pub enum SyntaxKind {
     VARIABLE_ACCESS,
     PARENTHESIZED_EXPR,
 
+    DIMENSION,
     DIMENSIONS,
     ARRAY_TYPE,
     ARRAY_ACCESS_EXPR,

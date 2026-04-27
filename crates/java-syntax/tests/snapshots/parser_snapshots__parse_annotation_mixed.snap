@@ -76,7 +76,7 @@ ROOT
         R_PAREN ")"
         WHITESPACE " "
         DEFAULT_KW "default"
-        EXPRESSION
+        LITERAL
           WHITESPACE " "
           NUMBER_LIT "0"
         SEMICOLON ";"
@@ -86,15 +86,16 @@ ROOT
             WHITESPACE "\n    "
             IDENTIFIER "String"
           DIMENSIONS
-            L_BRACKET "["
-            R_BRACKET "]"
+            DIMENSION
+              L_BRACKET "["
+              R_BRACKET "]"
         WHITESPACE " "
         IDENTIFIER "tags"
         L_PAREN "("
         R_PAREN ")"
         WHITESPACE " "
         DEFAULT_KW "default"
-        EXPRESSION
+        LITERAL
           WHITESPACE " "
           NUMBER_LIT "1"
         SEMICOLON ";"
@@ -108,7 +109,7 @@ ROOT
             IDENTIFIER "VERSION"
             WHITESPACE " "
             EQUAL "="
-            EXPRESSION
+            LITERAL
               WHITESPACE " "
               NUMBER_LIT "1.0"
         SEMICOLON ";"

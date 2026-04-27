@@ -85,8 +85,9 @@ ROOT
               QUALIFIED_NAME
                 IDENTIFIER "String"
               DIMENSIONS
-                L_BRACKET "["
-                R_BRACKET "]"
+                DIMENSION
+                  L_BRACKET "["
+                  R_BRACKET "]"
             WHITESPACE " "
             IDENTIFIER "args"
           R_PAREN ")"
@@ -101,19 +102,21 @@ ROOT
               WHITESPACE " "
               L_BRACE "{"
               EXPRESSION_STMT
-                EXPRESSION
-                  WHITESPACE "\n            "
-                  IDENTIFIER "System"
-                  DOT "."
-                  IDENTIFIER "out"
-                  DOT "."
-                  IDENTIFIER "println"
-                  L_PAREN "("
-                  STRING_LIT "\"made it!\""
-                MISSING
-              ERROR
-                ERROR
-                R_PAREN ")"
+                METHOD_CALL
+                  FIELD_ACCESS
+                    FIELD_ACCESS
+                      LITERAL
+                        WHITESPACE "\n            "
+                        IDENTIFIER "System"
+                      DOT "."
+                      IDENTIFIER "out"
+                    DOT "."
+                    IDENTIFIER "println"
+                  ARGUMENT_LIST
+                    L_PAREN "("
+                    LITERAL
+                      STRING_LIT "\"made it!\""
+                    R_PAREN ")"
                 SEMICOLON ";"
               WHITESPACE "\n        "
               R_BRACE "}"
@@ -124,6 +127,3 @@ ROOT
   WHITESPACE "\n"
 errors:
   ParseError { kind: ExpectedToken { expected: [L_PAREN], found: Some(L_BRACE) }, pos: 15 }
-  ParseError { kind: ExpectedToken { expected: [SEMICOLON], found: Some(R_PAREN) }, pos: 23 }
-  ParseError { kind: ExpectedConstruct(Expression), pos: 23 }
-  ParseError { kind: ExpectedConstruct(Statement), pos: 23 }

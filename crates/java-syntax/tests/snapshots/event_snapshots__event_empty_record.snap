@@ -32,7 +32,6 @@ StartNode(FORMAL_PARAMETER, forward_parent=None)
 Tombstone
 StartNode(TYPE, forward_parent=None)
 AddToken
-Tombstone
 FinishNode
 AddToken
 FinishNode

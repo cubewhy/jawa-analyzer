@@ -113,8 +113,9 @@ ROOT
               QUALIFIED_NAME
                 IDENTIFIER "String"
               DIMENSIONS
-                L_BRACKET "["
-                R_BRACKET "]"
+                DIMENSION
+                  L_BRACKET "["
+                  R_BRACKET "]"
             WHITESPACE " "
             IDENTIFIER "args"
           R_PAREN ")"
@@ -133,23 +134,23 @@ ROOT
                   IDENTIFIER "t"
                   WHITESPACE " "
                   EQUAL "="
-                  EXPRESSION
+                  NEW_EXPR
                     WHITESPACE " "
                     NEW_KW "new"
-                    WHITESPACE " "
-                    IDENTIFIER "Test"
-                    L_PAREN "("
-            MISSING
-          ERROR
-            ERROR
-            R_PAREN ")"
+                    TYPE
+                      QUALIFIED_NAME
+                        WHITESPACE " "
+                        IDENTIFIER "Test"
+                    ARGUMENT_LIST
+                      L_PAREN "("
+                      R_PAREN ")"
             SEMICOLON ";"
           SYNCHRONIZED_STMT
             WHITESPACE "\n        "
             SYNCHRONIZED_KW "synchronized"
             PARENTHESIZED_EXPR
               L_PAREN "("
-              EXPRESSION
+              LITERAL
                 IDENTIFIER "t"
               R_PAREN ")"
             BLOCK
@@ -160,26 +161,28 @@ ROOT
                 SYNCHRONIZED_KW "synchronized"
                 PARENTHESIZED_EXPR
                   L_PAREN "("
-                  EXPRESSION
+                  LITERAL
                     IDENTIFIER "t"
                   R_PAREN ")"
                 BLOCK
                   WHITESPACE " "
                   L_BRACE "{"
                   EXPRESSION_STMT
-                    EXPRESSION
-                      WHITESPACE "\n                "
-                      IDENTIFIER "System"
-                      DOT "."
-                      IDENTIFIER "out"
-                      DOT "."
-                      IDENTIFIER "println"
-                      L_PAREN "("
-                      STRING_LIT "\"made it!\""
-                    MISSING
-                  ERROR
-                    ERROR
-                    R_PAREN ")"
+                    METHOD_CALL
+                      FIELD_ACCESS
+                        FIELD_ACCESS
+                          LITERAL
+                            WHITESPACE "\n                "
+                            IDENTIFIER "System"
+                          DOT "."
+                          IDENTIFIER "out"
+                        DOT "."
+                        IDENTIFIER "println"
+                      ARGUMENT_LIST
+                        L_PAREN "("
+                        LITERAL
+                          STRING_LIT "\"made it!\""
+                        R_PAREN ")"
                     SEMICOLON ";"
                   WHITESPACE "\n            "
                   R_BRACE "}"
@@ -190,10 +193,3 @@ ROOT
       WHITESPACE "\n"
       R_BRACE "}"
   WHITESPACE "\n"
-errors:
-  ParseError { kind: ExpectedToken { expected: [SEMICOLON], found: Some(R_PAREN) }, pos: 20 }
-  ParseError { kind: ExpectedConstruct(Expression), pos: 20 }
-  ParseError { kind: ExpectedConstruct(Statement), pos: 20 }
-  ParseError { kind: ExpectedToken { expected: [SEMICOLON], found: Some(R_PAREN) }, pos: 39 }
-  ParseError { kind: ExpectedConstruct(Expression), pos: 39 }
-  ParseError { kind: ExpectedConstruct(Statement), pos: 39 }

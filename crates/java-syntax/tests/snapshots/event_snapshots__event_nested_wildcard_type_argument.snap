@@ -55,7 +55,6 @@ StartNode(TYPE, forward_parent=None)
 StartNode(QUALIFIED_NAME, forward_parent=None)
 AddToken
 FinishNode
-Tombstone
 FinishNode
 FinishNode
 AddToken
@@ -75,24 +74,20 @@ StartNode(TYPE, forward_parent=None)
 StartNode(QUALIFIED_NAME, forward_parent=None)
 AddToken
 FinishNode
-Tombstone
 FinishNode
 FinishNode
 FinishNode
 FinishNode
 AddToken
 FinishNode
-Tombstone
 FinishNode
 FinishNode
 AddToken
 FinishNode
-Tombstone
 FinishNode
 StartNode(VARIABLE_DECLARATOR_LIST, forward_parent=None)
 StartNode(VARIABLE_DECLARATOR, forward_parent=None)
 AddToken
-Tombstone
 FinishNode
 FinishNode
 AddToken

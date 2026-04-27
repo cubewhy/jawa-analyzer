@@ -753,15 +753,35 @@ fn resource(p: &mut Parser) -> Result<(), ()> {
 fn expression_statement(p: &mut Parser) {
     let m = p.start();
 
-    if expression(p).is_err() {
-        p.error_expected_construct(ExpectedConstruct::Statement);
-        recover_block_statement(p);
-        m.complete(p, ERROR);
-        return;
+    let expr_marker = match expression(p) {
+        Ok(marker) => marker,
+        Err(_) => {
+            p.error_expected_construct(ExpectedConstruct::Statement);
+            recover_block_statement(p);
+            m.complete(p, ERROR);
+            return;
+        }
+    };
+
+    if !is_legal_statement_expression(expr_marker.kind()) {
+        p.error_message("Not a statement: only assignment, increment, decrement, method call, and new object creation are allowed");
     }
 
     p.expect(SEMICOLON);
     m.complete(p, EXPRESSION_STMT);
+}
+
+fn is_legal_statement_expression(kind: SyntaxKind) -> bool {
+    match kind {
+        ASSIGNMENT_EXPR |      // a = 1
+        PRE_INC_EXPR |         // ++i
+        PRE_DEC_EXPR |         // --i
+        POST_INC_EXPR |        // i++
+        POST_DEC_EXPR |        // i--
+        METHOD_CALL |    // method()
+        NEW_EXPR => true,      // new Object()
+        _ => false,
+    }
 }
 
 /// EmptyStatement:

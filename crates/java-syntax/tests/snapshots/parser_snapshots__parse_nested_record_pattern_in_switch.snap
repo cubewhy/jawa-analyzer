@@ -113,7 +113,7 @@ ROOT
             SWITCH_KW "switch"
             WHITESPACE " "
             L_PAREN "("
-            EXPRESSION
+            LITERAL
               IDENTIFIER "obj"
             R_PAREN ")"
             SWITCH_BLOCK
@@ -149,19 +149,22 @@ ROOT
                 WHITESPACE " "
                 ARROW "->"
                 EXPRESSION_STMT
-                  EXPRESSION
-                    WHITESPACE " "
-                    IDENTIFIER "System"
-                    DOT "."
-                    IDENTIFIER "out"
-                    DOT "."
-                    IDENTIFIER "println"
-                    L_PAREN "("
-                    IDENTIFIER "name"
-                  MISSING
-              MISSING
-              R_PAREN ")"
-              SEMICOLON ";"
+                  METHOD_CALL
+                    FIELD_ACCESS
+                      FIELD_ACCESS
+                        LITERAL
+                          WHITESPACE " "
+                          IDENTIFIER "System"
+                        DOT "."
+                        IDENTIFIER "out"
+                      DOT "."
+                      IDENTIFIER "println"
+                    ARGUMENT_LIST
+                      L_PAREN "("
+                      LITERAL
+                        IDENTIFIER "name"
+                      R_PAREN ")"
+                  SEMICOLON ";"
               SWITCH_RULE
                 SWITCH_LABEL
                   WHITESPACE "\n            "
@@ -179,6 +182,3 @@ ROOT
       WHITESPACE "\n"
       R_BRACE "}"
   WHITESPACE "\n"
-errors:
-  ParseError { kind: ExpectedToken { expected: [SEMICOLON], found: Some(R_PAREN) }, pos: 34 }
-  ParseError { kind: ExpectedToken { expected: [CASE_KW, DEFAULT_KW], found: Some(R_PAREN) }, pos: 34 }

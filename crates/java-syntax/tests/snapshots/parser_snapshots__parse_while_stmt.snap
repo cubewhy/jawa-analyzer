@@ -72,7 +72,7 @@ ROOT
             PARENTHESIZED_EXPR
               WHITESPACE " "
               L_PAREN "("
-              EXPRESSION
+              LITERAL
                 TRUE_LIT "true"
               R_PAREN ")"
             BLOCK

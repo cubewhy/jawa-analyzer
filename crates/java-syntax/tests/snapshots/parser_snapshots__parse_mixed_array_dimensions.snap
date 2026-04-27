@@ -42,8 +42,9 @@ ROOT
           WHITESPACE " "
           INT_KW "int"
           DIMENSIONS
-            L_BRACKET "["
-            R_BRACKET "]"
+            DIMENSION
+              L_BRACKET "["
+              R_BRACKET "]"
         VARIABLE_DECLARATOR_LIST
           VARIABLE_DECLARATOR
             WHITESPACE " "
@@ -53,8 +54,9 @@ ROOT
             WHITESPACE " "
             IDENTIFIER "b"
             DIMENSIONS
-              L_BRACKET "["
-              R_BRACKET "]"
+              DIMENSION
+                L_BRACKET "["
+                R_BRACKET "]"
         SEMICOLON ";"
       WHITESPACE " "
       R_BRACE "}"

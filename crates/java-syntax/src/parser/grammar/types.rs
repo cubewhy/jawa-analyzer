@@ -1,6 +1,7 @@
 use crate::{
     grammar::{
         error_recover::{recover_type_argument, recover_type_bound},
+        expr::{expression, is_expression_start},
         names::qualified_name,
     },
     kinds::SyntaxKind::*,
@@ -79,20 +80,23 @@ pub fn at_primitive_type(p: &Parser) -> bool {
 }
 
 pub fn dimensions(p: &mut Parser) {
+    if !p.at(L_BRACKET) {
+        return;
+    }
+
     let m = p.start();
+    while p.at(L_BRACKET) {
+        let m_inner = p.start();
+        p.expect(L_BRACKET);
 
-    let mut seen = false;
-    while p.at(L_BRACKET) && p.nth(1) == Some(R_BRACKET) {
-        seen = true;
-        p.bump(); // [
-        p.bump(); // ]
-    }
+        if !p.at(R_BRACKET) && is_expression_start(p.current().unwrap_or(UNKNOWN)) {
+            expression(p).ok();
+        }
 
-    if seen {
-        m.complete(p, DIMENSIONS);
-    } else {
-        m.abandon(p);
+        p.expect(R_BRACKET);
+        m_inner.complete(p, DIMENSION);
     }
+    m.complete(p, DIMENSIONS);
 }
 
 pub fn type_or_void(p: &mut Parser) -> Result<(), ()> {

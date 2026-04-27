@@ -84,14 +84,13 @@ ROOT
               WHITESPACE " "
               L_BRACE "{"
               EXPRESSION_STMT
-                EXPRESSION
-                  WHITESPACE "\n            "
-                  IDENTIFIER "func"
-                  L_PAREN "("
-                MISSING
-              ERROR
-                ERROR
-                R_PAREN ")"
+                METHOD_CALL
+                  LITERAL
+                    WHITESPACE "\n            "
+                    IDENTIFIER "func"
+                  ARGUMENT_LIST
+                    L_PAREN "("
+                    R_PAREN ")"
                 SEMICOLON ";"
               WHITESPACE "\n        "
               R_BRACE "}"
@@ -100,24 +99,16 @@ ROOT
             IDENTIFIER "labelNoShortIf"
             COLON ":"
             EXPRESSION_STMT
-              EXPRESSION
-                WHITESPACE " "
-                IDENTIFIER "func"
-                L_PAREN "("
-              MISSING
-          ERROR
-            ERROR
-            R_PAREN ")"
-            SEMICOLON ";"
+              METHOD_CALL
+                LITERAL
+                  WHITESPACE " "
+                  IDENTIFIER "func"
+                ARGUMENT_LIST
+                  L_PAREN "("
+                  R_PAREN ")"
+              SEMICOLON ";"
           WHITESPACE "\n    "
           R_BRACE "}"
       WHITESPACE "\n"
       R_BRACE "}"
   WHITESPACE "\n"
-errors:
-  ParseError { kind: ExpectedToken { expected: [SEMICOLON], found: Some(R_PAREN) }, pos: 13 }
-  ParseError { kind: ExpectedConstruct(Expression), pos: 13 }
-  ParseError { kind: ExpectedConstruct(Statement), pos: 13 }
-  ParseError { kind: ExpectedToken { expected: [SEMICOLON], found: Some(R_PAREN) }, pos: 20 }
-  ParseError { kind: ExpectedConstruct(Expression), pos: 20 }
-  ParseError { kind: ExpectedConstruct(Statement), pos: 20 }

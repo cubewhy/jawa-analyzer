@@ -80,8 +80,9 @@ ROOT
                   WHITESPACE "\n        "
                   IDENTIFIER "String"
                 DIMENSIONS
-                  L_BRACKET "["
-                  R_BRACKET "]"
+                  DIMENSION
+                    L_BRACKET "["
+                    R_BRACKET "]"
               VARIABLE_DECLARATOR_LIST
                 VARIABLE_DECLARATOR
                   WHITESPACE " "
@@ -99,7 +100,6 @@ ROOT
               WHITESPACE " "
               IDENTIFIER "s"
             COLON ":"
-            ERROR
             WHITESPACE " "
             R_PAREN ")"
             BLOCK
@@ -111,5 +111,3 @@ ROOT
       WHITESPACE "\n"
       R_BRACE "}"
   WHITESPACE "\n"
-errors:
-  ParseError { kind: ExpectedConstruct(Expression), pos: 18 }

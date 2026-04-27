@@ -37,8 +37,9 @@ ROOT
           WHITESPACE " "
           INT_KW "int"
           DIMENSIONS
-            L_BRACKET "["
-            R_BRACKET "]"
+            DIMENSION
+              L_BRACKET "["
+              R_BRACKET "]"
         VARIABLE_DECLARATOR_LIST
           VARIABLE_DECLARATOR
             WHITESPACE " "

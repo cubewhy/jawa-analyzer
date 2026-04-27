@@ -51,7 +51,7 @@ ROOT
             IDENTIFIER "a"
             WHITESPACE " "
             EQUAL "="
-            EXPRESSION
+            LITERAL
               WHITESPACE " "
               NUMBER_LIT "1"
           COMMA ","
@@ -60,7 +60,7 @@ ROOT
             IDENTIFIER "b"
             WHITESPACE " "
             EQUAL "="
-            EXPRESSION
+            LITERAL
               WHITESPACE " "
               NUMBER_LIT "2"
         SEMICOLON ";"

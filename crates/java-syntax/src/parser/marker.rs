@@ -25,7 +25,7 @@ impl Marker {
         }
 
         p.events.push(Event::FinishNode);
-        CompletedMarker::new(self.pos)
+        CompletedMarker::new(self.pos, kind)
     }
 
     pub fn abandon(self, p: &mut Parser) {
@@ -38,11 +38,12 @@ impl Marker {
 
 pub struct CompletedMarker {
     pub pos: usize,
+    kind: SyntaxKind,
 }
 
 impl CompletedMarker {
-    pub fn new(pos: usize) -> Self {
-        Self { pos }
+    pub fn new(pos: usize, kind: SyntaxKind) -> Self {
+        Self { pos, kind }
     }
 
     pub fn precede(self, p: &mut Parser) -> Marker {
@@ -59,5 +60,9 @@ impl CompletedMarker {
         }
 
         Marker::new(new_pos)
+    }
+
+    pub fn kind(&self) -> SyntaxKind {
+        self.kind
     }
 }

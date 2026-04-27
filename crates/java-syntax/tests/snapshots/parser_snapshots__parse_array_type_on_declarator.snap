@@ -41,8 +41,9 @@ ROOT
             WHITESPACE " "
             IDENTIFIER "a"
             DIMENSIONS
-              L_BRACKET "["
-              R_BRACKET "]"
+              DIMENSION
+                L_BRACKET "["
+                R_BRACKET "]"
         SEMICOLON ";"
       WHITESPACE " "
       R_BRACE "}"

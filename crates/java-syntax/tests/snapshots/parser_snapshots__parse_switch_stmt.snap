@@ -150,7 +150,7 @@ ROOT
             SWITCH_KW "switch"
             WHITESPACE " "
             L_PAREN "("
-            EXPRESSION
+            LITERAL
               IDENTIFIER "expr"
             R_PAREN ")"
             SWITCH_BLOCK
@@ -160,43 +160,44 @@ ROOT
                 SWITCH_LABEL
                   WHITESPACE "\n            "
                   CASE_KW "case"
-                  EXPRESSION
+                  LITERAL
                     WHITESPACE " "
                     NUMBER_LIT "1"
                   COMMA ","
-                  EXPRESSION
+                  LITERAL
                     WHITESPACE " "
                     NUMBER_LIT "2"
                   COMMA ","
-                  EXPRESSION
+                  LITERAL
                     WHITESPACE " "
                     NUMBER_LIT "3"
                   COMMA ","
-                  EXPRESSION
+                  LITERAL
                     WHITESPACE " "
                     NUMBER_LIT "4"
-                    COLON ":"
-                    WHITESPACE "\n            "
-                    CASE_KW "case"
+                COLON ":"
+                SWITCH_LABEL
+                  WHITESPACE "\n            "
+                  CASE_KW "case"
+                  LITERAL
                     WHITESPACE " "
                     NUMBER_LIT "5"
                   COMMA ","
-                  EXPRESSION
+                  LITERAL
                     WHITESPACE " "
                     NUMBER_LIT "6"
                   COMMA ","
-                  EXPRESSION
+                  LITERAL
                     WHITESPACE " "
                     NUMBER_LIT "7"
                   COMMA ","
-                  EXPRESSION
+                  LITERAL
                     WHITESPACE " "
                     NUMBER_LIT "8"
-                    COLON ":"
-                    WHITESPACE "\n                "
-                    BREAK_KW "break"
-                MISSING
-                EMPTY_STMT
+                COLON ":"
+                BREAK_STMT
+                  WHITESPACE "\n                "
+                  BREAK_KW "break"
                   SEMICOLON ";"
               SWITCH_BLOCK_STATEMENT_GROUP
                 SWITCH_LABEL
@@ -269,5 +270,3 @@ ROOT
       WHITESPACE "\n"
       R_BRACE "}"
   WHITESPACE "\n"
-errors:
-  ParseError { kind: ExpectedToken { expected: [COLON], found: Some(SEMICOLON) }, pos: 32 }

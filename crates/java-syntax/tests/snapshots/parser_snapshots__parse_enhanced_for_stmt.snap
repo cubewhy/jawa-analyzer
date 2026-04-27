@@ -81,8 +81,9 @@ ROOT
                   WHITESPACE "\n        "
                   IDENTIFIER "String"
                 DIMENSIONS
-                  L_BRACKET "["
-                  R_BRACKET "]"
+                  DIMENSION
+                    L_BRACKET "["
+                    R_BRACKET "]"
               VARIABLE_DECLARATOR_LIST
                 VARIABLE_DECLARATOR
                   WHITESPACE " "
@@ -100,7 +101,7 @@ ROOT
               WHITESPACE " "
               IDENTIFIER "s"
             COLON ":"
-            EXPRESSION
+            LITERAL
               WHITESPACE " "
               IDENTIFIER "strings"
             R_PAREN ")"

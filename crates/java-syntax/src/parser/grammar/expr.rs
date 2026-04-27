@@ -1,12 +1,18 @@
+use stacksafe::stacksafe;
+
 use crate::{
     SyntaxKind,
     grammar::{
+        decl::class_body,
         error_recover::{recover_parameter, recover_until},
         modifiers::annotation,
-        types::{reference_type, type_},
+        types::{dimensions, reference_type, type_},
     },
     kinds::SyntaxKind::*,
-    parser::{ExpectedConstruct, Parser},
+    parser::{
+        ExpectedConstruct, Parser,
+        marker::{CompletedMarker, Marker},
+    },
 };
 
 pub fn argument_list(p: &mut Parser) {
@@ -50,23 +56,164 @@ pub fn array_initializer(p: &mut Parser) {
     m.complete(p, ARRAY_INITIALIZER);
 }
 
-pub fn expression(p: &mut Parser) -> Result<(), ()> {
+fn get_infix_bp(kind: SyntaxKind) -> Option<(u8, u8)> {
+    let bp = match kind {
+        // assignment
+        EQUAL | PLUS_EQUAL | MINUS_EQUAL | MULTIPLE_EQUAL | DIVIDE_EQUAL | MODULO_EQUAL
+        | AND_EQUAL | OR_EQUAL | XOR_EQUAL => (2, 1),
+
+        // Conditional Operator
+        QUESTION => (3, 4),
+
+        // Conditional-or
+        OR => (5, 6),
+
+        // Conditional-and
+        AND => (7, 8),
+
+        // Bitwise and Logical Operators
+        BIT_OR => (9, 10),
+        CARET => (11, 12),
+        BIT_AND => (13, 14),
+
+        // Equality Operators
+        EQUAL_EQUAL | NOT_EQUAL => (15, 16),
+
+        // compare and type checking
+        LESS | LESS_EQUAL | GREATER | GREATER_EQUAL | INSTANCEOF_KW => (17, 18),
+
+        PLUS | MINUS => (19, 20),
+        STAR | SLASH | MODULO => (21, 22),
+
+        PLUS_PLUS | MINUS_MINUS => (23, 24),
+
+        // access and invocation
+        DOT | L_PAREN | L_BRACKET | COLON_COLON => (25, 26),
+
+        _ => return None,
+    };
+
+    Some(bp)
+}
+
+fn expr_prefix(p: &mut Parser) -> Result<CompletedMarker, ()> {
     let m = p.start();
-    let start_pos = p.pos();
+    let kind = p.current().ok_or(())?;
 
-    // TODO: parse java expressions
-    while !p.is_at_end() && !p.at(COMMA) && !p.at(SEMICOLON) && !p.at(R_PAREN) && !p.at(R_BRACE) {
-        p.bump();
+    match kind {
+        NUMBER_LIT | STRING_LIT | IDENTIFIER | THIS_KW | SUPER_KW | TRUE_LIT | FALSE_LIT
+        | NULL_LIT => {
+            p.bump();
+            Ok(m.complete(p, LITERAL))
+        }
+        L_PAREN => {
+            p.bump();
+            expression(p)?;
+            p.expect(R_PAREN);
+            Ok(m.complete(p, PAREN_EXPR))
+        }
+        MINUS | NOT | TILDE => {
+            p.bump();
+            expr_bp(p, 13)?;
+            Ok(m.complete(p, UNARY_EXPR))
+        }
+        NEW_KW => {
+            p.bump(); // new
+
+            // type
+            type_(p).ok();
+
+            match p.current() {
+                Some(L_PAREN) => {
+                    // object construction
+                    argument_list(p);
+
+                    // abstract class, interface
+                    if p.at(L_BRACE) {
+                        class_body(p);
+                    }
+                    Ok(m.complete(p, NEW_EXPR))
+                }
+                Some(L_BRACKET) => {
+                    // array construction
+                    array_creation_rest(p, m)
+                }
+                _ => {
+                    p.error_expected(&[L_PAREN, L_BRACKET]);
+                    m.complete(p, ERROR);
+                    Err(())
+                }
+            }
+        }
+        _ => {
+            m.abandon(p);
+            Err(())
+        }
+    }
+}
+
+fn array_creation_rest(p: &mut Parser, m: Marker) -> Result<CompletedMarker, ()> {
+    dimensions(p);
+
+    // array initializer
+    if p.at(L_BRACE) {
+        array_initializer(p);
     }
 
-    if p.pos() == start_pos {
-        p.error_expected_construct(ExpectedConstruct::Expression);
-        m.complete(p, ERROR);
-        Err(())
-    } else {
-        m.complete(p, EXPRESSION);
-        Ok(())
+    Ok(m.complete(p, NEW_EXPR))
+}
+
+pub fn expression(p: &mut Parser) -> Result<CompletedMarker, ()> {
+    expr_bp(p, 0)
+}
+
+#[stacksafe]
+fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
+    // Nud
+    let mut left = match expr_prefix(p) {
+        Ok(m) => m,
+        Err(_) => return Err(()),
+    };
+
+    // Led
+    while let Some(kind) = p.current() {
+        if let Some((l_bp, r_bp)) = get_infix_bp(kind) {
+            if l_bp < min_bp {
+                break;
+            }
+
+            let m = left.precede(p);
+
+            match kind {
+                DOT => {
+                    p.expect(DOT); // .
+                    p.expect(IDENTIFIER); // field name
+                    left = m.complete(p, FIELD_ACCESS);
+                }
+                L_PAREN => {
+                    // method invocation
+                    argument_list(p);
+                    left = m.complete(p, METHOD_CALL);
+                }
+                L_BRACKET => {
+                    // array access
+                    p.expect(L_BRACKET); // [
+                    expression(p)?; // expr inside []
+                    p.expect(R_BRACKET); // ]
+                    left = m.complete(p, ARRAY_ACCESS);
+                }
+                _ => {
+                    p.bump();
+                    expr_bp(p, r_bp)?;
+                    left = m.complete(p, BINARY_EXPR);
+                }
+            }
+            continue;
+        }
+        break;
     }
+
+    Ok(left)
 }
 
 pub fn is_expression_start(kind: SyntaxKind) -> bool {
