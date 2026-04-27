@@ -101,8 +101,8 @@ fn expr_prefix(p: &mut Parser) -> Result<CompletedMarker, ()> {
     let kind = p.current().ok_or(())?;
 
     match kind {
-        NUMBER_LIT | STRING_LIT | IDENTIFIER | THIS_KW | SUPER_KW | TRUE_LIT | FALSE_LIT
-        | NULL_LIT => {
+        NUMBER_LITERAL | STRING_LITERAL | IDENTIFIER | THIS_KW | SUPER_KW | TRUE_LITERAL
+        | FALSE_LITERAL | NULL_LITERAL => {
             p.bump();
             Ok(m.complete(p, LITERAL))
         }
@@ -187,8 +187,18 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
             match kind {
                 DOT => {
                     p.expect(DOT); // .
-                    p.expect(IDENTIFIER); // field name
-                    left = m.complete(p, FIELD_ACCESS);
+                    if p.at(CLASS_KW) {
+                        // https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-ClassLiteral
+                        p.bump();
+                        left = m.complete(p, CLASS_LITERAL);
+                    } else if p.at(IDENTIFIER) {
+                        // https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-FieldAccess
+                        p.bump();
+                        left = m.complete(p, FIELD_ACCESS);
+                    } else {
+                        p.error_message("Expected identifier or 'class' after '.'");
+                        left = m.complete(p, ERROR);
+                    }
                 }
                 L_PAREN => {
                     // method invocation
@@ -220,11 +230,11 @@ pub fn is_expression_start(kind: SyntaxKind) -> bool {
     matches!(
         kind,
         IDENTIFIER
-            | NUMBER_LIT
-            | STRING_LIT
-            | TRUE_LIT
-            | FALSE_LIT
-            | NULL_LIT
+            | NUMBER_LITERAL
+            | STRING_LITERAL
+            | TRUE_LITERAL
+            | FALSE_LITERAL
+            | NULL_LITERAL
             | THIS_KW
             | SUPER_KW
             | NEW_KW

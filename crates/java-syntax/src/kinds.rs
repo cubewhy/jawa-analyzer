@@ -13,18 +13,18 @@ pub enum SyntaxKind {
     L_BRACKET, // [
     R_BRACKET, // ]
 
-    STRING_LIT, // ""
-    NUMBER_LIT, // dec, hex, oct, bin
+    STRING_LITERAL, // ""
+    NUMBER_LITERAL, // dec, hex, oct, bin
     STRING_TEMPLATE_BEGIN,
     STRING_TEMPLATE_MID,
     STRING_TEMPLATE_END,
     TEXT_BLOCK_TEMPLATE_BEGIN,
     TEXT_BLOCK_TEMPLATE_MID,
     TEXT_BLOCK_TEMPLATE_END,
-    NULL_LIT,       // null
-    TRUE_LIT,       // true
-    FALSE_LIT,      // false
-    CHAR_LIT,       // ''
+    NULL_LITERAL,   // null
+    TRUE_LITERAL,   // true
+    FALSE_LITERAL,  // false
+    CHAR_LITERAL,   // ''
     SEMICOLON,      // ;
     DOT,            // .
     AT,             // @
@@ -149,6 +149,7 @@ pub enum SyntaxKind {
     METHOD_CALL,     // method()
     NEW_EXPR,        // new Object()
     LITERAL,
+    CLASS_LITERAL,
     PAREN_EXPR,
     UNARY_EXPR,
     FIELD_ACCESS,

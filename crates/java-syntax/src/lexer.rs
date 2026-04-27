@@ -46,7 +46,7 @@ impl TemplateKind {
 
     fn literal_token(self) -> SyntaxKind {
         match self {
-            TemplateKind::String => SyntaxKind::STRING_LIT,
+            TemplateKind::String => SyntaxKind::STRING_LITERAL,
             TemplateKind::TextBlock => SyntaxKind::TEXT_BLOCK,
         }
     }
@@ -377,7 +377,7 @@ impl<'a> Lexer<'a> {
             self.report_error(LexicalErrorKind::InvalidNumber);
         }
 
-        self.push_token(SyntaxKind::NUMBER_LIT);
+        self.push_token(SyntaxKind::NUMBER_LITERAL);
     }
 
     fn handle_dot(&mut self) {
@@ -643,9 +643,9 @@ impl<'a> Lexer<'a> {
             "byte" => SyntaxKind::BYTE_KW,
 
             // Seems like keywords but they are actually literals
-            "null" => SyntaxKind::NULL_LIT,
-            "true" => SyntaxKind::TRUE_LIT,
-            "false" => SyntaxKind::FALSE_LIT,
+            "null" => SyntaxKind::NULL_LITERAL,
+            "true" => SyntaxKind::TRUE_LITERAL,
+            "false" => SyntaxKind::FALSE_LITERAL,
 
             // reserved keywords
             "goto" => SyntaxKind::GOTO_KW,
@@ -735,7 +735,7 @@ impl<'a> Lexer<'a> {
             self.report_error(LexicalErrorKind::InvalidChar);
         }
 
-        self.push_token(SyntaxKind::CHAR_LIT);
+        self.push_token(SyntaxKind::CHAR_LITERAL);
     }
 
     fn scan_quoted_content(&mut self, kind: TemplateKind, role: TemplateChunkRole) {

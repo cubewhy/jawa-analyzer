@@ -240,7 +240,7 @@ fn switch_label(p: &mut Parser) {
         // parse the patterns
         let mut meet_null = false;
         loop {
-            if p.eat(NULL_LIT) {
+            if p.eat(NULL_LITERAL) {
                 meet_null = true;
             } else if p.eat(DEFAULT_KW) {
                 if !meet_null {
