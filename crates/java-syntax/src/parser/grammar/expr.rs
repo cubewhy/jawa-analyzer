@@ -241,11 +241,7 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
                     p.expect(R_BRACKET); // ]
                     left = m.complete(p, ARRAY_ACCESS);
                 }
-                PLUS_PLUS => {
-                    p.bump();
-                    left = m.complete(p, POSTFIX_EXPR);
-                }
-                MINUS_MINUS => {
+                PLUS_PLUS | MINUS_MINUS => {
                     p.bump();
                     left = m.complete(p, POSTFIX_EXPR);
                 }
