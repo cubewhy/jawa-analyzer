@@ -6,8 +6,9 @@ use crate::{
         decl::class_body,
         error_recover::{recover_parameter, recover_until},
         modifiers::annotation,
+        names::qualified_name,
         stmt::switch_common,
-        types::{dimensions, reference_type, type_},
+        types::{at_primitive_type, dimensions, reference_type, type_},
     },
     kinds::SyntaxKind::*,
     parser::{
@@ -163,7 +164,11 @@ fn new_expression(p: &mut Parser) -> Result<CompletedMarker, ()> {
     p.expect(NEW_KW);
 
     // type
-    type_(p).ok();
+    if at_primitive_type(p) {
+        p.bump();
+    } else {
+        qualified_name(p);
+    }
 
     match p.current() {
         Some(L_PAREN) => {
