@@ -35,6 +35,7 @@ pub fn argument_list(p: &mut Parser) {
     m.complete(p, ARGUMENT_LIST);
 }
 
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-10.html#jls-ArrayInitializer
 pub fn array_initializer(p: &mut Parser) {
     let m = p.start();
 
@@ -135,6 +136,10 @@ fn expr_prefix(p: &mut Parser) -> Result<CompletedMarker, ()> {
     }
 }
 
+/// UnqualifiedClassInstanceCreationExpression:
+///   new [TypeArguments] ClassOrInterfaceTypeToInstantiate ( [ArgumentList] ) [ClassBody]
+///
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-UnqualifiedClassInstanceCreationExpression
 fn new_expression(p: &mut Parser) -> Result<CompletedMarker, ()> {
     let m = p.start();
     p.expect(NEW_KW);
@@ -147,7 +152,6 @@ fn new_expression(p: &mut Parser) -> Result<CompletedMarker, ()> {
             // object construction
             argument_list(p);
 
-            // abstract class, interface
             if p.at(L_BRACE) {
                 class_body(p);
             }
@@ -165,6 +169,7 @@ fn new_expression(p: &mut Parser) -> Result<CompletedMarker, ()> {
     }
 }
 
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.10.1
 fn array_creation_rest(p: &mut Parser, m: Marker) -> Result<CompletedMarker, ()> {
     dimensions(p);
 
@@ -176,6 +181,7 @@ fn array_creation_rest(p: &mut Parser, m: Marker) -> Result<CompletedMarker, ()>
     Ok(m.complete(p, NEW_EXPR))
 }
 
+/// https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html
 pub fn expression(p: &mut Parser) -> Result<CompletedMarker, ()> {
     expr_bp(p, 0)
 }
