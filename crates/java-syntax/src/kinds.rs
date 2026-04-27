@@ -148,6 +148,7 @@ pub enum SyntaxKind {
     NEW_EXPR,        // new Object()
     CAST_EXPR,
     SWITCH_EXPR,
+    COND_EXPR,
     LITERAL,
     CLASS_LITERAL,
     PAREN_EXPR,

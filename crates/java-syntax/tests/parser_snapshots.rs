@@ -663,3 +663,14 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_conditional_expr,
+    indoc! {r#"
+        class Test {
+            void test() {
+                int max = num1 > num2? num1 : num2;
+            }
+        }
+    "#}
+);

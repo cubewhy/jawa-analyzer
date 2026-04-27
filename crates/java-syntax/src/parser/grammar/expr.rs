@@ -247,6 +247,27 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
                     p.bump();
                     left = m.complete(p, POSTFIX_EXPR);
                 }
+                QUESTION => {
+                    p.bump(); // ?
+
+                    if expression(p).is_err() {
+                        m.complete(p, ERROR);
+                        return Err(());
+                    }
+
+                    // :
+                    if !p.expect(COLON) {
+                        m.complete(p, ERROR);
+                        return Err(());
+                    }
+
+                    if expr_bp(p, r_bp).is_err() {
+                        m.complete(p, ERROR);
+                        return Err(());
+                    }
+
+                    left = m.complete(p, COND_EXPR);
+                }
 
                 _ => {
                     p.bump();
