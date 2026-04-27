@@ -651,3 +651,15 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    // alias: ConditionalExpression, conditional_expression
+    parse_binary_expr,
+    indoc! {r#"
+        class Test {
+            void test() {
+                if (a && b || c) {}
+            }
+        }
+    "#}
+);
