@@ -800,7 +800,8 @@ fn expression_statement(p: &mut Parser) {
         Err(_) => {
             p.error_expected_construct(ExpectedConstruct::Statement);
             recover_block_statement(p);
-            m.complete(p, ERROR);
+            // expression will construct the ERROR node
+            m.abandon(p);
             return;
         }
     };
