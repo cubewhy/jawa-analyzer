@@ -41,7 +41,7 @@ pub fn argument_list(p: &mut Parser) {
 }
 
 /// https://docs.oracle.com/javase/specs/jls/se26/html/jls-10.html#jls-ArrayInitializer
-pub fn array_initializer(p: &mut Parser) {
+pub fn array_initializer(p: &mut Parser) -> CompletedMarker {
     let m = p.start();
 
     p.expect(L_BRACE); // {
@@ -59,7 +59,7 @@ pub fn array_initializer(p: &mut Parser) {
 
     p.expect(R_BRACE);
 
-    m.complete(p, ARRAY_INITIALIZER);
+    m.complete(p, ARRAY_INITIALIZER)
 }
 
 fn get_infix_bp(kind: SyntaxKind) -> Option<(u8, u8)> {
@@ -170,6 +170,8 @@ fn expr_prefix(p: &mut Parser) -> Result<CompletedMarker, ()> {
             }
             Ok(m.complete(p, UNARY_EXPR))
         }
+
+        L_BRACE => Ok(array_initializer(p)),
 
         NEW_KW => new_expression(p),
         _ => Err(()),

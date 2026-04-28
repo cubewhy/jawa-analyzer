@@ -834,3 +834,12 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_array_initialize_expr,
+    indoc! {r#"
+        class Test {
+            String[] STRING_ARRAY = {"a", "b", "c"};
+        }
+    "#}
+);
