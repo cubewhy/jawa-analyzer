@@ -1,8 +1,4 @@
-use crate::{
-    grammar::types::type_,
-    kinds::SyntaxKind::*,
-    parser::{Parser, grammar::names::qualified_name},
-};
+use crate::{grammar::types::type_, kinds::SyntaxKind::*, parser::Parser};
 
 pub fn throws_clause_opt(p: &mut Parser) {
     if p.at(THROWS_KW) {
@@ -14,7 +10,10 @@ pub fn throws_clause(p: &mut Parser) {
     let m = p.start();
     p.expect(THROWS_KW);
 
-    qualified_name(p);
+    type_(p).ok();
+    while p.eat(COMMA) {
+        type_(p).ok();
+    }
 
     m.complete(p, THROWS_CLAUSE);
 }

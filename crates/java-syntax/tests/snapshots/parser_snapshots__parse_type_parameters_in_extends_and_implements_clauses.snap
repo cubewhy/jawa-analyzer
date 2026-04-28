@@ -130,9 +130,10 @@ ROOT
         THROWS_CLAUSE
           WHITESPACE " "
           THROWS_KW "throws"
-          QUALIFIED_NAME
+          TYPE
             WHITESPACE " "
-            IDENTIFIER "Exception"
+            QUALIFIED_NAME
+              IDENTIFIER "Exception"
         BLOCK
           WHITESPACE " "
           L_BRACE "{"

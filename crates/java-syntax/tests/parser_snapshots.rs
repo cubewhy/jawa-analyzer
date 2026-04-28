@@ -825,3 +825,12 @@ parser_snapshot!(
         interface C<T> extends B<T> {}
     "#}
 );
+
+parser_snapshot!(
+    parse_multiple_exceptions_in_throws_clause,
+    indoc! {r#"
+        class Test {
+            void func() throws IOException, ArrayIndexOutOfBoundsException {}
+        }
+    "#}
+);

@@ -4,7 +4,7 @@ expression: out
 ---
 SOURCE:
 class Test {
-    void func() throws Exception {}
+    void func() throws IOException, ArrayIndexOutOfBoundsException {}
 }
 
 TOKENS:
@@ -22,7 +22,10 @@ R_PAREN ")"
 WHITESPACE " "
 THROWS_KW "throws"
 WHITESPACE " "
-IDENTIFIER "Exception"
+IDENTIFIER "IOException"
+COMMA ","
+WHITESPACE " "
+IDENTIFIER "ArrayIndexOutOfBoundsException"
 WHITESPACE " "
 L_BRACE "{"
 R_BRACE "}"
@@ -56,7 +59,12 @@ ROOT
           TYPE
             WHITESPACE " "
             QUALIFIED_NAME
-              IDENTIFIER "Exception"
+              IDENTIFIER "IOException"
+          COMMA ","
+          TYPE
+            WHITESPACE " "
+            QUALIFIED_NAME
+              IDENTIFIER "ArrayIndexOutOfBoundsException"
         BLOCK
           WHITESPACE " "
           L_BRACE "{"
