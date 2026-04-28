@@ -1,0 +1,19 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+;
+
+TOKENS:
+SEMICOLON ";"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT
+  EMPTY_DECL
+    SEMICOLON ";"
+  WHITESPACE "\n"

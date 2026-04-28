@@ -1,4 +1,8 @@
-use crate::{kinds::SyntaxKind, kinds::SyntaxKind::*, parser::Parser};
+use crate::{
+    kinds::SyntaxKind::{self, *},
+    parser::Parser,
+    tokenset,
+};
 
 fn recover_until_internal<F>(p: &mut Parser, recovery: &[SyntaxKind], mut is_contextual: F)
 where
@@ -24,7 +28,7 @@ pub fn recover_until_or_eat(p: &mut Parser, recovery: &[SyntaxKind], eat_if_pres
 }
 
 pub fn recover_decl(p: &mut Parser) {
-    recover_until_or_eat(
+    recover_until(
         p,
         &[
             SEMICOLON,
@@ -35,8 +39,10 @@ pub fn recover_decl(p: &mut Parser) {
             INTERFACE_KW,
             ENUM_KW,
         ],
-        SEMICOLON,
     );
+    if p.at_set(tokenset![R_BRACE]) {
+        p.bump();
+    }
 }
 
 pub fn recover_member(p: &mut Parser) {

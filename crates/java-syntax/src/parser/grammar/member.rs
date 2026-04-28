@@ -77,9 +77,6 @@ pub fn class_member_decl(p: &mut Parser) {
         record_decl_rest(p, m);
     } else if p.at(AT) && p.nth(1) == Some(INTERFACE_KW) {
         annotation_type_decl_rest(p, m);
-    } else if p.at(SEMICOLON) {
-        p.bump();
-        m.complete(p, EMPTY_DECL);
     } else {
         member_decl_rest(p, m);
     }
@@ -120,9 +117,6 @@ pub fn record_member_decl(p: &mut Parser) {
         record_decl_rest(p, m);
     } else if p.at(AT) && p.nth(1) == Some(INTERFACE_KW) {
         annotation_type_decl_rest(p, m);
-    } else if p.at(SEMICOLON) {
-        p.bump();
-        m.complete(p, EMPTY_DECL);
     } else {
         member_decl_rest(p, m);
     }
@@ -162,6 +156,13 @@ fn is_constructor_like(p: &Parser) -> bool {
 }
 
 pub fn member_decl_rest(p: &mut Parser, m: Marker) {
+    // empty decl
+    if p.at(SEMICOLON) {
+        p.bump();
+        m.complete(p, EMPTY_DECL);
+        return;
+    }
+
     // method type parameters (generics), e.g. <T> void f() {}
     type_parameters_opt(p);
 
@@ -228,9 +229,6 @@ pub fn interface_member_decl(p: &mut Parser) {
         record_decl_rest(p, m);
     } else if p.at(AT) && p.nth(1) == Some(INTERFACE_KW) {
         annotation_type_decl_rest(p, m);
-    } else if p.at(SEMICOLON) {
-        p.bump();
-        m.complete(p, EMPTY_DECL);
     } else {
         member_decl_rest(p, m);
     }
@@ -289,9 +287,6 @@ pub fn annotation_type_member_decl(p: &mut Parser) {
         record_decl_rest(p, m);
     } else if p.at(AT) && p.nth(1) == Some(INTERFACE_KW) {
         annotation_type_decl_rest(p, m);
-    } else if p.at(SEMICOLON) {
-        p.bump();
-        m.complete(p, EMPTY_DECL);
     } else {
         annotation_type_member_decl_rest(p, m);
     }

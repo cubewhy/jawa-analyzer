@@ -843,3 +843,10 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_top_level_empty_decl,
+    indoc! {r#"
+        ;
+    "#}
+);
