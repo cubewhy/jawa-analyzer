@@ -1,0 +1,259 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+package com.example;
+
+import java.util.ArrayList;
+
+class Test {
+    java.util.List<java.lang.String> test() {
+        java.util.List<java.lang.String> l = new ArrayList<>();
+        l.add(new com.example.Test().toString());
+
+        return l;
+    }
+}
+
+TOKENS:
+PACKAGE_KW "package"
+WHITESPACE " "
+IDENTIFIER "com"
+DOT "."
+IDENTIFIER "example"
+SEMICOLON ";"
+WHITESPACE "\n\n"
+IMPORT_KW "import"
+WHITESPACE " "
+IDENTIFIER "java"
+DOT "."
+IDENTIFIER "util"
+DOT "."
+IDENTIFIER "ArrayList"
+SEMICOLON ";"
+WHITESPACE "\n\n"
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+IDENTIFIER "java"
+DOT "."
+IDENTIFIER "util"
+DOT "."
+IDENTIFIER "List"
+LESS "<"
+IDENTIFIER "java"
+DOT "."
+IDENTIFIER "lang"
+DOT "."
+IDENTIFIER "String"
+GREATER ">"
+WHITESPACE " "
+IDENTIFIER "test"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+IDENTIFIER "java"
+DOT "."
+IDENTIFIER "util"
+DOT "."
+IDENTIFIER "List"
+LESS "<"
+IDENTIFIER "java"
+DOT "."
+IDENTIFIER "lang"
+DOT "."
+IDENTIFIER "String"
+GREATER ">"
+WHITESPACE " "
+IDENTIFIER "l"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+NEW_KW "new"
+WHITESPACE " "
+IDENTIFIER "ArrayList"
+LESS "<"
+GREATER ">"
+L_PAREN "("
+R_PAREN ")"
+SEMICOLON ";"
+WHITESPACE "\n        "
+IDENTIFIER "l"
+DOT "."
+IDENTIFIER "add"
+L_PAREN "("
+NEW_KW "new"
+WHITESPACE " "
+IDENTIFIER "com"
+DOT "."
+IDENTIFIER "example"
+DOT "."
+IDENTIFIER "Test"
+L_PAREN "("
+R_PAREN ")"
+DOT "."
+IDENTIFIER "toString"
+L_PAREN "("
+R_PAREN ")"
+R_PAREN ")"
+SEMICOLON ";"
+WHITESPACE "\n\n        "
+RETURN_KW "return"
+WHITESPACE " "
+IDENTIFIER "l"
+SEMICOLON ";"
+WHITESPACE "\n    "
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT
+  PACKAGE_DECL
+    PACKAGE_KW "package"
+    QUALIFIED_NAME
+      WHITESPACE " "
+      IDENTIFIER "com"
+      DOT "."
+      IDENTIFIER "example"
+    SEMICOLON ";"
+  IMPORT_DECL
+    WHITESPACE "\n\n"
+    IMPORT_KW "import"
+    IMPORT_PATH
+      WHITESPACE " "
+      IDENTIFIER "java"
+      DOT "."
+      IDENTIFIER "util"
+      DOT "."
+      IDENTIFIER "ArrayList"
+    SEMICOLON ";"
+  CLASS_DECL
+    WHITESPACE "\n\n"
+    CLASS_KW "class"
+    WHITESPACE " "
+    IDENTIFIER "Test"
+    CLASS_BODY
+      WHITESPACE " "
+      L_BRACE "{"
+      METHOD_DECL
+        TYPE
+          QUALIFIED_NAME
+            WHITESPACE "\n    "
+            IDENTIFIER "java"
+            DOT "."
+            IDENTIFIER "util"
+            DOT "."
+            IDENTIFIER "List"
+          TYPE_ARGUMENTS
+            LESS "<"
+            TYPE_ARGUMENT
+              TYPE
+                QUALIFIED_NAME
+                  IDENTIFIER "java"
+                  DOT "."
+                  IDENTIFIER "lang"
+                  DOT "."
+                  IDENTIFIER "String"
+            GREATER ">"
+        WHITESPACE " "
+        IDENTIFIER "test"
+        FORMAL_PARAMETERS
+          L_PAREN "("
+          R_PAREN ")"
+        BLOCK
+          WHITESPACE " "
+          L_BRACE "{"
+          LOCAL_VARIABLE_DECLARATION_STMT
+            LOCAL_VARIABLE_DECLARATION
+              TYPE
+                QUALIFIED_NAME
+                  WHITESPACE "\n        "
+                  IDENTIFIER "java"
+                  DOT "."
+                  IDENTIFIER "util"
+                  DOT "."
+                  IDENTIFIER "List"
+                TYPE_ARGUMENTS
+                  LESS "<"
+                  TYPE_ARGUMENT
+                    TYPE
+                      QUALIFIED_NAME
+                        IDENTIFIER "java"
+                        DOT "."
+                        IDENTIFIER "lang"
+                        DOT "."
+                        IDENTIFIER "String"
+                  GREATER ">"
+              VARIABLE_DECLARATOR_LIST
+                VARIABLE_DECLARATOR
+                  WHITESPACE " "
+                  IDENTIFIER "l"
+                  WHITESPACE " "
+                  EQUAL "="
+                  NEW_EXPR
+                    WHITESPACE " "
+                    NEW_KW "new"
+                    QUALIFIED_NAME
+                      WHITESPACE " "
+                      IDENTIFIER "ArrayList"
+                    TYPE_ARGUMENTS
+                      LESS "<"
+                      GREATER ">"
+                    ARGUMENT_LIST
+                      L_PAREN "("
+                      R_PAREN ")"
+            SEMICOLON ";"
+          EXPRESSION_STMT
+            METHOD_CALL
+              FIELD_ACCESS
+                LITERAL
+                  WHITESPACE "\n        "
+                  IDENTIFIER "l"
+                DOT "."
+                IDENTIFIER "add"
+              ARGUMENT_LIST
+                L_PAREN "("
+                METHOD_CALL
+                  FIELD_ACCESS
+                    NEW_EXPR
+                      NEW_KW "new"
+                      QUALIFIED_NAME
+                        WHITESPACE " "
+                        IDENTIFIER "com"
+                        DOT "."
+                        IDENTIFIER "example"
+                        DOT "."
+                        IDENTIFIER "Test"
+                      ARGUMENT_LIST
+                        L_PAREN "("
+                        R_PAREN ")"
+                    DOT "."
+                    IDENTIFIER "toString"
+                  ARGUMENT_LIST
+                    L_PAREN "("
+                    R_PAREN ")"
+                R_PAREN ")"
+            SEMICOLON ";"
+          RETURN_STMT
+            WHITESPACE "\n\n        "
+            RETURN_KW "return"
+            LITERAL
+              WHITESPACE " "
+              IDENTIFIER "l"
+            SEMICOLON ";"
+          WHITESPACE "\n    "
+          R_BRACE "}"
+      WHITESPACE "\n"
+      R_BRACE "}"
+  WHITESPACE "\n"
