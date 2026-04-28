@@ -724,3 +724,17 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_this,
+    indoc! {r#"
+        class Test {
+            String field;
+            void test() {
+                this.test(this.field);
+            }
+
+            void test(String s) {}
+        }
+    "#}
+);
