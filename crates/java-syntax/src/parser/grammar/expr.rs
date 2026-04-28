@@ -59,7 +59,7 @@ pub fn array_initializer(p: &mut Parser) {
     m.complete(p, ARRAY_INITIALIZER);
 }
 
-fn get_infix_bp(p: &Parser, kind: SyntaxKind) -> Option<(u8, u8)> {
+fn get_infix_bp(kind: SyntaxKind) -> Option<(u8, u8)> {
     let bp = match kind {
         // assignment
         EQUAL
@@ -91,9 +91,6 @@ fn get_infix_bp(p: &Parser, kind: SyntaxKind) -> Option<(u8, u8)> {
 
         // Equality Operators
         EQUAL_EQUAL | NOT_EQUAL => (15, 16),
-
-        // LESS if is_method_ref_lookahead(p) => (27, 28),
-        // L_BRACKET if is_array_type_lookahead(p) => (27, 28),
 
         // compare and type checking
         LESS | LESS_EQUAL | GREATER | GREATER_EQUAL | INSTANCEOF_KW => (17, 18),
@@ -258,7 +255,7 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
 
     // Led
     while let Some(kind) = p.current() {
-        if let Some((l_bp, r_bp)) = get_infix_bp(p, kind) {
+        if let Some((l_bp, r_bp)) = get_infix_bp(kind) {
             if l_bp < min_bp {
                 break;
             }
@@ -383,14 +380,6 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
     }
 
     Ok(left)
-}
-
-fn is_array_type_lookahead(p: &Parser) -> bool {
-    let mut i = 0;
-    while p.nth(i) == Some(L_BRACKET) && p.nth(i + 1) == Some(R_BRACKET) {
-        i += 2;
-    }
-    p.nth(i) == Some(COLON_COLON)
 }
 
 fn is_method_ref_lookahead(p: &Parser) -> bool {
