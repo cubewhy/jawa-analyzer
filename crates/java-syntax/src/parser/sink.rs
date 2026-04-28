@@ -92,6 +92,7 @@ impl<'a> Sink<'a> {
 
                     for kind in kinds.into_iter().rev() {
                         self.builder.start_node(kind.into());
+                        self.eat_trivia();
                     }
                 }
                 Event::FinishNode => {
