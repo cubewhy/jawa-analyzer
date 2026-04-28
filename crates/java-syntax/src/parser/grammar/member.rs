@@ -37,6 +37,7 @@ pub fn at_member_start(p: &Parser) -> bool {
         PUBLIC_KW,
         PRIVATE_KW,
         PROTECTED_KW,
+        SYNCHRONIZED_KW,
         FINAL_KW,
         ABSTRACT_KW,
         AT,
