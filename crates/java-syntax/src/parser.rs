@@ -260,13 +260,6 @@ impl<'a> Parser<'a> {
         self.error(ParseErrorKind::ExpectedConstruct(construct));
     }
 
-    pub(crate) fn error_and_bump(&mut self, msg: &'static str) {
-        self.error(ParseErrorKind::Message(msg));
-        if !self.source.is_at_end() {
-            self.bump();
-        }
-    }
-
     pub(crate) fn is_at_end(&self) -> bool {
         self.source.is_at_end()
     }
