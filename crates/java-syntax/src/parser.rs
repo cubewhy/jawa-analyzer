@@ -101,7 +101,6 @@ pub enum EntryPoint {
     Block,
     ClassBody,
     InterfaceBody,
-    BlockStatement,
     SwitchBlock,
     AnnotationTypeBody,
     EnumBody,

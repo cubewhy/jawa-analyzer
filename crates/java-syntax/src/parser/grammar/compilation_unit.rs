@@ -17,7 +17,6 @@ pub fn partial(p: &mut Parser, entry: EntryPoint) {
         EntryPoint::RecordBody => decl::record_body(p),
         EntryPoint::ModuleBody => decl::module_body(p),
         EntryPoint::AnnotationTypeBody => decl::annotation_type_body(p),
-        EntryPoint::BlockStatement => stmt::block_statement(p),
         EntryPoint::SwitchBlock => stmt::switch_block(p),
         EntryPoint::ArrayInitializer => {
             expr::array_initializer(p);
