@@ -1,6 +1,6 @@
 use crate::kinds::SyntaxKind;
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Token<'source> {
     pub kind: SyntaxKind,
     pub lexeme: &'source str,

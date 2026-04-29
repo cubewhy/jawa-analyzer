@@ -46,6 +46,10 @@ impl Parse {
         rowan::SyntaxNode::new_root(self.green_node)
     }
 
+    pub fn into_green_node(self) -> rowan::GreenNode {
+        self.green_node
+    }
+
     pub fn errors(&self) -> &[ParseError] {
         &self.errors
     }
@@ -107,6 +111,27 @@ pub enum EntryPoint {
     RecordBody,
     ModuleBody,
     ArrayInitializer,
+}
+
+impl TryFrom<SyntaxKind> for EntryPoint {
+    type Error = ();
+
+    fn try_from(value: SyntaxKind) -> Result<Self, Self::Error> {
+        match value {
+            ROOT => Ok(Self::Root),
+            BLOCK => Ok(Self::Block),
+            CLASS_BODY => Ok(Self::ClassBody),
+            INTERFACE_BODY => Ok(Self::InterfaceBody),
+            SWITCH_BLOCK => Ok(Self::SwitchBlock),
+            ANNOTATION_TYPE_BODY => Ok(Self::AnnotationTypeBody),
+            ENUM_BODY => Ok(Self::EnumBody),
+            RECORD_BODY => Ok(Self::RecordBody),
+            MODULE_BODY => Ok(Self::ModuleBody),
+            ARRAY_INITIALIZER => Ok(Self::ArrayInitializer),
+
+            _ => Err(()),
+        }
+    }
 }
 
 pub struct Parser<'a> {
@@ -324,11 +349,15 @@ impl<'a> Parser<'a> {
 }
 
 pub fn parse(input: &str) -> Parse {
+    parse_partial(input, EntryPoint::Root)
+}
+
+pub fn parse_partial(input: &str, entry: EntryPoint) -> Parse {
     let tokens = match crate::lexer::lex(input) {
         Ok(tokens) => tokens,
         Err((tokens, _errors)) => tokens,
     };
-    Parser::new(tokens).parse(EntryPoint::Root)
+    Parser::new(tokens).parse(entry)
 }
 
 #[derive(Clone, Copy)]

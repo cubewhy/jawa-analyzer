@@ -1,3 +1,4 @@
+pub mod incremental;
 pub(crate) mod kinds;
 pub(crate) mod lexer;
 pub(crate) mod parser;
