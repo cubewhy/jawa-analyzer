@@ -103,6 +103,11 @@ pub enum EntryPoint {
     InterfaceBody,
     BlockStatement,
     SwitchBlock,
+    AnnotationTypeBody,
+    EnumBody,
+    RecordBody,
+    ModuleBody,
+    ArrayInitializer,
 }
 
 pub struct Parser<'a> {

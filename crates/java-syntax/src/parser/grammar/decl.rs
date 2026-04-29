@@ -91,7 +91,7 @@ fn module_decl_rest(p: &mut Parser, m: Marker) {
     m.complete(p, MODULE_DECL);
 }
 
-fn module_body(p: &mut Parser) {
+pub fn module_body(p: &mut Parser) {
     let m = p.start();
 
     p.expect(L_BRACE);
@@ -244,7 +244,7 @@ pub fn annotation_type_decl_rest(p: &mut Parser, m: Marker) {
     m.complete(p, ANNOTATION_TYPE_DECL);
 }
 
-fn annotation_type_body(p: &mut Parser) {
+pub fn annotation_type_body(p: &mut Parser) {
     let m = p.start();
     p.expect(L_BRACE);
     while !p.is_at_end() && !p.at(R_BRACE) {
@@ -277,7 +277,7 @@ pub fn record_decl_rest(p: &mut Parser, m: Marker) {
     m.complete(p, RECORD_DECL);
 }
 
-fn record_body(p: &mut Parser) {
+pub fn record_body(p: &mut Parser) {
     let m = p.start();
     p.expect(L_BRACE);
     while !p.is_at_end() && !p.at(R_BRACE) {
@@ -356,7 +356,7 @@ pub fn class_body(p: &mut Parser) {
 /// [annotations] <identifier> [argument_list] [class_body]
 ///
 /// After the optional ';', enum body members are class-like members.
-fn enum_body(p: &mut Parser) {
+pub fn enum_body(p: &mut Parser) {
     let m = p.start();
     p.expect(L_BRACE);
 

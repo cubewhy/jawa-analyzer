@@ -1,5 +1,5 @@
 use crate::{
-    grammar::stmt,
+    grammar::{expr, stmt},
     kinds::SyntaxKind::*,
     parser::{
         EntryPoint, Parser,
@@ -13,8 +13,15 @@ pub fn partial(p: &mut Parser, entry: EntryPoint) {
         EntryPoint::Block => stmt::block(p),
         EntryPoint::ClassBody => decl::class_body(p),
         EntryPoint::InterfaceBody => decl::interface_body(p),
+        EntryPoint::EnumBody => decl::enum_body(p),
+        EntryPoint::RecordBody => decl::record_body(p),
+        EntryPoint::ModuleBody => decl::module_body(p),
+        EntryPoint::AnnotationTypeBody => decl::annotation_type_body(p),
         EntryPoint::BlockStatement => stmt::block_statement(p),
         EntryPoint::SwitchBlock => stmt::switch_block(p),
+        EntryPoint::ArrayInitializer => {
+            expr::array_initializer(p);
+        }
     }
 }
 
