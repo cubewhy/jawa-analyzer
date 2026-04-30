@@ -645,11 +645,15 @@ fn additional_bounds(p: &mut Parser) {
 fn is_type_cast_lookahead(p: &mut Parser) -> bool {
     let ckpt = p.checkpoint();
 
+    let is_primitive = at_primitive_type(p);
+
     // PrimitiveType | ReferenceType
     let first_type_ok = type_(p).is_ok();
 
     // {AdditionalBound}
+    let mut has_additional_bounds = false;
     if first_type_ok && p.at(BIT_AND) {
+        has_additional_bounds = true;
         while p.eat(BIT_AND) {
             if reference_type(p).is_err() {
                 break;
@@ -660,7 +664,14 @@ fn is_type_cast_lookahead(p: &mut Parser) -> bool {
     let has_r_paren = p.at(R_PAREN);
     let is_cast = if has_r_paren {
         p.bump(); // )
-        is_expression_start(p.current().unwrap_or(UNKNOWN))
+        let next_token = p.current().unwrap_or(UNKNOWN);
+
+        if is_primitive && !has_additional_bounds {
+            is_expression_start(next_token)
+        } else {
+            is_expression_start(next_token)
+                && !matches!(next_token, PLUS | MINUS | PLUS_PLUS | MINUS_MINUS)
+        }
     } else {
         false
     };

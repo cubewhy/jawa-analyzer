@@ -606,6 +606,20 @@ parser_snapshot!(
 );
 
 parser_snapshot!(
+    parse_type_cast_unary_expression_not_plus_minus,
+    indoc! {r#"
+        class Test {
+            void test() {
+                var b = 0;
+                var a = (int)-b;
+
+                var c = (b)-a;
+            }
+        }
+    "#}
+);
+
+parser_snapshot!(
     parse_type_cast_expr_with_bounds,
     indoc! {r#"
         class Test {

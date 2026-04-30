@@ -1,0 +1,153 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    void test() {
+        var b = 0;
+        var a = (int)-b;
+
+        var c = (b)-a;
+    }
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "test"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+IDENTIFIER "var"
+WHITESPACE " "
+IDENTIFIER "b"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+NUMBER_LITERAL "0"
+SEMICOLON ";"
+WHITESPACE "\n        "
+IDENTIFIER "var"
+WHITESPACE " "
+IDENTIFIER "a"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+L_PAREN "("
+INT_KW "int"
+R_PAREN ")"
+MINUS "-"
+IDENTIFIER "b"
+SEMICOLON ";"
+WHITESPACE "\n\n        "
+IDENTIFIER "var"
+WHITESPACE " "
+IDENTIFIER "c"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "b"
+R_PAREN ")"
+MINUS "-"
+IDENTIFIER "a"
+SEMICOLON ";"
+WHITESPACE "\n    "
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..107
+  CLASS_DECL@0..106
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    CLASS_BODY@10..106
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      METHOD_DECL@12..104
+        WHITESPACE@12..17 "\n    "
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "test"
+        FORMAL_PARAMETERS@26..28
+          L_PAREN@26..27 "("
+          R_PAREN@27..28 ")"
+        BLOCK@28..104
+          WHITESPACE@28..29 " "
+          L_BRACE@29..30 "{"
+          LOCAL_VARIABLE_DECLARATION_STMT@30..49
+            WHITESPACE@30..39 "\n        "
+            LOCAL_VARIABLE_DECLARATION@39..48
+              IDENTIFIER@39..42 "var"
+              VARIABLE_DECLARATOR_LIST@42..48
+                WHITESPACE@42..43 " "
+                VARIABLE_DECLARATOR@43..48
+                  IDENTIFIER@43..44 "b"
+                  WHITESPACE@44..45 " "
+                  EQUAL@45..46 "="
+                  LITERAL@46..48
+                    WHITESPACE@46..47 " "
+                    NUMBER_LITERAL@47..48 "0"
+            SEMICOLON@48..49 ";"
+          LOCAL_VARIABLE_DECLARATION_STMT@49..74
+            WHITESPACE@49..58 "\n        "
+            LOCAL_VARIABLE_DECLARATION@58..73
+              IDENTIFIER@58..61 "var"
+              VARIABLE_DECLARATOR_LIST@61..73
+                WHITESPACE@61..62 " "
+                VARIABLE_DECLARATOR@62..73
+                  IDENTIFIER@62..63 "a"
+                  WHITESPACE@63..64 " "
+                  EQUAL@64..65 "="
+                  CAST_EXPR@65..73
+                    WHITESPACE@65..66 " "
+                    L_PAREN@66..67 "("
+                    TYPE@67..70
+                      INT_KW@67..70 "int"
+                    R_PAREN@70..71 ")"
+                    UNARY_EXPR@71..73
+                      MINUS@71..72 "-"
+                      LITERAL@72..73
+                        IDENTIFIER@72..73 "b"
+            SEMICOLON@73..74 ";"
+          LOCAL_VARIABLE_DECLARATION_STMT@74..98
+            WHITESPACE@74..84 "\n\n        "
+            LOCAL_VARIABLE_DECLARATION@84..97
+              IDENTIFIER@84..87 "var"
+              VARIABLE_DECLARATOR_LIST@87..97
+                WHITESPACE@87..88 " "
+                VARIABLE_DECLARATOR@88..97
+                  IDENTIFIER@88..89 "c"
+                  WHITESPACE@89..90 " "
+                  EQUAL@90..91 "="
+                  BINARY_EXPR@91..97
+                    WHITESPACE@91..92 " "
+                    PAREN_EXPR@92..95
+                      L_PAREN@92..93 "("
+                      LITERAL@93..94
+                        IDENTIFIER@93..94 "b"
+                      R_PAREN@94..95 ")"
+                    MINUS@95..96 "-"
+                    LITERAL@96..97
+                      IDENTIFIER@96..97 "a"
+            SEMICOLON@97..98 ";"
+          WHITESPACE@98..103 "\n    "
+          R_BRACE@103..104 "}"
+      WHITESPACE@104..105 "\n"
+      R_BRACE@105..106 "}"
+  WHITESPACE@106..107 "\n"
