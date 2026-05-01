@@ -1,12 +1,13 @@
 [workspace]
 resolver = "3"
-members = ["crates/caffeine-ls", "crates/java-syntax", "lib/rust-asm", "xtask"]
+members = ["crates/*", "lib/*", "xtask/"]
 
 [workspace.dependencies]
 indoc = "2.0"
 insta = "1.47.2"
 anyhow = "1"
 tokio = "1"
+salsa = "0.26.1"
 stacksafe = "1.0"
 smallvec = "1.15.1"
 tracing = "0.1"
