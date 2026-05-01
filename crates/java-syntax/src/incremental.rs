@@ -65,33 +65,17 @@ fn is_boundary_safe_braces(new_text: &str) -> bool {
 }
 
 pub fn apply_edit_to_node(edit: &TextEdit, target_node: &SyntaxNode<Lang>) -> String {
-    let new_input = edit.text;
-    let node_range = target_node.text_range();
-    let node_start = u32::from(node_range.start());
+    let node_start = u32::from(target_node.text_range().start()) as usize;
 
-    let edit_start_u32 = edit.start as u32;
-    let edit_end_u32 = edit.end as u32;
+    let edit_start = edit.start;
+    let edit_end = edit.end;
 
-    let relative_start = TextSize::new(edit_start_u32.saturating_sub(node_start));
-    let relative_end = TextSize::new(edit_end_u32.saturating_sub(node_start));
+    let relative_start = edit_start.saturating_sub(node_start);
+    let relative_end = edit_end.saturating_sub(node_start);
 
-    let syntax_text = target_node.text();
+    let mut new_string = target_node.text().to_string();
 
-    let old_len = usize::from(syntax_text.len());
-    let replaced_len = usize::from(relative_end) - usize::from(relative_start);
-    let new_len = old_len - replaced_len + new_input.len();
-
-    let mut new_string = String::with_capacity(new_len);
-
-    syntax_text
-        .slice(TextRange::new(TextSize::new(0), relative_start))
-        .for_each_chunk(|chunk| new_string.push_str(chunk));
-
-    new_string.push_str(new_input);
-
-    syntax_text
-        .slice(TextRange::new(relative_end, syntax_text.len()))
-        .for_each_chunk(|chunk| new_string.push_str(chunk));
+    new_string.replace_range(relative_start..relative_end, edit.text);
 
     new_string
 }
