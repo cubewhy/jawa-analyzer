@@ -19,7 +19,7 @@ impl GlobalState {
         self.vfs.read().await
     }
 
-    pub async fn get_db_snapshot(&self) -> RootDatabase {
+    pub async fn db_snapshot(&self) -> RootDatabase {
         let db = self.db.lock().await;
         db.clone()
     }

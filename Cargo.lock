@@ -182,6 +182,7 @@ dependencies = [
  "tower-lsp",
  "tracing",
  "tracing-subscriber",
+ "triomphe",
  "windows-sys 0.61.2",
 ]
 

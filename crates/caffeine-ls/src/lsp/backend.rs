@@ -1,6 +1,9 @@
+use std::time::Duration;
+
 use base_db::SourceDatabase;
 use ra_ap_line_index::{LineIndex, WideEncoding, WideLineCol};
-use std::sync::Arc;
+use tokio::sync::mpsc;
+use triomphe::Arc;
 
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
@@ -16,17 +19,21 @@ use vfs::VfsPath;
 use crate::config::Config;
 use crate::global_state::GlobalState;
 use crate::lsp::capabilities;
+use crate::lsp::worker::{Action, Job};
 
 pub struct Backend {
     client: Client,
-    state: GlobalState,
+    state: Arc<GlobalState>,
+
+    worker_tx: mpsc::Sender<Job>,
 }
 
 impl Backend {
-    pub fn new(client: Client) -> Self {
+    pub fn new(client: Client, state: Arc<GlobalState>, worker_tx: mpsc::Sender<Job>) -> Self {
         Self {
             client,
-            state: GlobalState::default(),
+            state,
+            worker_tx,
         }
     }
 }
@@ -60,7 +67,11 @@ impl LanguageServer for Backend {
 
         let capabilities = capabilities::server_capabilities(&config);
 
-        self.state.config.swap(Some(Arc::new(Some(config))));
+        self.state
+            .config
+            .swap(Some(std::sync::Arc::new(Some(config))));
+
+        // initialize worker
 
         Ok(InitializeResult {
             server_info: Some(server_info()),
@@ -81,7 +92,18 @@ impl LanguageServer for Backend {
 
         if let Some(vfs_path) = to_vfs_path(&params.text_document.uri) {
             let mut vfs = self.state.vfs.write().await;
-            vfs.set_file_contents(vfs_path, Some(content));
+            vfs.set_file_contents(vfs_path.clone(), Some(content));
+
+            if let Some(file_id) = vfs.file_id(&vfs_path).map(|(id, _)| id) {
+                let _ = self
+                    .worker_tx
+                    .send(Job::file(
+                        file_id,
+                        Duration::ZERO,
+                        Action::FullParse(file_id),
+                    ))
+                    .await;
+            }
         } else {
             tracing::error!(
                 "Failed to convert URI to file path: {}",

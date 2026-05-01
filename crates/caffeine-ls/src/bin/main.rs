@@ -2,8 +2,10 @@ use std::{fs::File, path::PathBuf};
 
 use caffeine_ls::flags::Flags;
 use clap::Parser;
+use tokio::sync::mpsc;
 use tower_lsp::{LspService, Server};
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
+use triomphe::Arc;
 
 const STACK_SIZE: usize = 1024 * 1024 * 8;
 
@@ -93,7 +95,14 @@ async fn run_server() -> anyhow::Result<()> {
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
 
-    let (service, socket) = LspService::new(caffeine_ls::Backend::new);
+    let (service, socket) = LspService::new(move |client| {
+        let state = Arc::new(caffeine_ls::GlobalState::default());
+        let (worker_tx, worker_rx) = mpsc::channel(500);
+        let worker = caffeine_ls::Worker::new(client.clone(), state.clone(), worker_rx);
+        worker.spawn_in_background();
+
+        caffeine_ls::Backend::new(client, state, worker_tx)
+    });
     Server::new(stdin, stdout, socket).serve(service).await;
 
     tracing::info!("server did shut down");
