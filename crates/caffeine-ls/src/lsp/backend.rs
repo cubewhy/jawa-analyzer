@@ -1,3 +1,5 @@
+use base_db::SourceDatabase;
+use ra_ap_line_index::{LineIndex, WideEncoding, WideLineCol};
 use std::sync::Arc;
 
 use tower_lsp::jsonrpc::Result;
@@ -88,8 +90,68 @@ impl LanguageServer for Backend {
         }
     }
 
-    async fn did_change(&self, _params: DidChangeTextDocumentParams) {
-        // TODO: update file content in salsa db
+    async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        if let Some(vfs_path) = to_vfs_path(&params.text_document.uri) {
+            let vfs = self.state.get_vfs().await;
+
+            let Some(file_id) = vfs.file_id(&vfs_path).map(|(id, _excluded)| id) else {
+                // LSP client issue
+                tracing::error!("File not found in vfs: {}", params.text_document.uri);
+                return;
+            };
+
+            drop(vfs);
+
+            // get the file in salsa
+            let mut db = self.state.lock_db().await;
+            let file_text = db.file_text(file_id);
+            let file_content = file_text.text(&*db);
+
+            let mut text = file_content.to_string();
+
+            // apply edits
+            for edit in params.content_changes {
+                if let Some(range) = edit.range {
+                    // incremental edit
+                    let line_index = LineIndex::new(&text);
+
+                    let start_wide = WideLineCol {
+                        line: range.start.line,
+                        col: range.start.character,
+                    };
+                    let start_line_col = line_index
+                        .to_utf8(WideEncoding::Utf16, start_wide)
+                        .expect("Invalid start position");
+                    let start_offset = line_index
+                        .offset(start_line_col)
+                        .expect("Start offset out of bounds");
+                    let start = u32::from(start_offset) as usize;
+
+                    let end_wide = WideLineCol {
+                        line: range.end.line,
+                        col: range.end.character,
+                    };
+                    let end_line_col = line_index
+                        .to_utf8(WideEncoding::Utf16, end_wide)
+                        .expect("Invalid end position");
+                    let end_offset = line_index
+                        .offset(end_line_col)
+                        .expect("End offset out of bounds");
+                    let end = u32::from(end_offset) as usize;
+
+                    text.replace_range(start..end, &edit.text);
+                } else {
+                    // full edit
+                    text = edit.text;
+                }
+            }
+            db.set_file_text(file_id, &text);
+        } else {
+            tracing::error!(
+                "Failed to convert URI to file path: {}",
+                params.text_document.uri
+            );
+        }
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {

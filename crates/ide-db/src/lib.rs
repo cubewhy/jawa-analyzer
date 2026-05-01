@@ -1,11 +1,58 @@
-use base_db::Files;
+use base_db::{Files, Nonce, SourceDatabase};
 use triomphe::Arc;
 
 #[salsa::db]
+#[derive(Clone)]
 pub struct RootDatabase {
     storage: salsa::Storage<Self>,
     files: Arc<Files>,
+    nonce: Nonce,
+}
+
+impl RootDatabase {
+    pub fn new() -> Self {
+        Self {
+            storage: salsa::Storage::new(None),
+            files: Default::default(),
+            nonce: Nonce::new(),
+        }
+    }
+}
+
+impl Default for RootDatabase {
+    fn default() -> RootDatabase {
+        RootDatabase::new()
+    }
 }
 
 #[salsa::db]
 impl salsa::Database for RootDatabase {}
+
+#[salsa::db]
+impl SourceDatabase for RootDatabase {
+    fn file_text(&self, file_id: vfs::FileId) -> base_db::FileText {
+        self.files.file_text(file_id)
+    }
+
+    fn set_file_text(&mut self, file_id: vfs::FileId, text: &str) {
+        let files = self.files.clone();
+        files.set_file_text(self, file_id, text);
+    }
+
+    fn set_file_text_with_durability(
+        &mut self,
+        file_id: vfs::FileId,
+        text: &str,
+        durability: salsa::Durability,
+    ) {
+        let files = self.files.clone();
+        files.set_file_text_with_durability(self, file_id, text, durability);
+    }
+
+    fn nonce_and_revision(&self) -> (Nonce, salsa::Revision) {
+        (
+            self.nonce,
+            salsa::plumbing::ZalsaDatabase::zalsa(self).current_revision(),
+        )
+    }
+}

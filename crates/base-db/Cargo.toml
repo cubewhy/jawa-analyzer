@@ -6,5 +6,6 @@ edition = "2024"
 [dependencies]
 vfs.workspace = true
 dashmap.workspace = true
+salsa.workspace = true
 rustc-hash.workspace = true
 triomphe.workspace = true

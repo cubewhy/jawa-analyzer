@@ -24,6 +24,8 @@ cfg-if = "1.0"
 tower-lsp = "0.20.0"
 mimalloc = { version = "0.1.50", default-features = false, optional = true }
 
+ide-db.workspace = true
+base-db.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

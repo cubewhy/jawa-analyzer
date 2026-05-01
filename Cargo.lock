@@ -126,6 +126,7 @@ dependencies = [
  "dashmap 6.1.0",
  "ra_ap_vfs",
  "rustc-hash 2.1.2",
+ "salsa",
  "triomphe",
 ]
 
@@ -165,8 +166,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "arc-swap",
+ "base-db",
  "cfg-if",
  "clap",
+ "ide-db",
  "itertools",
  "mimalloc",
  "ra_ap_line-index",
@@ -636,6 +639,7 @@ name = "ide-db"
 version = "0.0.0"
 dependencies = [
  "base-db",
+ "ra_ap_vfs",
  "salsa",
  "triomphe",
 ]
