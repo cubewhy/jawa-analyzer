@@ -531,6 +531,8 @@ fn catch_type(p: &mut Parser) {
             p.error_message("Expected reference type after '|'");
         }
     }
+
+    m.complete(p, CATCH_TYPE);
 }
 
 fn finally_clause(p: &mut Parser) {

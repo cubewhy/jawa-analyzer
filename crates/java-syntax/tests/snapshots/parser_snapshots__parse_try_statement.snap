@@ -92,10 +92,11 @@ ROOT@0..110
               CATCH_FORMAL_PARAMETER@61..78
                 MODIFIER_LIST@61..66
                   FINAL_KW@61..66 "final"
-                TYPE@66..76
+                CATCH_TYPE@66..76
                   WHITESPACE@66..67 " "
-                  QUALIFIED_NAME@67..76
-                    IDENTIFIER@67..76 "Exception"
+                  TYPE@67..76
+                    QUALIFIED_NAME@67..76
+                      IDENTIFIER@67..76 "Exception"
                 WHITESPACE@76..77 " "
                 IDENTIFIER@77..78 "e"
               R_PAREN@78..79 ")"
