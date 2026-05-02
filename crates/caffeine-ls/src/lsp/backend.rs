@@ -141,7 +141,6 @@ impl LanguageServer for Backend {
                     let start_offset = line_index
                         .offset(start_line_col)
                         .expect("Start offset out of bounds");
-                    let start = u32::from(start_offset) as usize;
 
                     let end_wide = WideLineCol {
                         line: range.end.line,
@@ -153,7 +152,9 @@ impl LanguageServer for Backend {
                     let end_offset = line_index
                         .offset(end_line_col)
                         .expect("End offset out of bounds");
-                    let end = u32::from(end_offset) as usize;
+
+                    let start = (u32::from(start_offset) as usize).min(text.len());
+                    let end = (u32::from(end_offset) as usize).max(start).min(text.len());
 
                     text.replace_range(start..end, &edit.text);
                 } else {
