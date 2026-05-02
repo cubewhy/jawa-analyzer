@@ -4,13 +4,13 @@ use derive_more::Display;
 use rowan::{GreenNode, NodeCache, TextRange, TextSize};
 
 use crate::{
+    lex,
+    lexer::token::Token,
+    parser::{checkpoint::Checkpoint, marker::Marker, reader::TokenSource, sink::Sink},
     syntax_kind::{
         ContextualKeyword,
         SyntaxKind::{self, *},
     },
-    lex,
-    lexer::token::Token,
-    parser::{checkpoint::Checkpoint, marker::Marker, reader::TokenSource, sink::Sink},
 };
 
 mod checkpoint;
@@ -82,6 +82,7 @@ pub struct Parser<'a> {
     pub events: Vec<Event<'a>>,
     pub errors: Vec<ParseError>,
     override_token: Option<Token<'a>>,
+    last_token_range: TextRange,
 }
 
 impl<'a> Parser<'a> {
@@ -91,6 +92,7 @@ impl<'a> Parser<'a> {
             errors: Vec::new(),
             events: Vec::new(),
             override_token: None,
+            last_token_range: TextRange::empty(TextSize::from(0)),
         }
     }
 
@@ -159,9 +161,13 @@ impl<'a> Parser<'a> {
 
             self.events.push(Event::AdvanceSource);
             self.source.bump();
-        } else if !self.source.is_at_end() {
+            self.last_token_range = TextRange::at(over.offset, TextSize::of(over.lexeme));
+        } else if let Some(token) = self.source.nth(0) {
+            let offset = token.offset;
+            let lexeme = token.lexeme;
             self.events.push(Event::AddToken);
             self.source.bump();
+            self.last_token_range = TextRange::at(offset, TextSize::of(lexeme));
         }
     }
 
@@ -201,19 +207,22 @@ impl<'a> Parser<'a> {
             return TextRange::at(token.offset, TextSize::of(token.lexeme));
         }
 
-        TextRange::empty(TextSize::from(0))
+        TextRange::empty(self.last_token_range.end())
     }
 
     pub(crate) fn error_message(&mut self, msg: &'static str) {
         self.error(ParseErrorKind::Message(msg));
     }
 
-    pub(crate) fn error(&mut self, error_kind: ParseErrorKind) {
-        let range = self.current_token_range();
+    pub(crate) fn error_at(&mut self, error_kind: ParseErrorKind, range: TextRange) {
         let error = ParseError::new(error_kind, range);
-
         self.errors.push(error.clone());
         self.events.push(Event::Error(error));
+    }
+
+    pub(crate) fn error(&mut self, error_kind: ParseErrorKind) {
+        let range = self.current_token_range();
+        self.error_at(error_kind, range);
     }
 
     pub(crate) fn expect(&mut self, kind: SyntaxKind) -> bool {
@@ -226,12 +235,21 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn error_expected(&mut self, expected: &[SyntaxKind]) {
-        self.error(ParseErrorKind::ExpectedToken {
+        let found = self.current();
+        let error_kind = ParseErrorKind::ExpectedToken {
             expected: expected.to_vec(),
-            found: self.current(),
-        });
+            found,
+        };
 
-        // insert MISSING node
+        let range = if found.is_none() {
+            TextRange::empty(self.last_token_range.end())
+        } else {
+            self.current_token_range()
+        };
+
+        self.error_at(error_kind, range);
+
+        // insert missing node
         let m = self.start();
         m.complete(self, SyntaxKind::MISSING);
     }
