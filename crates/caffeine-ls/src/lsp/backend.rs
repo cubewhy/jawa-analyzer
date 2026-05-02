@@ -71,8 +71,6 @@ impl LanguageServer for Backend {
             .config
             .swap(Some(std::sync::Arc::new(Some(config))));
 
-        // initialize worker
-
         Ok(InitializeResult {
             server_info: Some(server_info()),
             capabilities,
