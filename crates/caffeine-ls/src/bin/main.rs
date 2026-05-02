@@ -83,6 +83,7 @@ where
 {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .name(thread_name.into())
+        .enable_time()
         .thread_stack_size(STACK_SIZE)
         .build()?;
 
