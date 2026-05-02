@@ -125,6 +125,7 @@ version = "0.1.0"
 dependencies = [
  "dashmap 6.1.0",
  "ra_ap_vfs",
+ "rowan",
  "rustc-hash 2.1.2",
  "salsa",
  "triomphe",

@@ -3,14 +3,39 @@ mod input;
 use std::{hash::BuildHasherDefault, sync::atomic::AtomicUsize};
 
 use dashmap::{DashMap, Entry};
+use rowan::GreenNode;
 use rustc_hash::FxHasher;
 use salsa::{Durability, Setter};
 use triomphe::Arc;
+
+#[derive(Debug, Clone)]
+pub enum LanguageId {
+    Java,
+    Kotlin,
+    Unknown,
+}
+
+impl LanguageId {
+    pub fn from_extension(ext: &str) -> Self {
+        match ext {
+            "java" => Self::Java,
+            "kt" | "kts" => Self::Kotlin,
+            _ => Self::Unknown,
+        }
+    }
+}
 
 #[salsa::input(debug)]
 pub struct FileText {
     #[returns(ref)]
     pub text: Arc<str>,
+    pub language: LanguageId,
+    pub file_id: vfs::FileId,
+}
+
+#[salsa::input(debug)]
+pub struct SourceTree {
+    pub green_node: GreenNode,
     pub file_id: vfs::FileId,
 }
 
@@ -19,14 +44,18 @@ pub trait SourceDatabase: salsa::Database {
     /// Text of the file.
     fn file_text(&self, file_id: vfs::FileId) -> FileText;
 
-    fn set_file_text(&mut self, file_id: vfs::FileId, text: &str);
+    fn set_file(&mut self, file_id: vfs::FileId, text: &str, language: LanguageId);
 
-    fn set_file_text_with_durability(
+    fn set_file_with_durability(
         &mut self,
         file_id: vfs::FileId,
         text: &str,
+        language: LanguageId,
         durability: Durability,
     );
+
+    /// GreenNode of the file
+    fn green_node(&self, file_id: vfs::FileId) -> GreenNode;
 
     fn nonce_and_revision(&self) -> (Nonce, salsa::Revision);
 }
@@ -64,35 +93,48 @@ impl Files {
         }
     }
 
-    pub fn set_file_text(&self, db: &mut dyn SourceDatabase, file_id: vfs::FileId, text: &str) {
+    pub fn set_file(
+        &self,
+        db: &mut dyn SourceDatabase,
+        file_id: vfs::FileId,
+        text: &str,
+        language: LanguageId,
+    ) {
         match self.files.entry(file_id) {
             Entry::Occupied(mut occupied) => {
-                occupied.get_mut().set_text(db).to(Arc::from(text));
+                let occupied = occupied.get_mut();
+                occupied.set_text(db).to(Arc::from(text));
+                occupied.set_language(db).to(language);
             }
             Entry::Vacant(vacant) => {
-                let text = FileText::new(db, Arc::from(text), file_id);
+                let text = FileText::new(db, Arc::from(text), language, file_id);
                 vacant.insert(text);
             }
         };
     }
 
-    pub fn set_file_text_with_durability(
+    pub fn set_file_with_durability(
         &self,
         db: &mut dyn SourceDatabase,
         file_id: vfs::FileId,
         text: &str,
+        language: LanguageId,
         durability: salsa::Durability,
     ) {
         match self.files.entry(file_id) {
             Entry::Occupied(mut occupied) => {
+                let occupied = occupied.get_mut();
                 occupied
-                    .get_mut()
                     .set_text(db)
                     .with_durability(durability)
                     .to(Arc::from(text));
+                occupied
+                    .set_language(db)
+                    .with_durability(durability)
+                    .to(language);
             }
             Entry::Vacant(vacant) => {
-                let text = FileText::builder(Arc::from(text), file_id)
+                let text = FileText::builder(Arc::from(text), language, file_id)
                     .durability(durability)
                     .new(db);
                 vacant.insert(text);

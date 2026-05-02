@@ -1,4 +1,4 @@
-use base_db::{Files, Nonce, SourceDatabase};
+use base_db::{Files, LanguageId, Nonce, SourceDatabase};
 use triomphe::Arc;
 
 #[salsa::db]
@@ -34,19 +34,20 @@ impl SourceDatabase for RootDatabase {
         self.files.file_text(file_id)
     }
 
-    fn set_file_text(&mut self, file_id: vfs::FileId, text: &str) {
+    fn set_file(&mut self, file_id: vfs::FileId, text: &str, language: LanguageId) {
         let files = self.files.clone();
-        files.set_file_text(self, file_id, text);
+        files.set_file(self, file_id, text, language);
     }
 
-    fn set_file_text_with_durability(
+    fn set_file_with_durability(
         &mut self,
         file_id: vfs::FileId,
         text: &str,
+        language: LanguageId,
         durability: salsa::Durability,
     ) {
         let files = self.files.clone();
-        files.set_file_text_with_durability(self, file_id, text, durability);
+        files.set_file_with_durability(self, file_id, text, language, durability);
     }
 
     fn nonce_and_revision(&self) -> (Nonce, salsa::Revision) {
