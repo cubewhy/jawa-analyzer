@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use base_db::SourceDatabase;
+use base_db::{LanguageId, SourceDatabase};
 use ra_ap_line_index::{LineIndex, WideEncoding, WideLineCol};
 use tokio::sync::mpsc;
 use triomphe::Arc;
@@ -95,6 +95,9 @@ impl LanguageServer for Backend {
             vfs.set_file_contents(vfs_path.clone(), Some(content));
 
             if let Some(file_id) = vfs.file_id(&vfs_path).map(|(id, _)| id) {
+                drop(vfs);
+                self.sync_vfs_to_db().await;
+
                 let _ = self
                     .worker_tx
                     .send(Job::file(
@@ -125,7 +128,7 @@ impl LanguageServer for Backend {
             drop(vfs);
 
             // get the file in salsa
-            let mut db = self.state.lock_db().await;
+            let mut db = self.state.db_snapshot().await;
             let file_text = db.file_text(file_id);
             let file_content = file_text.text(&*db);
 
@@ -167,7 +170,8 @@ impl LanguageServer for Backend {
                     text = edit.text;
                 }
             }
-            db.set_file_text(file_id, &text);
+
+            self.sync_vfs_to_db().await;
 
             let _ = self
                 .worker_tx
@@ -191,12 +195,52 @@ impl LanguageServer for Backend {
         if let Some(vfs_path) = to_vfs_path(&params.text_document.uri) {
             let mut vfs = self.state.vfs.write().await;
             vfs.set_file_contents(vfs_path, None);
+
+            let Some(file_id) = vfs.file_id(&vfs_path).map(|(id, _excluded)| id) else {
+                // LSP client issue
+                tracing::error!("File not found in vfs: {}", params.text_document.uri);
+                return;
+            };
             drop(vfs);
         }
     }
 
     async fn shutdown(&self) -> Result<()> {
         Ok(())
+    }
+}
+
+impl Backend {
+    async fn sync_vfs_to_db(&self) {
+        let mut vfs = self.state.vfs.write().await;
+        let changes = vfs.take_changes();
+
+        if changes.is_empty() {
+            return;
+        }
+
+        let mut db = self.state.lock_db().await;
+
+        for change in changes {
+            match change.change_kind {
+                ra_ap_vfs::ChangeKind::Create | ra_ap_vfs::ChangeKind::Modify => {
+                    let bytes = vfs.file_contents(change.file_id).to_vec();
+                    let updated_text = String::from_utf8(bytes).unwrap_or_default();
+
+                    let language_id = vfs
+                        .file_path(change.file_id)
+                        .name_and_extension()
+                        .and_then(|(_, ext)| ext)
+                        .map(LanguageId::from_extension)
+                        .unwrap_or(LanguageId::Unknown);
+
+                    db.set_file(change.file_id, &updated_text, language_id);
+                }
+                ra_ap_vfs::ChangeKind::Delete => {
+                    db.set_file(change.file_id, "", LanguageId::Unknown);
+                }
+            }
+        }
     }
 }
 
