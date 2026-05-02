@@ -8,7 +8,7 @@ use triomphe::Arc;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::{
     self, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    MessageType, ServerInfo,
+    DidSaveTextDocumentParams, MessageType, ServerInfo,
 };
 use tower_lsp::{
     Client, LanguageServer,
@@ -186,6 +186,44 @@ impl LanguageServer for Backend {
                 "Failed to convert URI to file path: {}",
                 params.text_document.uri
             );
+        }
+    }
+
+    async fn did_save(&self, params: DidSaveTextDocumentParams) {
+        tracing::info!("didSave {}", params.text_document.uri);
+
+        let vfs_path = match to_vfs_path(&params.text_document.uri) {
+            Some(path) => path,
+            None => {
+                tracing::error!(
+                    "Failed to convert URI to file path: {}",
+                    params.text_document.uri
+                );
+                return;
+            }
+        };
+
+        let file_id = {
+            let mut vfs = self.state.vfs.write().await;
+
+            if let Some(text) = params.text {
+                vfs.set_file_contents(vfs_path.clone(), Some(text.into_bytes()));
+            }
+
+            vfs.file_id(&vfs_path).map(|(id, _)| id)
+        };
+
+        if let Some(file_id) = file_id {
+            self.sync_vfs_to_db().await;
+
+            let _ = self
+                .worker_tx
+                .send(Job::file(
+                    file_id,
+                    Duration::ZERO,
+                    Action::Diagnostics(file_id),
+                ))
+                .await;
         }
     }
 
