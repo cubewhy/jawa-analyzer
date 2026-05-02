@@ -21,6 +21,8 @@ pub enum Cli {
         #[arg(long, short)]
         output: PathBuf,
     },
+
+    Vscode,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]

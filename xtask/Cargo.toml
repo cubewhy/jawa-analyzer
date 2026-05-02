@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+xshell = "0.2.7"
+
 java-syntax = { workspace = true }
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive"] }

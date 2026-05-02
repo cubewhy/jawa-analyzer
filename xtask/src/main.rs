@@ -8,6 +8,7 @@ use crate::{
 };
 
 mod args;
+mod development;
 mod prepare;
 mod tree;
 
@@ -34,7 +35,6 @@ fn main() {
                 process::exit(2);
             }
         }
-
         Cli::BatchParse { input, output } => {
             let config = tree::BatchConfig {
                 input_dir: input,
@@ -42,6 +42,12 @@ fn main() {
             };
 
             if let Err(e) = run_batch_parse(config) {
+                eprintln!("An error has occurred: {e:#}");
+                process::exit(2);
+            }
+        }
+        Cli::Vscode => {
+            if let Err(e) = development::run_vscode() {
                 eprintln!("An error has occurred: {e:#}");
                 process::exit(2);
             }
