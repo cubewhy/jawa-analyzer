@@ -80,16 +80,10 @@ impl Job {
     }
 }
 
-pub enum Action {
-    Diagnostics(vfs::FileId),
-}
+pub enum Action {}
 
 impl Action {
-    pub async fn execute(self, state: Arc<GlobalState>, client: Client) {
-        match self {
-            Action::Diagnostics(file_id) => {
-                jobs::publish_diagnostics(&client, state, file_id).await;
-            }
-        }
+    pub async fn execute(self, _state: Arc<GlobalState>, _client: Client) {
+        match self {}
     }
 }

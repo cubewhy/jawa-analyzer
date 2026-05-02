@@ -1,14 +1,14 @@
-use std::time::Duration;
-
 use base_db::{LanguageId, SourceDatabase};
 use ra_ap_line_index::{LineIndex, WideEncoding, WideLineCol};
 use tokio::sync::mpsc;
 use triomphe::Arc;
 
-use tower_lsp::jsonrpc::Result;
+use tower_lsp::jsonrpc::{Error, Result};
 use tower_lsp::lsp_types::{
     self, DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, MessageType, ServerInfo,
+    DidSaveTextDocumentParams, DocumentDiagnosticParams, DocumentDiagnosticReport,
+    DocumentDiagnosticReportResult, FullDocumentDiagnosticReport, MessageType,
+    RelatedFullDocumentDiagnosticReport, ServerInfo,
 };
 use tower_lsp::{
     Client, LanguageServer,
@@ -18,8 +18,8 @@ use vfs::VfsPath;
 
 use crate::config::Config;
 use crate::global_state::GlobalState;
-use crate::lsp::capabilities;
-use crate::lsp::worker::{Action, Job, TaskKey};
+use crate::lsp::worker::Job;
+use crate::lsp::{capabilities, diagnostics};
 
 pub struct Backend {
     client: Client,
@@ -93,20 +93,9 @@ impl LanguageServer for Backend {
         if let Some(vfs_path) = to_vfs_path(&params.text_document.uri) {
             let mut vfs = self.state.vfs.write().await;
             vfs.set_file_contents(vfs_path.clone(), Some(content));
+            drop(vfs);
 
-            if let Some(file_id) = vfs.file_id(&vfs_path).map(|(id, _)| id) {
-                drop(vfs);
-                self.sync_vfs_to_db().await;
-
-                let _ = self
-                    .worker_tx
-                    .send(Job::file(
-                        file_id,
-                        Duration::ZERO,
-                        Action::Diagnostics(file_id),
-                    ))
-                    .await;
-            }
+            self.sync_vfs_to_db().await;
         } else {
             tracing::error!(
                 "Failed to convert URI to file path: {}",
@@ -116,6 +105,8 @@ impl LanguageServer for Backend {
     }
 
     async fn did_change(&self, params: DidChangeTextDocumentParams) {
+        tracing::debug!("didChange {}", params.text_document.uri);
+
         if let Some(vfs_path) = to_vfs_path(&params.text_document.uri) {
             let vfs = self.state.get_vfs().await;
 
@@ -177,15 +168,6 @@ impl LanguageServer for Backend {
             }
 
             self.sync_vfs_to_db().await;
-
-            let _ = self
-                .worker_tx
-                .send(Job::new(
-                    TaskKey::File(file_id),
-                    Duration::from_millis(300),
-                    Action::Diagnostics(file_id),
-                ))
-                .await;
         } else {
             tracing::error!(
                 "Failed to convert URI to file path: {}",
@@ -208,28 +190,15 @@ impl LanguageServer for Backend {
             }
         };
 
-        let file_id = {
+        {
             let mut vfs = self.state.vfs.write().await;
 
             if let Some(text) = params.text {
                 vfs.set_file_contents(vfs_path.clone(), Some(text.into_bytes()));
             }
-
-            vfs.file_id(&vfs_path).map(|(id, _)| id)
         };
 
-        if let Some(file_id) = file_id {
-            self.sync_vfs_to_db().await;
-
-            let _ = self
-                .worker_tx
-                .send(Job::file(
-                    file_id,
-                    Duration::ZERO,
-                    Action::Diagnostics(file_id),
-                ))
-                .await;
-        }
+        self.sync_vfs_to_db().await;
     }
 
     async fn did_close(&self, params: DidCloseTextDocumentParams) {
@@ -242,6 +211,57 @@ impl LanguageServer for Backend {
         }
     }
 
+    async fn diagnostic(
+        &self,
+        params: DocumentDiagnosticParams,
+    ) -> Result<DocumentDiagnosticReportResult> {
+        tracing::info!(uri = ?params.text_document.uri, "request diagnostics");
+
+        if let Some(vfs_path) = to_vfs_path(&params.text_document.uri) {
+            let file_id = {
+                let vfs = self.state.vfs.write().await;
+
+                vfs.file_id(&vfs_path).map(|(id, _)| id)
+            };
+            let Some(file_id) = file_id else {
+                tracing::error!("Failed to get file_id");
+                return Err(Error::internal_error());
+            };
+
+            let db = self.state.db_snapshot().await;
+
+            let diagnostics_result =
+                tokio::task::spawn_blocking(move || diagnostics::collect_diagnostics(db, file_id))
+                    .await
+                    .map_err(|_| Error::internal_error())?;
+
+            let diagnostics = match diagnostics_result {
+                Ok(diagnostics) => diagnostics,
+                Err(err) => {
+                    tracing::error!(?err, "Failed to collect diagnostics");
+                    return Err(Error::internal_error());
+                }
+            };
+
+            return Ok(DocumentDiagnosticReportResult::Report(
+                DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {
+                    related_documents: None,
+                    full_document_diagnostic_report: FullDocumentDiagnosticReport {
+                        result_id: Some("some random string".to_string()),
+                        items: diagnostics,
+                    },
+                }),
+            ));
+        } else {
+            tracing::error!(
+                "Failed to convert URI to file path: {}",
+                params.text_document.uri
+            );
+        }
+
+        Err(Error::internal_error())
+    }
+
     async fn shutdown(&self) -> Result<()> {
         Ok(())
     }
@@ -249,8 +269,10 @@ impl LanguageServer for Backend {
 
 impl Backend {
     async fn sync_vfs_to_db(&self) {
-        let mut vfs = self.state.vfs.write().await;
-        let changes = vfs.take_changes();
+        let changes = {
+            let mut vfs = self.state.vfs.write().await;
+            vfs.take_changes()
+        };
 
         if changes.is_empty() {
             return;
@@ -263,6 +285,7 @@ impl Backend {
                 vfs::Change::Create(bytes, _) | vfs::Change::Modify(bytes, _) => {
                     let updated_text = String::from_utf8(bytes).unwrap_or_default();
 
+                    let vfs = self.state.vfs.read().await;
                     let language_id = vfs
                         .file_path(file_id)
                         .name_and_extension()

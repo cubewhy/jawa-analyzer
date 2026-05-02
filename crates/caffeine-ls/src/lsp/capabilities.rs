@@ -1,5 +1,7 @@
 use tower_lsp::lsp_types::{
-    ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
+    DiagnosticOptions, DiagnosticRegistrationOptions, DiagnosticServerCapabilities,
+    ServerCapabilities, StaticRegistrationOptions, TextDocumentRegistrationOptions,
+    TextDocumentSyncCapability, TextDocumentSyncKind, TextDocumentSyncOptions,
     TextDocumentSyncSaveOptions,
 };
 
@@ -14,6 +16,20 @@ pub fn server_capabilities(_config: &Config) -> ServerCapabilities {
                 will_save: Some(false),
                 will_save_wait_until: Some(false),
                 save: Some(TextDocumentSyncSaveOptions::Supported(true)),
+            },
+        )),
+        diagnostic_provider: Some(DiagnosticServerCapabilities::RegistrationOptions(
+            DiagnosticRegistrationOptions {
+                diagnostic_options: DiagnosticOptions {
+                    inter_file_dependencies: false,
+                    workspace_diagnostics: false,
+                    identifier: Some(crate::NAME.to_string()),
+                    ..Default::default()
+                },
+                static_registration_options: StaticRegistrationOptions { id: None },
+                text_document_registration_options: TextDocumentRegistrationOptions {
+                    document_selector: None,
+                },
             },
         )),
         ..Default::default()
