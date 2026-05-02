@@ -26,7 +26,7 @@ pub fn collect_diagnostics(
             Diagnostic {
                 range: lsp_range,
                 severity: Some(DiagnosticSeverity::ERROR),
-                source: Some("parser".to_string()),
+                source: Some(crate::NAME.to_string()),
                 message: err.message.clone(),
                 ..Default::default()
             }
