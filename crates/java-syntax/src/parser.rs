@@ -128,10 +128,6 @@ impl<'a> Parser<'a> {
         Marker::new(pos)
     }
 
-    pub(crate) fn pos(&self) -> usize {
-        self.source.pos()
-    }
-
     pub(crate) fn current(&self) -> Option<SyntaxKind> {
         self.override_token
             .as_ref()
