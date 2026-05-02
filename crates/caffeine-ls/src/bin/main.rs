@@ -65,7 +65,7 @@ fn setup_logging(log_file: Option<PathBuf>) -> anyhow::Result<()> {
         fmt::layer().with_writer(file).with_ansi(false)
     });
 
-    let stderr_layer = fmt::layer().with_writer(std::io::stderr).with_ansi(true);
+    let stderr_layer = fmt::layer().with_writer(std::io::stderr).with_ansi(false);
 
     tracing_subscriber::registry()
         .with(EnvFilter::try_from_env("CAFFEINE_LS_LOG").unwrap_or_else(|_| EnvFilter::new("info")))
