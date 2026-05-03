@@ -8,5 +8,6 @@ publish = false
 rowan.workspace = true
 vfs.workspace = true
 base-db.workspace = true
+hir.workspace = true
 salsa.workspace = true
 triomphe.workspace = true

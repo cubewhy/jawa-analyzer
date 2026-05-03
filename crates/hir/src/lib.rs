@@ -1,10 +1,5 @@
-use rust_asm::constants::*;
+use base_db::SourceDatabase;
 use smol_str::SmolStr;
-use triomphe::Arc;
-
-use crate::intern::{ClassId, FieldId, MethodId, ModuleId};
-
-pub mod intern;
 
 #[derive(Clone, PartialEq, Eq, Debug, Hash)]
 pub enum TypeRef {
@@ -116,8 +111,8 @@ pub struct RecordComponent {
     pub annotations: Vec<Annotation>,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct ClassData<'a> {
+#[salsa::tracked]
+pub struct Class<'db> {
     /// JVM Access Flags
     pub flags: u16,
     pub super_class: Option<TypeRef>,
@@ -127,45 +122,14 @@ pub struct ClassData<'a> {
     pub permitted_subclasses: Vec<TypeRef>,
     pub record_components: Vec<RecordComponent>,
 
-    pub methods: Vec<MethodId<'a>>,
-    pub fields: Vec<FieldId<'a>>,
+    pub methods: Vec<Method<'db>>,
+    pub fields: Vec<Field<'db>>,
     pub annotations: Vec<Annotation>,
 
-    pub enclosing_class: Option<ClassId<'a>>,
-    pub inner_classes: Vec<ClassId<'a>>,
+    pub enclosing_class: Option<Class<'db>>,
+    pub inner_classes: Vec<Class<'db>>,
 
     pub source_file: vfs::FileId,
-}
-
-impl<'a> ClassData<'a> {
-    pub fn kind(&self) -> ClassKind {
-        if (self.flags & ACC_ENUM) != 0 {
-            ClassKind::Enum
-        } else if (self.flags & ACC_ANNOTATION) != 0 {
-            ClassKind::Annotation
-        } else if (self.flags & ACC_INTERFACE) != 0 {
-            ClassKind::Interface
-        } else if self.is_record() {
-            ClassKind::Record
-        } else {
-            ClassKind::Class
-        }
-    }
-
-    #[inline]
-    pub fn is_interface(&self) -> bool {
-        (self.flags & ACC_INTERFACE) != 0
-    }
-
-    #[inline]
-    pub fn is_enum(&self) -> bool {
-        (self.flags & ACC_ENUM) != 0
-    }
-
-    #[inline]
-    pub fn is_record(&self) -> bool {
-        !self.record_components.is_empty()
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -177,83 +141,74 @@ pub enum ClassKind {
     Annotation,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct ParamData {
+#[salsa::tracked]
+pub struct Param<'db> {
     pub flags: u16,
     pub name: Option<SmolStr>,
     pub param_type: TypeRef,
     pub annotations: Vec<Annotation>,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct MethodData {
+#[salsa::tracked]
+pub struct Method<'db> {
     pub flags: u16,
     pub return_type: TypeRef,
     pub type_params: Vec<TypeParameter>,
     pub throws_list: Vec<TypeRef>,
-    pub params: Vec<ParamData>,
+    pub params: Vec<Param<'db>>,
     pub annotations: Vec<Annotation>,
 
     /// The default value of an annotation entry
     pub default_value: Option<AnnotationValue>,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct FieldData {
+#[salsa::tracked]
+pub struct Field<'db> {
     pub flags: u16,
     pub field_type: TypeRef,
     pub annotations: Vec<Annotation>,
     pub constant_value: Option<PrimitiveValue>,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct ModuleData {
+#[salsa::tracked]
+pub struct Module<'db> {
     pub name: SmolStr,
     pub flags: u16,
     pub version: Option<SmolStr>,
 
-    pub requires: Vec<ModuleRequires>,
-    pub exports: Vec<ModuleExports>,
-    pub opens: Vec<ModuleOpens>,
+    pub requires: Vec<ModuleRequires<'db>>,
+    pub exports: Vec<ModuleExports<'db>>,
+    pub opens: Vec<ModuleOpens<'db>>,
     pub uses: Vec<TypeRef>,
-    pub provides: Vec<ModuleProvides>,
+    pub provides: Vec<ModuleProvides<'db>>,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct ModuleRequires {
+#[salsa::tracked]
+pub struct ModuleRequires<'db> {
     pub module_name: SmolStr,
     pub flags: u16,
     pub compiled_version: Option<SmolStr>,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Hash)]
-pub struct ModuleExports {
+#[salsa::tracked]
+pub struct ModuleExports<'db> {
     pub package_name: SmolStr,
     pub flags: u16,
     pub to_modules: Vec<SmolStr>,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Hash)]
-pub struct ModuleOpens {
+#[salsa::tracked]
+pub struct ModuleOpens<'db> {
     pub package_name: SmolStr,
     pub flags: u16,
     pub to_modules: Vec<SmolStr>,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug, Hash)]
-pub struct ModuleProvides {
+#[salsa::tracked]
+pub struct ModuleProvides<'db> {
     pub service_interface: TypeRef,
     pub with_implementations: Vec<TypeRef>,
 }
 
 #[salsa::db]
-pub trait HirDatabase: salsa::Database {
-    fn file_classes(&self, file_id: vfs::FileId) -> Arc<Vec<ClassId<'_>>>;
-    fn file_module(&self, file_id: vfs::FileId) -> Option<Arc<ModuleData>>;
-
-    fn class_data(&self, class_id: ClassId) -> Arc<ClassData<'_>>;
-    fn module_data(&self, module_id: ModuleId) -> Arc<ModuleData>;
-
-    fn method_data(&self, method_id: MethodId) -> Arc<MethodData>;
-    fn field_data(&self, field_id: FieldId) -> Arc<FieldData>;
-}
+pub trait HirDatabase: SourceDatabase + salsa::Database {}

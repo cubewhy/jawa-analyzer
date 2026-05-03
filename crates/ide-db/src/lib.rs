@@ -1,4 +1,5 @@
 use base_db::{Files, LanguageId, Nonce, SourceDatabase};
+use hir::HirDatabase;
 use triomphe::Arc;
 
 #[salsa::db]
@@ -57,3 +58,6 @@ impl SourceDatabase for RootDatabase {
         )
     }
 }
+
+#[salsa::db]
+impl HirDatabase for RootDatabase {}

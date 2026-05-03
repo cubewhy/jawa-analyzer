@@ -129,6 +129,7 @@ dependencies = [
  "rowan",
  "rustc-hash 2.1.2",
  "salsa",
+ "smol_str",
  "triomphe",
 ]
 
@@ -711,6 +712,7 @@ name = "ide-db"
 version = "0.0.0"
 dependencies = [
  "base-db",
+ "hir",
  "ra_ap_vfs",
  "rowan",
  "salsa",

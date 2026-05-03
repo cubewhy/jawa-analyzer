@@ -1,5 +1,6 @@
 mod input;
 mod syntax_error;
+mod workspace;
 
 use std::{hash::BuildHasherDefault, sync::atomic::AtomicUsize};
 
@@ -35,6 +36,7 @@ pub enum SourceRootKind {
 }
 
 #[salsa::input]
+#[derive(Debug)]
 pub struct SourceRoot {
     pub kind: SourceRootKind,
     #[returns(ref)]
