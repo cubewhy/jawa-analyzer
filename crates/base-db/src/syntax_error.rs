@@ -52,23 +52,28 @@ impl SyntaxError {
         let message = match &parse_err.kind {
             java_syntax::ParseErrorKind::ExpectedToken { expected, found } => {
                 let found_str = found
-                    .map(|f| f.to_string())
+                    .map(|f| format!("'{f}'"))
                     .unwrap_or_else(|| "end of file".to_string());
 
-                if expected.len() == 1 {
-                    let mut expected_str = expected.first().unwrap().to_string();
-                    if expected_str.len() == 1 {
-                        expected_str = format!("'{expected_str}'")
-                    }
-                    format!("Expected {expected_str}, but found {found_str}.")
+                let expected_options = expected
+                    .iter()
+                    .map(|e| {
+                        let s = e.to_string();
+                        if s.chars().any(|c| !c.is_alphanumeric()) || s.len() == 1 {
+                            format!("'{s}'")
+                        } else {
+                            s
+                        }
+                    })
+                    .collect::<Vec<_>>();
+
+                let expected_msg = if expected_options.len() > 1 {
+                    expected_options.join(" or ")
                 } else {
-                    let expected_options = expected
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect::<Vec<_>>()
-                        .join(" or ");
-                    format!("Expected {expected_options}, but found {found_str}.")
-                }
+                    expected_options.first().cloned().unwrap_or_default()
+                };
+
+                format!("Expected {expected_msg}, but found {found_str}.")
             }
             java_syntax::ParseErrorKind::ExpectedContextualKeyword { keyword, found } => {
                 let found_str = found
