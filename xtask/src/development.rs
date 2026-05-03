@@ -11,6 +11,15 @@ pub fn run_vscode(cargo_options: Vec<String>) -> anyhow::Result<()> {
 
     println!("🚀 Step 1: Building Caffeine LS...");
 
+    let profile = if cargo_options
+        .iter()
+        .any(|opt| opt == "--release" || opt == "-r")
+    {
+        "release"
+    } else {
+        "debug"
+    };
+
     cmd!(sh, "cargo build -p caffeine-ls {cargo_options...}").run()?;
 
     println!("📦 Step 2: Copying binary to extension directory...");
@@ -18,7 +27,11 @@ pub fn run_vscode(cargo_options: Vec<String>) -> anyhow::Result<()> {
     let exe_suffix = env::consts::EXE_SUFFIX;
     let binary_name = format!("caffeine-ls{exe_suffix}");
 
-    let source_bin = root_dir.join("target").join("debug").join(&binary_name);
+    let target_base_dir = env::var("CARGO_TARGET_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| root_dir.join("target"));
+
+    let source_bin = target_base_dir.join(profile).join(&binary_name);
     let extension_dir = root_dir.join("editors").join("code");
     let bin_dir = extension_dir.join("bin");
 
