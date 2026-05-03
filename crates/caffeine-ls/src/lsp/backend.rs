@@ -122,22 +122,25 @@ impl LanguageServer for Backend {
         tracing::debug!("didChange {}", params.text_document.uri);
 
         if let Some(vfs_path) = to_vfs_path(&params.text_document.uri) {
-            let vfs = self.state.get_vfs();
+            let file_id = {
+                let vfs = self.state.get_vfs();
 
-            let Some(file_id) = vfs.file_id(&vfs_path).map(|(id, _excluded)| id) else {
-                // LSP client issue
-                tracing::error!("File not found in vfs: {}", params.text_document.uri);
-                return;
+                let Some(file_id) = vfs.file_id(&vfs_path).map(|(id, _excluded)| id) else {
+                    // LSP client issue
+                    tracing::error!("File not found in vfs: {}", params.text_document.uri);
+                    return;
+                };
+                file_id
             };
 
-            drop(vfs);
-
             // get the file in salsa
-            let db = self.state.db_snapshot();
-            let file_text = db.file_text(file_id);
-            let file_content = file_text.text(&db);
 
-            let mut text = file_content.to_string();
+            let mut text = {
+                let db = self.state.db_snapshot();
+                let file_text = db.file_text(file_id);
+                let file_content = file_text.text(&db);
+                file_content.to_string()
+            };
 
             // apply edits
             for edit in params.content_changes {
@@ -177,10 +180,13 @@ impl LanguageServer for Backend {
                 }
             }
 
-            {
-                let mut vfs_write = self.state.vfs.write();
+            let state = self.state.clone();
+            tokio::task::spawn_blocking(move || {
+                let mut vfs_write = state.vfs.write();
                 vfs_write.set_file_contents(vfs_path, Some(text.into_bytes()));
-            }
+            })
+            .await
+            .expect("VFS background write panicked");
         } else {
             tracing::error!(
                 "Failed to convert URI to file path: {}",
@@ -203,13 +209,15 @@ impl LanguageServer for Backend {
             }
         };
 
-        {
-            let mut vfs = self.state.vfs.write();
-
+        let state = self.state.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut vfs_write = state.vfs.write();
             if let Some(text) = params.text {
-                vfs.set_file_contents(vfs_path.clone(), Some(text.into_bytes()));
+                vfs_write.set_file_contents(vfs_path.clone(), Some(text.into_bytes()));
             }
-        };
+        })
+        .await
+        .expect("VFS background write panicked");
 
         self.sync_vfs_to_db().await;
     }
@@ -218,9 +226,13 @@ impl LanguageServer for Backend {
         tracing::info!("didClose {}", params.text_document.uri);
 
         if let Some(vfs_path) = to_vfs_path(&params.text_document.uri) {
-            let mut vfs = self.state.vfs.write();
-            vfs.set_file_contents(vfs_path, None);
-            drop(vfs);
+            let state = self.state.clone();
+            tokio::task::spawn_blocking(move || {
+                let mut vfs_write = state.vfs.write();
+                vfs_write.set_file_contents(vfs_path, None);
+            })
+            .await
+            .expect("VFS background write panicked");
         }
     }
 
@@ -228,8 +240,8 @@ impl LanguageServer for Backend {
         &self,
         params: DocumentDiagnosticParams,
     ) -> Result<DocumentDiagnosticReportResult> {
-        self.sync_vfs_to_db().await;
         tracing::info!(uri = ?params.text_document.uri, "request diagnostics");
+        self.sync_vfs_to_db().await;
 
         if let Some(vfs_path) = to_vfs_path(&params.text_document.uri) {
             let file_id = {
