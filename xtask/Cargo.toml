@@ -1,7 +1,8 @@
 [package]
 name = "xtask"
-version = "0.1.0"
+version = "0.0.0"
 edition = "2024"
+publish = false
 
 [dependencies]
 xshell = "0.2.7"
