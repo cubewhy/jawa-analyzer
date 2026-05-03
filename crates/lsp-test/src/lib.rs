@@ -31,6 +31,7 @@ pub struct LspHarness {
     pub notification_receiver: mpsc::UnboundedReceiver<Notification>,
     marks: std::sync::RwLock<HashMap<String, Position>>,
     pending_requests: Arc<DashMap<RequestId, oneshot::Sender<serde_json::Value>>>,
+    document_versions: DashMap<tower_lsp::lsp_types::Url, i32>,
 }
 
 impl LspHarness {
@@ -98,6 +99,7 @@ impl LspHarness {
             notification_sender: notif_tx,
             marks: Default::default(),
             pending_requests: Default::default(),
+            document_versions: Default::default(),
         };
 
         let pending_requests = harness.pending_requests.clone();
@@ -184,7 +186,9 @@ impl LspHarness {
         path_str: &str,
         content: &str,
     ) -> tower_lsp::lsp_types::Url {
+        let normalized_path = path_str.trim_start_matches('/');
         let mut final_content = content.to_string();
+
         if let Some(offset) = content.find("<|>") {
             let before = &content[..offset];
             let line = before.lines().count() as u32 - 1;
@@ -193,20 +197,37 @@ impl LspHarness {
             self.marks
                 .write()
                 .unwrap()
-                .insert(path_str.to_string(), Position { line, character });
+                .insert(normalized_path.to_string(), Position { line, character });
             final_content = content.replace("<|>", "");
         }
 
-        self.write_file(path_str, &final_content).await
+        self.write_file(normalized_path, &final_content).await
     }
 
     pub fn pos(&self, path: &str) -> Position {
+        let normalized_path = path.trim_start_matches('/');
+
         self.marks
             .read()
             .unwrap()
-            .get(path)
+            .get(normalized_path)
             .cloned()
-            .unwrap_or_else(|| panic!("No mark <|> found in path: {}", path))
+            .unwrap_or_else(|| {
+                let available_keys: Vec<_> = self.marks.read().unwrap().keys().cloned().collect();
+                panic!(
+                    "No mark <|> found in path: '{}'. Available marks: {:?}",
+                    normalized_path, available_keys
+                )
+            })
+    }
+
+    pub fn pop_pos(&self, path: &str) -> Position {
+        let normalized_path = path.trim_start_matches('/');
+        self.marks
+            .write()
+            .unwrap()
+            .remove(normalized_path)
+            .unwrap_or_else(|| panic!("No mark <|> found to pop in path: '{}'", normalized_path))
     }
 
     pub fn uri(&self, relative_path: &str) -> tower_lsp::lsp_types::Url {
@@ -286,6 +307,63 @@ impl LspHarness {
             serde_json::to_value(params).expect("Failed to serialize DidCloseTextDocumentParams");
 
         self.notify("textDocument/didClose", json_params);
+    }
+
+    pub async fn change_document_incremental(&self, relative_path: &str, range: Range, text: &str) {
+        let uri = self.uri(relative_path);
+
+        let mut version_entry = self.document_versions.entry(uri.clone()).or_insert(0);
+        *version_entry += 1;
+        let version = *version_entry;
+
+        let params = DidChangeTextDocumentParams {
+            text_document: VersionedTextDocumentIdentifier { uri, version },
+            content_changes: vec![TextDocumentContentChangeEvent {
+                range: Some(range),
+                range_length: None,
+                text: text.to_string(),
+            }],
+        };
+
+        let json_params = serde_json::to_value(params).expect("Failed to serialize");
+        self.notify("textDocument/didChange", json_params);
+    }
+
+    pub async fn change_at_mark(&self, relative_path: &str, text: &str) {
+        let old_pos = self.pop_pos(relative_path);
+
+        let mut final_text = text.to_string();
+        let normalized_path = relative_path.trim_start_matches('/');
+
+        if let Some(offset) = text.find("<|>") {
+            let before = &text[..offset];
+            let lines_in_added_text = before.lines().count() as u32 - 1;
+
+            let new_line = old_pos.line + lines_in_added_text;
+
+            let new_character = if lines_in_added_text == 0 {
+                old_pos.character + before.len() as u32
+            } else {
+                before.lines().last().map(|l| l.len()).unwrap_or(0) as u32
+            };
+
+            self.marks.write().unwrap().insert(
+                normalized_path.to_string(),
+                Position {
+                    line: new_line,
+                    character: new_character,
+                },
+            );
+
+            final_text = text.replace("<|>", "");
+        }
+
+        let range = Range {
+            start: old_pos,
+            end: old_pos,
+        };
+        self.change_document_incremental(relative_path, range, &final_text)
+            .await;
     }
 
     pub async fn pull_document_diagnostics(
