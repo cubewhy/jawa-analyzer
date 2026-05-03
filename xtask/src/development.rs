@@ -2,7 +2,7 @@ use std::{env, path::PathBuf};
 
 use xshell::{Shell, cmd};
 
-pub fn run_vscode() -> anyhow::Result<()> {
+pub fn run_vscode(cargo_options: Vec<String>) -> anyhow::Result<()> {
     let sh = Shell::new()?;
 
     let root_dir = env::var("CARGO_WORKSPACE_DIR")
@@ -11,7 +11,7 @@ pub fn run_vscode() -> anyhow::Result<()> {
 
     println!("🚀 Step 1: Building Caffeine LS...");
 
-    cmd!(sh, "cargo build -p caffeine-ls").run()?;
+    cmd!(sh, "cargo build -p caffeine-ls {cargo_options...}").run()?;
 
     println!("📦 Step 2: Copying binary to extension directory...");
 

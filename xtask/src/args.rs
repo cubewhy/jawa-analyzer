@@ -22,7 +22,10 @@ pub enum Cli {
         output: PathBuf,
     },
 
-    Vscode,
+    Vscode {
+        #[arg(last = true)]
+        slop: Vec<String>,
+    },
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
