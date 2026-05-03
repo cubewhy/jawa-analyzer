@@ -80,10 +80,16 @@ impl Job {
     }
 }
 
-pub enum Action {}
+pub enum Action {
+    IndexWorkspace,
+}
 
 impl Action {
     pub async fn execute(self, _state: Arc<GlobalState>, _client: Client) {
-        match self {}
+        match self {
+            Self::IndexWorkspace => {
+                // TODO: index workspace
+            }
+        }
     }
 }

@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use base_db::{LanguageId, SourceDatabase};
 use ra_ap_line_index::{LineIndex, WideEncoding, WideLineCol};
 use tokio::sync::mpsc;
@@ -18,7 +20,7 @@ use vfs::VfsPath;
 
 use crate::config::Config;
 use crate::global_state::GlobalState;
-use crate::lsp::worker::Job;
+use crate::lsp::worker::{Action, Job, TaskKey};
 use crate::lsp::{capabilities, diagnostics};
 
 pub struct Backend {
@@ -80,6 +82,15 @@ impl LanguageServer for Backend {
     async fn initialized(&self, _: InitializedParams) {
         self.client
             .log_message(MessageType::INFO, "server initialized!")
+            .await;
+
+        let _ = self
+            .worker_tx
+            .send(Job::new(
+                TaskKey::WorkspaceIndex,
+                Duration::ZERO,
+                Action::IndexWorkspace,
+            ))
             .await;
     }
 
