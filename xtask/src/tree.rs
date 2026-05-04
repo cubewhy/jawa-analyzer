@@ -38,6 +38,11 @@ pub fn render_java_tree(content: String) -> anyhow::Result<()> {
     println!("{res}");
 
     if !parse.errors().is_empty() {
+        println!();
+        println!("Parsing errors:");
+        for err in parse.errors() {
+            println!("\t{err:?}");
+        }
         Err(anyhow::anyhow!("parsing errors occurred"))
     } else {
         Ok(())
