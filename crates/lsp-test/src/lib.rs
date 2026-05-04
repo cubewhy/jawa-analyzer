@@ -203,6 +203,7 @@ impl LspHarness {
     }
 
     pub fn notify(&self, method: &str, params: serde_json::Value) {
+        tracing::info!(method, ?params, "send notification");
         let notif = Notification::new(method.to_string(), params);
         self.client_connection
             .sender
@@ -353,8 +354,8 @@ impl LspHarness {
     }
 
     pub fn shutdown(mut self) {
-        let _ = self.request("shutdown", serde_json::json!({}));
-        self.notify("exit", serde_json::json!({}));
+        let _ = self.request("shutdown", serde_json::Value::Null);
+        self.notify("exit", serde_json::Value::Null);
 
         // Close the connection channel gracefully to unblock loops depending on it.
         drop(self.client_connection.sender);
