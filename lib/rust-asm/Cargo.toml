@@ -3,7 +3,7 @@ name = "rust-asm"
 description = "ObjectWeb ASM implementation in Rust"
 repository = "https://github.com/cubewhy/caffeine-ls/tree/master/lib/rust-asm"
 documentation = "https://docs.rs/rust-asm"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2024"
 license = "MIT"
 

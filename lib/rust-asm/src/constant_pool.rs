@@ -504,3 +504,70 @@ pub enum CpInfo {
         name_index: u16,
     },
 }
+
+impl CpInfo {
+    pub fn as_int(&self) -> Option<i32> {
+        match self {
+            Self::Integer(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    pub fn as_float(&self) -> Option<f32> {
+        match self {
+            Self::Float(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    pub fn as_long(&self) -> Option<i64> {
+        match self {
+            Self::Long(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    pub fn as_double(&self) -> Option<f64> {
+        match self {
+            Self::Double(v) => Some(*v),
+            _ => None,
+        }
+    }
+
+    pub fn as_utf8(&self) -> Option<&str> {
+        match self {
+            Self::Utf8(s) => Some(s.as_str()),
+            _ => None,
+        }
+    }
+}
+
+pub trait ConstantPoolExt {
+    fn resolve_utf8(&self, index: u16) -> Option<&str>;
+    fn get_int(&self, index: u16) -> Option<i32>;
+    fn get_long(&self, index: u16) -> Option<i64>;
+    fn get_float(&self, index: u16) -> Option<f32>;
+    fn get_double(&self, index: u16) -> Option<f64>;
+}
+
+impl ConstantPoolExt for [CpInfo] {
+    fn resolve_utf8(&self, index: u16) -> Option<&str> {
+        self.get(index as usize).and_then(|entry| entry.as_utf8())
+    }
+
+    fn get_int(&self, index: u16) -> Option<i32> {
+        self.get(index as usize).and_then(|entry| entry.as_int())
+    }
+
+    fn get_long(&self, index: u16) -> Option<i64> {
+        self.get(index as usize).and_then(|entry| entry.as_long())
+    }
+
+    fn get_float(&self, index: u16) -> Option<f32> {
+        self.get(index as usize).and_then(|entry| entry.as_float())
+    }
+
+    fn get_double(&self, index: u16) -> Option<f64> {
+        self.get(index as usize).and_then(|entry| entry.as_double())
+    }
+}
