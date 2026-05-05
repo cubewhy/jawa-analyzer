@@ -2630,6 +2630,21 @@ fn write_attribute(
             write_runtime_type_annotations(&mut info, annotations);
             write_attribute_with_info(out, name_index, &info);
         }
+        AttributeInfo::Record { components } => {
+            let name_index = ensure_utf8(cp, "Record");
+            let mut info = Vec::new();
+            write_u2(&mut info, components.len() as u16);
+            for component in components {
+                write_u2(&mut info, component.name_index);
+                write_u2(&mut info, component.descriptor_index);
+                write_u2(&mut info, component.attributes.len() as u16);
+                for nested in &component.attributes {
+                    // Record component attributes are essentially class/field level attributes
+                    write_attribute(&mut info, nested, cp, method_ctx, options, None, None)?;
+                }
+            }
+            write_attribute_with_info(out, name_index, &info);
+        }
         AttributeInfo::Unknown { name, info } => {
             let name_index = ensure_utf8(cp, name);
             write_attribute_with_info(out, name_index, info);
@@ -2949,6 +2964,7 @@ fn collect_attribute_names(attributes: &[AttributeInfo], names: &mut Vec<String>
             AttributeInfo::RuntimeInvisibleTypeAnnotations { .. } => {
                 names.push("RuntimeInvisibleTypeAnnotations".to_string())
             }
+            AttributeInfo::Record { .. } => names.push("Record".to_string()),
             AttributeInfo::Unknown { name, .. } => names.push(name.clone()),
         }
     }

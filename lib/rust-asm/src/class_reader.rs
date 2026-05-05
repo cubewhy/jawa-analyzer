@@ -814,6 +814,13 @@ pub struct MethodInfo {
 }
 
 #[derive(Debug, Clone)]
+pub struct RecordComponent {
+    pub name_index: u16,
+    pub descriptor_index: u16,
+    pub attributes: Vec<AttributeInfo>,
+}
+
+#[derive(Debug, Clone)]
 pub enum AttributeInfo {
     Code(CodeAttribute),
     ConstantValue { constantvalue_index: u16 },
@@ -838,6 +845,7 @@ pub enum AttributeInfo {
     RuntimeInvisibleParameterAnnotations { parameters: ParameterAnnotations },
     RuntimeVisibleTypeAnnotations { annotations: Vec<TypeAnnotation> },
     RuntimeInvisibleTypeAnnotations { annotations: Vec<TypeAnnotation> },
+    Record { components: Vec<RecordComponent> },
     Unknown { name: String, info: Vec<u8> },
 }
 
@@ -1501,6 +1509,21 @@ fn parse_attribute(
         "RuntimeInvisibleTypeAnnotations" => {
             let annotations = parse_type_annotations(&mut reader)?;
             AttributeInfo::RuntimeInvisibleTypeAnnotations { annotations }
+        }
+        "Record" => {
+            let count = reader.read_u2()? as usize;
+            let mut components = Vec::with_capacity(count);
+            for _ in 0..count {
+                let name_index = reader.read_u2()?;
+                let descriptor_index = reader.read_u2()?;
+                let attributes = read_attributes(&mut reader, cp)?;
+                components.push(RecordComponent {
+                    name_index,
+                    descriptor_index,
+                    attributes,
+                });
+            }
+            AttributeInfo::Record { components }
         }
         _ => {
             return Ok(AttributeInfo::Unknown {
