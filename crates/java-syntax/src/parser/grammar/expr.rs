@@ -124,8 +124,8 @@ fn expr_prefix(p: &mut Parser) -> Result<CompletedMarker, ()> {
     let kind = p.current().ok_or(())?;
 
     match kind {
-        NUMBER_LITERAL | STRING_LITERAL | THIS_KW | SUPER_KW | TRUE_LITERAL | FALSE_LITERAL
-        | CHAR_LITERAL | NULL_LITERAL => {
+        NUMBER_LITERAL | STRING_LITERAL | TEXT_BLOCK | THIS_KW | SUPER_KW | TRUE_LITERAL
+        | FALSE_LITERAL | CHAR_LITERAL | NULL_LITERAL => {
             let m = p.start();
             p.bump();
             Ok(m.complete(p, LITERAL))
