@@ -1,0 +1,89 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    void func() {
+        Test self = Test.this;
+    }
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "func"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+IDENTIFIER "Test"
+WHITESPACE " "
+IDENTIFIER "self"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "Test"
+DOT "."
+THIS_KW "this"
+SEMICOLON ";"
+WHITESPACE "\n    "
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..70
+  CLASS_DECL@0..69
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    CLASS_BODY@10..69
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      METHOD_DECL@12..67
+        WHITESPACE@12..17 "\n    "
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "func"
+        FORMAL_PARAMETERS@26..28
+          L_PAREN@26..27 "("
+          R_PAREN@27..28 ")"
+        BLOCK@28..67
+          WHITESPACE@28..29 " "
+          L_BRACE@29..30 "{"
+          LOCAL_VARIABLE_DECLARATION_STMT@30..61
+            WHITESPACE@30..39 "\n        "
+            LOCAL_VARIABLE_DECLARATION@39..60
+              TYPE@39..43
+                QUALIFIED_NAME@39..43
+                  IDENTIFIER@39..43 "Test"
+              VARIABLE_DECLARATOR_LIST@43..60
+                WHITESPACE@43..44 " "
+                VARIABLE_DECLARATOR@44..60
+                  IDENTIFIER@44..48 "self"
+                  WHITESPACE@48..49 " "
+                  EQUAL@49..50 "="
+                  THIS_EXPR@50..60
+                    WHITESPACE@50..51 " "
+                    LITERAL@51..55
+                      IDENTIFIER@51..55 "Test"
+                    DOT@55..56 "."
+                    THIS_KW@56..60 "this"
+            SEMICOLON@60..61 ";"
+          WHITESPACE@61..66 "\n    "
+          R_BRACE@66..67 "}"
+      WHITESPACE@67..68 "\n"
+      R_BRACE@68..69 "}"
+  WHITESPACE@69..70 "\n"

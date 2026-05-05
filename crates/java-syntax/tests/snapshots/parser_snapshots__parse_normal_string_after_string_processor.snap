@@ -1,0 +1,121 @@
+---
+source: crates/java-syntax/tests/parser_snapshots.rs
+expression: out
+---
+SOURCE:
+class Test {
+    void func() {
+        String str = STR."";
+        String strBlock = STR."""
+        """;
+    }
+}
+
+TOKENS:
+CLASS_KW "class"
+WHITESPACE " "
+IDENTIFIER "Test"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n    "
+VOID_KW "void"
+WHITESPACE " "
+IDENTIFIER "func"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+WHITESPACE "\n        "
+IDENTIFIER "String"
+WHITESPACE " "
+IDENTIFIER "str"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "STR"
+DOT "."
+STRING_LITERAL "\"\""
+SEMICOLON ";"
+WHITESPACE "\n        "
+IDENTIFIER "String"
+WHITESPACE " "
+IDENTIFIER "strBlock"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+IDENTIFIER "STR"
+DOT "."
+TEXT_BLOCK "\"\"\"\n        \"\"\""
+SEMICOLON ";"
+WHITESPACE "\n    "
+R_BRACE "}"
+WHITESPACE "\n"
+R_BRACE "}"
+WHITESPACE "\n"
+
+LEX_ERRORS:
+<none>
+
+SYNTAX_TREE:
+ROOT@0..115
+  CLASS_DECL@0..114
+    CLASS_KW@0..5 "class"
+    WHITESPACE@5..6 " "
+    IDENTIFIER@6..10 "Test"
+    CLASS_BODY@10..114
+      WHITESPACE@10..11 " "
+      L_BRACE@11..12 "{"
+      METHOD_DECL@12..112
+        WHITESPACE@12..17 "\n    "
+        VOID_KW@17..21 "void"
+        WHITESPACE@21..22 " "
+        IDENTIFIER@22..26 "func"
+        FORMAL_PARAMETERS@26..28
+          L_PAREN@26..27 "("
+          R_PAREN@27..28 ")"
+        BLOCK@28..112
+          WHITESPACE@28..29 " "
+          L_BRACE@29..30 "{"
+          LOCAL_VARIABLE_DECLARATION_STMT@30..59
+            WHITESPACE@30..39 "\n        "
+            LOCAL_VARIABLE_DECLARATION@39..58
+              TYPE@39..45
+                QUALIFIED_NAME@39..45
+                  IDENTIFIER@39..45 "String"
+              VARIABLE_DECLARATOR_LIST@45..58
+                WHITESPACE@45..46 " "
+                VARIABLE_DECLARATOR@46..58
+                  IDENTIFIER@46..49 "str"
+                  WHITESPACE@49..50 " "
+                  EQUAL@50..51 "="
+                  TEMPLATE_EXPR@51..58
+                    WHITESPACE@51..52 " "
+                    LITERAL@52..55
+                      IDENTIFIER@52..55 "STR"
+                    DOT@55..56 "."
+                    STRING_LITERAL@56..58 "\"\""
+            SEMICOLON@58..59 ";"
+          LOCAL_VARIABLE_DECLARATION_STMT@59..106
+            WHITESPACE@59..68 "\n        "
+            LOCAL_VARIABLE_DECLARATION@68..105
+              TYPE@68..74
+                QUALIFIED_NAME@68..74
+                  IDENTIFIER@68..74 "String"
+              VARIABLE_DECLARATOR_LIST@74..105
+                WHITESPACE@74..75 " "
+                VARIABLE_DECLARATOR@75..105
+                  IDENTIFIER@75..83 "strBlock"
+                  WHITESPACE@83..84 " "
+                  EQUAL@84..85 "="
+                  TEMPLATE_EXPR@85..105
+                    WHITESPACE@85..86 " "
+                    LITERAL@86..89
+                      IDENTIFIER@86..89 "STR"
+                    DOT@89..90 "."
+                    TEXT_BLOCK@90..105 "\"\"\"\n        \"\"\""
+            SEMICOLON@105..106 ";"
+          WHITESPACE@106..111 "\n    "
+          R_BRACE@111..112 "}"
+      WHITESPACE@112..113 "\n"
+      R_BRACE@113..114 "}"
+  WHITESPACE@114..115 "\n"

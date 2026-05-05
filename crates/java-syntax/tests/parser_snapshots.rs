@@ -898,3 +898,27 @@ parser_snapshot!(
         }
     "#}
 );
+
+parser_snapshot!(
+    parse_normal_string_after_string_processor,
+    indoc! {r#"
+        class Test {
+            void func() {
+                String str = STR."";
+                String strBlock = STR."""
+                """;
+            }
+        }
+    "#}
+);
+
+parser_snapshot!(
+    parse_qualified_this,
+    indoc! {r#"
+        class Test {
+            void func() {
+                Test self = Test.this;
+            }
+        }
+    "#}
+);
