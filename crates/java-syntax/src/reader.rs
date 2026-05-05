@@ -231,57 +231,72 @@ impl<'a> SourceReader<'a> {
     ///    by e.g. `\u005C` does not trigger further escape processing, because
     ///    the scanner operates on raw byte positions.
     fn scan_at(&self, offset: usize) -> ScanResult {
+        match self.scan_code_unit(offset) {
+            Ok((code1, len1)) => {
+                if let Some(c) = char::from_u32(code1) {
+                    return ScanResult::Char(c, len1);
+                }
+
+                // High Surrogate: U+D800..=U+DBFF
+                if (0xD800..=0xDBFF).contains(&code1)
+                    && let Ok((code2, len2)) = self.scan_code_unit(offset + len1)
+                {
+                    // Expect a Low Surrogate: U+DC00..=U+DFFF
+                    if (0xDC00..=0xDFFF).contains(&code2) {
+                        // Merge the character
+                        let scalar = (0x10000 + ((code1 - 0xD800) << 10)) | (code2 - 0xDC00);
+
+                        let c = char::from_u32(scalar).unwrap();
+                        return ScanResult::Char(c, len1 + len2);
+                    }
+                }
+
+                ScanResult::InvalidEscape(len1)
+            }
+            Err(err_len) => ScanResult::InvalidEscape(err_len),
+        }
+    }
+
+    fn scan_code_unit(&self, offset: usize) -> Result<(u32, usize), usize> {
         if offset >= self.source.len() {
-            return ScanResult::Char('\0', 0);
+            return Ok(('\0' as u32, 0));
         }
 
         let bytes = self.source.as_bytes();
 
-        // Non-backslash: plain UTF-8 character
         if bytes[offset] != b'\\' {
             let c = self.source[offset..].chars().next().unwrap_or('\0');
-            return ScanResult::Char(c, c.len_utf8());
+            return Ok((c as u32, c.len_utf8()));
         }
 
-        // Backslash: apply JLS §3.3 even/odd rule
-        // Count consecutive backslashes immediately *before* this position.
-        // If the count is odd, this `\` is shielded and is NOT a unicode escape.
         if !self.count_preceding_backslashes(offset).is_multiple_of(2) {
-            return ScanResult::Char('\\', 1);
+            return Ok(('\\' as u32, 1));
         }
 
-        // Is the next byte a `u`?
         let next = offset + 1;
         if next >= bytes.len() || bytes[next] != b'u' {
-            return ScanResult::Char('\\', 1); // plain backslash, not an escape
+            return Ok(('\\' as u32, 1));
         }
 
-        // Skip one or more `u` markers
         let mut i = next;
         while i < bytes.len() && bytes[i] == b'u' {
             i += 1;
         }
 
-        // Require exactly 4 hex digits
         let hex_start = i;
         let hex_end = hex_start + 4;
 
         if hex_end > bytes.len() {
-            let err_len = bytes.len() - offset;
-            return ScanResult::InvalidEscape(err_len);
+            return Err(bytes.len() - offset);
         }
 
         let hex_str = &self.source[hex_start..hex_end];
-        let err_len = hex_end - offset;
         if !hex_str.chars().all(|c| c.is_ascii_hexdigit()) {
-            return ScanResult::InvalidEscape(err_len);
+            return Err(hex_end - offset);
         }
 
         let code = u32::from_str_radix(hex_str, 16).unwrap();
-        match char::from_u32(code) {
-            Some(c) => ScanResult::Char(c, err_len),
-            None => ScanResult::InvalidEscape(err_len),
-        }
+        Ok((code, hex_end - offset))
     }
 
     /// Count the number of backslash bytes immediately *before* `offset`
