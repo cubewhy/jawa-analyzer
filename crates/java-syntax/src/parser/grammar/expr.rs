@@ -18,6 +18,7 @@ use crate::{
         marker::{CompletedMarker, Marker},
     },
     syntax_kind::SyntaxKind::*,
+    tokenset,
 };
 
 pub fn argument_list(p: &mut Parser) {
@@ -392,10 +393,11 @@ fn expr_bp(p: &mut Parser, min_bp: u8) -> Result<CompletedMarker, ()> {
                         // https://docs.oracle.com/javase/specs/jls/se26/html/jls-15.html#jls-15.11.2
                         p.bump();
                         left = m.complete(p, SUPER_EXPR);
-                    } else if p.at(STRING_TEMPLATE_BEGIN) || p.at(TEXT_BLOCK_TEMPLATE_BEGIN) {
+                    } else if p.at_set(tokenset![STRING_TEMPLATE_BEGIN, TEXT_BLOCK_TEMPLATE_BEGIN,])
+                    {
                         template_argument(p);
                         left = m.complete(p, TEMPLATE_EXPR);
-                    } else if p.at(STRING_LITERAL) {
+                    } else if p.at_set(tokenset![STRING_LITERAL, TEXT_BLOCK]) {
                         p.bump();
                         left = m.complete(p, TEMPLATE_EXPR);
                     } else {
