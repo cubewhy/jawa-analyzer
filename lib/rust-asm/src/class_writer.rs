@@ -4155,7 +4155,7 @@ fn dump_frame_debug(
     hits: &std::collections::HashMap<u16, u32>,
 ) {
     let mut entries: Vec<(u16, u32)> = hits.iter().map(|(k, v)| (*k, *v)).collect();
-    entries.sort_by(|a, b| b.1.cmp(&a.1));
+    entries.sort_by_key(|b| std::cmp::Reverse(b.1));
     let top = entries.into_iter().take(10).collect::<Vec<_>>();
     eprintln!(
         "[frame-debug] method={}{} label={} iterations={} top_offsets={:?}",
