@@ -1,7 +1,7 @@
 use std::{io::Read, path::PathBuf};
 
 use base_db::workspace::{Library, LibraryOrigin};
-use hir::{ClassOrModuleData, HirDatabase};
+use hir::{ClassOrModuleData, HirDatabase, bytecode::parse_cafebabe};
 use jimage_rs::JImage;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};
 use rustc_hash::FxHashMap;
@@ -154,8 +154,4 @@ impl JdkIndexer {
                 state: ProgressState::End,
             }));
     }
-}
-
-fn parse_cafebabe(bytes: &[u8]) -> anyhow::Result<ClassOrModuleData> {
-    anyhow::bail!("not implemented yet")
 }

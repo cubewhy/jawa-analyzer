@@ -13,6 +13,7 @@ pub mod bytecode;
 pub enum TypeRef {
     Primitive(PrimitiveType),
     Reference {
+        /// The dot fqn of the reference type
         name: SmolStr,
         generic_args: Vec<TypeRef>,
     },
@@ -174,7 +175,7 @@ pub struct FieldData {
     pub flags: u16,
     pub field_type: TypeRef,
     pub annotations: Vec<AnnotationSignature>,
-    pub constant_value: Option<PrimitiveValue>,
+    pub constant_value: Option<AnnotationValue>,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
