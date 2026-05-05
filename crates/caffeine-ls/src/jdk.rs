@@ -82,7 +82,7 @@ impl JdkIndexer {
         path: &PathBuf,
         db: &mut dyn HirDatabase,
     ) -> anyhow::Result<FxHashMap<SmolStr, ClassOrModuleData>> {
-        let jimage = JImage::open(&path)
+        let jimage = JImage::open(path)
             .map_err(|e| anyhow::anyhow!("Failed to open jimage at {:?}: {:?}", path, e))?;
 
         let names = jimage

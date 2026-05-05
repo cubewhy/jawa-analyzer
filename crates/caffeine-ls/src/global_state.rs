@@ -1,6 +1,7 @@
+use crate::config::ConfigErrors;
 use crate::handlers;
 use crate::handlers::dispatch::{NotificationDispatcher, RequestDispatcher};
-use crate::{config::ConfigErrors, project_model::ProjectWorkspace};
+use base_db::workspace::WorkspaceGraph;
 use lsp_types::notification::Notification as _;
 use std::{sync::Arc, time::Instant};
 
@@ -16,9 +17,8 @@ use vfs::{Vfs, VfsPath};
 use crate::config::Config;
 
 pub enum BackgroundTaskEvent {
-    WorkspaceLoaded(anyhow::Result<ProjectWorkspace>),
+    WorkspaceLoaded(anyhow::Result<WorkspaceGraph>),
     Progress(ProgressEvent),
-    JdkIndexed,
     VfsLoaded,
     AsyncRequestCompleted {
         id: lsp_server::RequestId,
@@ -59,7 +59,7 @@ pub struct GlobalState {
     pub(crate) config: Arc<Config>,
     pub(crate) config_errors: Option<ConfigErrors>,
     pub(crate) analysis_host: AnalysisHost,
-    pub(crate) workspaces: Arc<Vec<ProjectWorkspace>>,
+    pub(crate) workspaces: Arc<Vec<WorkspaceGraph>>,
 
     pub(crate) shutdown_requested: bool,
 
@@ -200,8 +200,6 @@ impl GlobalState {
                         let mut current_workspaces = self.workspaces.as_ref().to_vec();
                         current_workspaces.push(workspace);
                         self.workspaces = Arc::new(current_workspaces);
-
-                        // TODO: index jdk, index dependencies, index workspace
                     }
                     Err(err) => {
                         tracing::error!("Failed to load workspace: {:#}", err);
@@ -214,11 +212,6 @@ impl GlobalState {
             }
             BackgroundTaskEvent::Progress(progress) => {
                 self.report_progress(progress);
-            }
-            BackgroundTaskEvent::JdkIndexed => {
-                tracing::info!("JDK indexing completed");
-                // TODO: preheat salsa
-                // Trigger a re-analysis or update semantic tokens now that JDK types are available
             }
             BackgroundTaskEvent::VfsLoaded => {
                 tracing::info!("VFS loading completed");
@@ -414,7 +407,7 @@ pub struct GlobalStateSnapshot {
     pub(crate) config: Arc<Config>,
     pub(crate) analysis: Analysis,
     pub(crate) vfs: Arc<RwLock<Vfs>>,
-    pub(crate) workspaces: Arc<Vec<ProjectWorkspace>>,
+    pub(crate) workspaces: Arc<Vec<WorkspaceGraph>>,
 }
 
 /// Returns `None` if the file was excluded.
