@@ -131,10 +131,6 @@ fn map_class(node: &ClassNode) -> ClassData {
         permitted_subclasses: Vec::new(),
         record_components: Vec::new(),
         annotations: map_annotations(&node.attributes, &node.constant_pool),
-
-        // TODO: should we remove vfs path in ClassData
-        // VFS Path is typically attached by the workspace builder, not the class parser.
-        vfs_path: String::new(),
     }
 }
 

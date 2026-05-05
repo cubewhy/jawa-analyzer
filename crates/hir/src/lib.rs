@@ -135,8 +135,6 @@ pub struct ClassData {
     pub methods: Vec<MethodData>,
     pub fields: Vec<FieldData>,
     pub annotations: Vec<AnnotationSignature>,
-
-    pub vfs_path: String,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
