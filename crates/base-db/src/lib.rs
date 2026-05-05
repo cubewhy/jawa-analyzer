@@ -37,12 +37,6 @@ pub struct FileText {
     pub file_id: vfs::FileId,
 }
 
-#[salsa::input]
-pub struct BinaryRef {
-    pub file_id: vfs::FileId,
-    pub hash: u64,
-}
-
 #[salsa::db]
 pub trait SourceDatabase: salsa::Database {
     /// Text of the file.

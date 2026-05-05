@@ -1,3 +1,5 @@
+mod jdk_indexer;
+
 #[derive(Clone, Copy)]
 pub enum BuildTool {
     Javac, // or IntelliJ

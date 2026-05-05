@@ -1,56 +1,51 @@
+use std::path::PathBuf;
+
+use indexmap::IndexMap;
 use smol_str::SmolStr;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum DependencyScope {
-    /// Gradle: api, Maven: compile
-    Api,
-    /// Gradle: implementation
-    Implementation,
-    /// Gradle: compileOnly, Maven: provided
-    CompileOnly,
-    /// Gradle: testImplementation, Maven: test
-    Test,
-    /// Gradle: runtimeOnly, Maven: runtime
-    RuntimeOnly,
+#[salsa::input]
+pub struct Library {
+    pub kind: LibraryOrigin,
+
+    #[returns(ref)]
+    pub archive_path: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Dependency {
-    pub target: WorkspaceModule,
-    pub scope: DependencyScope,
-
-    pub jpms_module_name: Option<SmolStr>,
+pub enum LibraryOrigin {
+    Jdk { version: u8 },
+    Jar { maven_coordinate: Option<SmolStr> },
+    Unknown,
 }
 
 #[salsa::input]
-#[derive(Debug)]
-pub struct WorkspaceModule {
+pub struct Module {
+    /// The name of the module (e.g., "core", "web-api")
     #[returns(ref)]
-    pub name: String,
+    pub name: SmolStr,
 
+    /// The Maven/Gradle coordinate if this module is published
+    /// e.g., "com.mycompany:core:1.0.0"
     #[returns(ref)]
-    pub dependencies: Vec<Dependency>,
+    pub coordinate: Option<SmolStr>,
 
-    pub jdk_version: u8,
-}
-
-#[salsa::input(singleton)]
-pub struct Workspace {
+    /// The root directory of this module in your Virtual File System.
+    /// This is crucial so you know where "src/main/java" starts.
     #[returns(ref)]
-    pub roots: Vec<SourceRoot>,
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum SourceRootKind {
-    Source,
-    Library,
+    pub root_path: vfs::VfsPath,
 }
 
 #[salsa::input]
-#[derive(Debug)]
-pub struct SourceRoot {
-    pub kind: SourceRootKind,
-
+pub struct WorkspaceGraph {
+    /// Maps a local workspace Module to the external Libraries (JARs) it can see.
     #[returns(ref)]
-    pub files: Vec<vfs::FileId>,
+    pub external_dependencies: IndexMap<Module, Vec<Library>>,
+
+    /// Maps a local workspace Module to other workspace Modules it depends on.
+    #[returns(ref)]
+    pub internal_dependencies: IndexMap<Module, Vec<Module>>,
+
+    /// Maps a physical source file back to the Module it belongs to.
+    #[returns(ref)]
+    pub file_to_module: IndexMap<vfs::FileId, Module>,
 }

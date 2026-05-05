@@ -119,6 +119,7 @@ name = "base-db"
 version = "0.0.0"
 dependencies = [
  "dashmap",
+ "indexmap",
  "java-syntax",
  "ra_ap_vfs",
  "rowan",
@@ -210,14 +211,17 @@ dependencies = [
  "anyhow",
  "arc-swap",
  "base-db",
+ "bytes",
  "camino",
  "cfg-if",
  "clap",
  "crossbeam-channel",
+ "hir",
  "ide",
  "ide-db",
  "insta",
  "itertools",
+ "jimage-rs",
  "lsp-server",
  "lsp-test",
  "lsp-types",
@@ -229,14 +233,17 @@ dependencies = [
  "ra_ap_vfs-notify",
  "rayon",
  "rowan",
+ "rustc-hash 2.1.2",
  "serde",
  "serde_json",
+ "smol_str",
  "threadpool",
  "tikv-jemallocator",
  "tracing",
  "tracing-subscriber",
  "triomphe",
  "windows-sys 0.61.2",
+ "zip",
 ]
 
 [[package]]
@@ -756,10 +763,15 @@ checksum = "fc0fef456e4baa96da950455cd02c081ca953b141298e41db3fc7e36b1da849c"
 name = "hir"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
  "base-db",
+ "dashmap",
+ "indexmap",
  "ra_ap_vfs",
  "rust-asm",
+ "rustc-hash 2.1.2",
  "salsa",
+ "serde",
  "smol_str",
  "triomphe",
 ]
@@ -1530,18 +1542,18 @@ dependencies = [
 
 [[package]]
 name = "ra_ap_paths"
-version = "0.0.330"
+version = "0.0.331"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "165b43b135e00c7c5e3b817828e078cf2acea051bd88e8a7c4cb14d222b06378"
+checksum = "84f9313ecd7bb1deec52c2b361db33fa95f685cd15d596018e0a0862be2c7ca0"
 dependencies = [
  "camino",
 ]
 
 [[package]]
 name = "ra_ap_stdx"
-version = "0.0.330"
+version = "0.0.331"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3a41e4ff2437530d0461fa9a1a675a41a0769da1f57a9174c39403c5b5a28a2f"
+checksum = "e0ebcaa9da49ee86809a3c5ff57c0af35530951ded4e7aad371839f173da7ef7"
 dependencies = [
  "crossbeam-channel",
  "crossbeam-utils",
@@ -1550,14 +1562,14 @@ dependencies = [
  "libc",
  "miow",
  "tracing",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "ra_ap_vfs"
-version = "0.0.330"
+version = "0.0.331"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ed50298b8877df234ec79ad33bf1fadaafc1f4c7d9f97d1b7c2023a12484859"
+checksum = "7867f6c4e56e54304e24eb7c422f67bc75034fb3b59b013736668043e13fbd3f"
 dependencies = [
  "crossbeam-channel",
  "fst",
@@ -1571,9 +1583,9 @@ dependencies = [
 
 [[package]]
 name = "ra_ap_vfs-notify"
-version = "0.0.330"
+version = "0.0.331"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2f0ca6d3f667d45542fb885f912eabb6c89cd98b8c480426ff379779c72c7f10"
+checksum = "950f70a43d62aabe8ea76c12b1407f96870b1d6414eb3d83a686cd015e81039e"
 dependencies = [
  "crossbeam-channel",
  "notify",
