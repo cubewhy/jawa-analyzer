@@ -1,12 +1,6 @@
-use std::cell::RefCell;
-
-use rowan::{GreenNode, NodeCache};
+use rowan::GreenNode;
 
 use crate::{FileText, LanguageId, SourceDatabase, syntax_error::SyntaxError};
-
-thread_local! {
-    static SYNTAX_CACHE: RefCell<NodeCache> = RefCell::new(NodeCache::default());
-}
 
 #[salsa::tracked]
 pub struct ParseResult<'db> {
@@ -31,12 +25,8 @@ pub fn parse_java_node(db: &dyn SourceDatabase, file_text: FileText) -> ParseRes
     let mut errors = Vec::new();
     let (tokens, lex_errors) = java_syntax::lex(content);
 
-    let output = SYNTAX_CACHE.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        let parser = java_syntax::Parser::new(tokens);
-
-        parser.parse_with_cache(Some(&mut cache))
-    });
+    let parser = java_syntax::Parser::new(tokens);
+    let output = parser.parse();
 
     for lex_err in lex_errors {
         errors.push(SyntaxError::from_java_lexer(&lex_err));
