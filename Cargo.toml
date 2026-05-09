@@ -8,6 +8,7 @@ ide-db = { path = "./crates/ide-db/" }
 ide = { path = "./crates/ide/" }
 hir = { path = "./crates/hir/" }
 java-syntax = { path = "./crates/java-syntax/" }
+kotlin-syntax = { path = "./crates/kotlin-syntax/" }
 rust-asm = { path = "./lib/rust-asm/" }
 lsp-test = { path = "./crates/lsp-test/" }
 
