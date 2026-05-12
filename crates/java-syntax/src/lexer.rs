@@ -129,15 +129,15 @@ impl<'a> Lexer<'a> {
 
             _ => {
                 match self.reader.advance() {
-                    '(' => self.push_token(SyntaxKind::L_PAREN),
-                    ')' => self.push_token(SyntaxKind::R_PAREN),
-                    '[' => self.push_token(SyntaxKind::L_BRACKET),
-                    ']' => self.push_token(SyntaxKind::R_BRACKET),
-                    ';' => self.push_token(SyntaxKind::SEMICOLON),
-                    ',' => self.push_token(SyntaxKind::COMMA),
+                    '(' => self.complete_token(SyntaxKind::L_PAREN),
+                    ')' => self.complete_token(SyntaxKind::R_PAREN),
+                    '[' => self.complete_token(SyntaxKind::L_BRACKET),
+                    ']' => self.complete_token(SyntaxKind::R_BRACKET),
+                    ';' => self.complete_token(SyntaxKind::SEMICOLON),
+                    ',' => self.complete_token(SyntaxKind::COMMA),
                     ':' => self.handle_colon(),
-                    '?' => self.push_token(SyntaxKind::QUESTION),
-                    '@' => self.push_token(SyntaxKind::AT),
+                    '?' => self.complete_token(SyntaxKind::QUESTION),
+                    '@' => self.complete_token(SyntaxKind::AT),
                     '+' => self.handle_plus(),
                     '-' => self.handle_minus(),
                     '*' => self.handle_star(),
@@ -164,7 +164,7 @@ impl<'a> Lexer<'a> {
                     '&' => self.handle_and(),
                     '%' => self.handle_mod(),
                     '!' => self.handle_bang(),
-                    '~' => self.push_token(SyntaxKind::TILDE),
+                    '~' => self.complete_token(SyntaxKind::TILDE),
 
                     '\x1A' => {
                         // https://docs.oracle.com/javase/specs/jls/se17/html/jls-3.html#jls-3.5
@@ -180,7 +180,7 @@ impl<'a> Lexer<'a> {
                         if is_java_identifier_start(c) {
                             self.handle_identifier();
                         } else {
-                            self.push_token(SyntaxKind::UNKNOWN);
+                            self.complete_token(SyntaxKind::UNKNOWN);
                             self.report_error(LexicalErrorKind::UnexpectedChar(c));
                         }
                     }
@@ -194,7 +194,7 @@ impl<'a> Lexer<'a> {
         while is_java_whitespace(self.reader.peek()) {
             self.reader.advance();
         }
-        self.push_token(SyntaxKind::WHITESPACE);
+        self.complete_token(SyntaxKind::WHITESPACE);
     }
 
     fn handle_left_brace(&mut self) {
@@ -205,27 +205,27 @@ impl<'a> Lexer<'a> {
         }
 
         self.reader.advance();
-        self.push_token(SyntaxKind::L_BRACE);
+        self.complete_token(SyntaxKind::L_BRACE);
     }
 
     fn handle_right_brace(&mut self) {
         if self.mode != LexerMode::TemplateExpression {
             self.reader.advance();
-            self.push_token(SyntaxKind::R_BRACE);
+            self.complete_token(SyntaxKind::R_BRACE);
             return;
         }
 
         let Some(ctx) = self.template_stack.last_mut() else {
             self.mode = LexerMode::Normal;
             self.reader.advance();
-            self.push_token(SyntaxKind::R_BRACE);
+            self.complete_token(SyntaxKind::R_BRACE);
             return;
         };
 
         if ctx.brace_depth > 0 {
             ctx.brace_depth -= 1;
             self.reader.advance();
-            self.push_token(SyntaxKind::R_BRACE);
+            self.complete_token(SyntaxKind::R_BRACE);
             return;
         }
 
@@ -375,7 +375,7 @@ impl<'a> Lexer<'a> {
             self.report_error(LexicalErrorKind::InvalidNumber);
         }
 
-        self.push_token(SyntaxKind::NUMBER_LITERAL);
+        self.complete_token(SyntaxKind::NUMBER_LITERAL);
     }
 
     fn handle_dot(&mut self) {
@@ -395,7 +395,7 @@ impl<'a> Lexer<'a> {
             SyntaxKind::DOT
         };
 
-        self.push_token(token_type);
+        self.complete_token(token_type);
     }
 
     fn handle_colon(&mut self) {
@@ -406,7 +406,7 @@ impl<'a> Lexer<'a> {
             SyntaxKind::COLON
         };
 
-        self.push_token(token_type);
+        self.complete_token(token_type);
     }
 
     fn handle_mod(&mut self) {
@@ -416,7 +416,7 @@ impl<'a> Lexer<'a> {
             SyntaxKind::MODULO
         };
 
-        self.push_token(token_type);
+        self.complete_token(token_type);
     }
 
     fn handle_bang(&mut self) {
@@ -426,7 +426,7 @@ impl<'a> Lexer<'a> {
             SyntaxKind::NOT
         };
 
-        self.push_token(token_type);
+        self.complete_token(token_type);
     }
 
     fn handle_or(&mut self) {
@@ -438,7 +438,7 @@ impl<'a> Lexer<'a> {
             SyntaxKind::BIT_OR
         };
 
-        self.push_token(token_type);
+        self.complete_token(token_type);
     }
 
     fn handle_and(&mut self) {
@@ -450,7 +450,7 @@ impl<'a> Lexer<'a> {
             SyntaxKind::BIT_AND
         };
 
-        self.push_token(token_type);
+        self.complete_token(token_type);
     }
 
     fn handle_star(&mut self) {
@@ -460,7 +460,7 @@ impl<'a> Lexer<'a> {
             SyntaxKind::STAR
         };
 
-        self.push_token(token_type);
+        self.complete_token(token_type);
     }
 
     fn handle_plus(&mut self) {
@@ -472,7 +472,7 @@ impl<'a> Lexer<'a> {
             SyntaxKind::PLUS
         };
 
-        self.push_token(token_type);
+        self.complete_token(token_type);
     }
 
     fn handle_caret(&mut self) {
@@ -482,7 +482,7 @@ impl<'a> Lexer<'a> {
             SyntaxKind::CARET
         };
 
-        self.push_token(token_type);
+        self.complete_token(token_type);
     }
 
     fn handle_minus(&mut self) {
@@ -499,7 +499,7 @@ impl<'a> Lexer<'a> {
             SyntaxKind::MINUS
         };
 
-        self.push_token(token_type);
+        self.complete_token(token_type);
     }
 
     fn handle_less(&mut self) {
@@ -515,7 +515,7 @@ impl<'a> Lexer<'a> {
             SyntaxKind::LESS
         };
 
-        self.push_token(token_type);
+        self.complete_token(token_type);
     }
 
     fn handle_greater(&mut self) {
@@ -545,7 +545,7 @@ impl<'a> Lexer<'a> {
             SyntaxKind::GREATER
         };
 
-        self.push_token(token_type);
+        self.complete_token(token_type);
     }
 
     fn handle_eq(&mut self) {
@@ -555,7 +555,7 @@ impl<'a> Lexer<'a> {
             SyntaxKind::EQUAL // =
         };
 
-        self.push_token(token_type);
+        self.complete_token(token_type);
     }
 
     fn handle_slash(&mut self) {
@@ -574,7 +574,7 @@ impl<'a> Lexer<'a> {
             {
                 self.reader.advance();
             }
-            self.push_token(token_type);
+            self.complete_token(token_type);
         } else if self.reader.advance_if_matches('*') {
             // multiple line comment /* */ or javadoc /** */
             let is_javadoc = self.reader.peek() == '*' && self.reader.peek_next() != '/';
@@ -598,13 +598,13 @@ impl<'a> Lexer<'a> {
             } else {
                 SyntaxKind::BLOCK_COMMENT
             };
-            self.push_token(token_type);
+            self.complete_token(token_type);
         } else if self.reader.advance_if_matches('=') {
             // /=
-            self.push_token(SyntaxKind::DIVIDE_EQUAL);
+            self.complete_token(SyntaxKind::DIVIDE_EQUAL);
         } else {
             // /
-            self.push_token(SyntaxKind::SLASH);
+            self.complete_token(SyntaxKind::SLASH);
         }
     }
 
@@ -680,7 +680,7 @@ impl<'a> Lexer<'a> {
             _ => SyntaxKind::IDENTIFIER,
         };
 
-        self.push_token(token_type);
+        self.complete_token(token_type);
     }
 
     fn consume_escape_sequence(&mut self, is_text_block: bool) -> bool {
@@ -759,7 +759,7 @@ impl<'a> Lexer<'a> {
             self.report_error(LexicalErrorKind::InvalidChar);
         }
 
-        self.push_token(SyntaxKind::CHAR_LITERAL);
+        self.complete_token(SyntaxKind::CHAR_LITERAL);
     }
 
     fn scan_quoted_content(&mut self, kind: TemplateKind, role: TemplateChunkRole) {
@@ -867,7 +867,7 @@ impl<'a> Lexer<'a> {
             }
         };
 
-        self.push_token(token_type);
+        self.complete_token(token_type);
     }
 
     fn emit_template_open_token(&mut self, kind: TemplateKind, role: TemplateChunkRole) {
@@ -876,14 +876,14 @@ impl<'a> Lexer<'a> {
             TemplateChunkRole::Continuation => kind.mid_token(),
         };
 
-        self.push_token(token_type);
+        self.complete_token(token_type);
     }
 
     fn resume_template_after_expression(&mut self, kind: TemplateKind) {
         self.scan_quoted_content(kind, TemplateChunkRole::Continuation);
     }
 
-    fn push_token(&mut self, token_type: SyntaxKind) {
+    fn complete_token(&mut self, token_type: SyntaxKind) {
         self.tokens.push(Token::new(
             token_type,
             self.reader.current_token_lexeme_raw(),
