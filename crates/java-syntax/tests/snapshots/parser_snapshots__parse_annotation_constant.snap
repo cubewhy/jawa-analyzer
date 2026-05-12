@@ -22,7 +22,7 @@ IDENTIFIER "MAX_SIZE"
 WHITESPACE " "
 EQUAL "="
 WHITESPACE " "
-NUMBER_LITERAL "100"
+INTEGER_LITERAL "100"
 SEMICOLON ";"
 WHITESPACE "\n    "
 IDENTIFIER "String"
@@ -62,7 +62,7 @@ ROOT@0..80
             EQUAL@37..38 "="
             LITERAL@38..42
               WHITESPACE@38..39 " "
-              NUMBER_LITERAL@39..42 "100"
+              INTEGER_LITERAL@39..42 "100"
         SEMICOLON@42..43 ";"
       FIELD_DECL@43..77
         WHITESPACE@43..48 "\n    "

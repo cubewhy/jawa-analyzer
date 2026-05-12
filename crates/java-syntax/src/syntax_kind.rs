@@ -22,8 +22,10 @@ pub enum SyntaxKind {
 
     #[display("a string")]
     STRING_LITERAL, // ""
-    #[display("a number")]
-    NUMBER_LITERAL, // dec, hex, oct, bin
+    #[display("an integer")]
+    INTEGER_LITERAL,
+    #[display("a float")]
+    FLOAT_LITERAL,
     STRING_TEMPLATE_BEGIN,
     STRING_TEMPLATE_MID,
     STRING_TEMPLATE_END,

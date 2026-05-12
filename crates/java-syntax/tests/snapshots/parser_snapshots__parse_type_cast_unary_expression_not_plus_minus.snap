@@ -33,7 +33,7 @@ IDENTIFIER "b"
 WHITESPACE " "
 EQUAL "="
 WHITESPACE " "
-NUMBER_LITERAL "0"
+INTEGER_LITERAL "0"
 SEMICOLON ";"
 WHITESPACE "\n        "
 IDENTIFIER "var"
@@ -102,7 +102,7 @@ ROOT@0..107
                   EQUAL@45..46 "="
                   LITERAL@46..48
                     WHITESPACE@46..47 " "
-                    NUMBER_LITERAL@47..48 "0"
+                    INTEGER_LITERAL@47..48 "0"
             SEMICOLON@48..49 ";"
           LOCAL_VARIABLE_DECLARATION_STMT@49..74
             WHITESPACE@49..58 "\n        "

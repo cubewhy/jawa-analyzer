@@ -5,7 +5,7 @@ expression: out
 SOURCE:
 1e+_10
 TOKENS:
-NUMBER_LITERAL "1e+_10"
+FLOAT_LITERAL "1e+_10"
 
 LEX_ERRORS:
 LexicalError { kind: InvalidNumber, range: 0..3 }

@@ -375,7 +375,12 @@ impl<'a> Lexer<'a> {
             self.report_error(LexicalErrorKind::InvalidNumber);
         }
 
-        self.complete_token(SyntaxKind::NUMBER_LITERAL);
+        let kind = if is_float {
+            SyntaxKind::FLOAT_LITERAL
+        } else {
+            SyntaxKind::INTEGER_LITERAL
+        };
+        self.complete_token(kind);
     }
 
     fn handle_dot(&mut self) {
