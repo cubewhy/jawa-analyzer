@@ -131,7 +131,9 @@ impl<'a> Lexer<'a> {
             '=' => self.handle_equal(),
             '&' => self.handle_and(),
             '|' => self.handle_or(),
+            '.' => self.handle_dot(),
 
+            c if c.is_numeric() => self.handle_number(),
             c if is_kotlin_newline(c) => self.handle_newline(),
             ' ' | '\t' => self.handle_horizontal_whitespace(),
             c if is_kotlin_identifier_start(c) => self.handle_identifier(),
@@ -140,7 +142,6 @@ impl<'a> Lexer<'a> {
                 ')' => self.complete_token(R_PAREN),
                 '[' => self.complete_token(L_BRACKET),
                 ']' => self.complete_token(R_BRACKET),
-                '.' => self.complete_token(DOT),
                 ',' => self.complete_token(COMMA),
                 ';' => self.complete_token(SEMICOLON),
                 '$' => self.complete_token(DOLLAR),
@@ -399,6 +400,156 @@ impl<'a> Lexer<'a> {
         }
 
         self.complete_token(CHAR_LITERAL);
+    }
+
+    fn handle_dot(&mut self) {
+        self.reader.advance(); // .
+
+        match self.reader.peek() {
+            '.' => {
+                self.reader.advance(); // ..
+                // rangeUntil operator `..<`
+                if self.reader.peek() == '<' {
+                    self.reader.advance(); // ..<
+                    self.complete_token(RANGE_UNTIL);
+                } else {
+                    self.complete_token(RANGE);
+                }
+            }
+            _ => {
+                self.complete_token(DOT);
+            }
+        }
+    }
+
+    fn handle_number(&mut self) {
+        let mut is_float = false;
+        let first = self.reader.advance(); // consume the first digit
+
+        // Check for Hex or Binary prefixes
+        if first == '0' {
+            match self.reader.peek() {
+                'x' | 'X' => {
+                    self.reader.advance(); // consume 'x'/'X'
+                    while !self.reader.is_at_end() {
+                        let c = self.reader.peek();
+                        if c.is_ascii_hexdigit() || c == '_' {
+                            self.reader.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                    self.consume_int_suffixes();
+                    self.complete_token(INTEGER_LITERAL);
+                    return;
+                }
+                'b' | 'B' => {
+                    self.reader.advance(); // consume 'b'/'B'
+                    while !self.reader.is_at_end() {
+                        let c = self.reader.peek();
+                        if c == '0' || c == '1' || c == '_' {
+                            self.reader.advance();
+                        } else {
+                            break;
+                        }
+                    }
+                    self.consume_int_suffixes();
+                    self.complete_token(INTEGER_LITERAL);
+                    return;
+                }
+                _ => {
+                    // no octal in kotlin
+                    self.report_error(LexicalErrorKind::LeadingZerosNotAllowed);
+                }
+            }
+        }
+
+        // integer part (decimal digits and underscores)
+        while !self.reader.is_at_end() {
+            let c = self.reader.peek();
+            if c.is_ascii_digit() || c == '_' {
+                self.reader.advance();
+            } else {
+                break;
+            }
+        }
+
+        // Check for fractional part
+        // We only consume the dot if it's followed by a digit.
+        // This avoids consuming '.' in `1..2` (range) or `1.plus(2)` (method call).
+        if self.reader.peek() == '.' && self.reader.peek_next().is_ascii_digit() {
+            is_float = true;
+            self.reader.advance(); // consume '.'
+
+            // Consume fractional digits
+            while !self.reader.is_at_end() {
+                let c = self.reader.peek();
+                if c.is_ascii_digit() || c == '_' {
+                    self.reader.advance();
+                } else {
+                    break;
+                }
+            }
+        }
+
+        // Check for exponent part
+        if self.reader.peek() == 'e' || self.reader.peek() == 'E' {
+            is_float = true;
+            self.reader.advance(); // consume 'e'/'E'
+
+            let sign = self.reader.peek();
+            if sign == '+' || sign == '-' {
+                self.reader.advance();
+            }
+
+            // Consume exponent digits
+            while !self.reader.is_at_end() {
+                let c = self.reader.peek();
+                if c.is_ascii_digit() || c == '_' {
+                    self.reader.advance();
+                } else {
+                    break;
+                }
+            }
+        }
+
+        // Check for type suffixes (f, F, L, U, u)
+        let c = self.reader.peek();
+        if c == 'f' || c == 'F' {
+            is_float = true;
+            self.reader.advance();
+        } else {
+            self.consume_int_suffixes();
+        }
+
+        if is_float {
+            self.complete_token(FLOAT_LITERAL);
+        } else {
+            self.complete_token(INTEGER_LITERAL);
+        }
+    }
+
+    fn consume_int_suffixes(&mut self) {
+        let c = self.reader.peek();
+
+        if c == 'u' || c == 'U' {
+            self.reader.advance();
+            let next = self.reader.peek();
+            if next == 'L' {
+                self.reader.advance();
+            } else if next == 'l' {
+                // Case: ul or Ul
+                self.report_error(LexicalErrorKind::WrongLongSuffixCase);
+                self.reader.advance();
+            }
+        } else if c == 'L' {
+            self.reader.advance();
+        } else if c == 'l' {
+            // lowercase 'l' is not valid postfix in Kotlin numbers
+            // Case: 1l
+            self.report_error(LexicalErrorKind::WrongLongSuffixCase);
+            self.reader.advance();
+        }
     }
 
     fn handle_equal(&mut self) {
@@ -708,6 +859,8 @@ pub enum LexicalErrorKind {
     EmptyIdentifier,
     UnterminatedIdentifier,
     UnexpectedChar(char),
+    LeadingZerosNotAllowed,
+    WrongLongSuffixCase,
 }
 
 pub fn lex(src: &str) -> (Vec<Token<'_>>, Vec<LexicalError>) {

@@ -25,7 +25,8 @@ pub enum SyntaxKind {
 
     STRING_LITERAL,
     TEXT_BLOCK,
-    NUMBER_LITERAL,
+    INTEGER_LITERAL,
+    FLOAT_LITERAL,
     CHAR_LITERAL,
 
     // TODO: string interpolation
