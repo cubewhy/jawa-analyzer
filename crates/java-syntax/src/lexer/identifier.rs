@@ -32,9 +32,9 @@ pub fn is_java_identifier_part(c: char) -> bool {
 
     matches!(
         get_general_category(c),
-        DecimalNumber          | // Nd
-        SpacingMark   | // Mc
-        NonspacingMark         | // Mn
+        DecimalNumber  | // Nd
+        SpacingMark    | // Mc
+        NonspacingMark | // Mn
         Format // Cf (covered by ignorable)
     ) || is_java_identifier_ignorable(c)
 }
