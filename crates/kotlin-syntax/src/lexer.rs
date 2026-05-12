@@ -430,6 +430,11 @@ impl<'a> Lexer<'a> {
                 self.reader.advance();
                 MINUS_EQUAL
             }
+            '>' => {
+                // ->
+                self.reader.advance();
+                ARROW
+            }
             _ => MINUS,
         };
 
