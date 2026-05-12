@@ -10,6 +10,10 @@ SOURCE:
 0b_
 1e
 1e+ 
+1_.2
+1._2
+0x_FF
+0b_1010
 
 TOKENS:
 FLOAT_LITERAL "1.0"
@@ -29,13 +33,27 @@ NEWLINE "\n"
 FLOAT_LITERAL "1e+"
 WHITESPACE " "
 NEWLINE "\n"
+FLOAT_LITERAL "1_.2"
+NEWLINE "\n"
+FLOAT_LITERAL "1._2"
+NEWLINE "\n"
+INTEGER_LITERAL "0x_FF"
+NEWLINE "\n"
+INTEGER_LITERAL "0b_1010"
+NEWLINE "\n"
 EOF ""
 
 LEX_ERRORS:
 LexicalError { kind: IllegalUnderscore, range: 10..12 }
+LexicalError { kind: IllegalUnderscore, range: 13..15 }
 LexicalError { kind: MissingNumericDigits, range: 13..16 }
 LexicalError { kind: IllegalUnderscore, range: 13..16 }
+LexicalError { kind: IllegalUnderscore, range: 17..19 }
 LexicalError { kind: MissingNumericDigits, range: 17..20 }
 LexicalError { kind: IllegalUnderscore, range: 17..20 }
 LexicalError { kind: MissingExponentDigits, range: 21..23 }
 LexicalError { kind: MissingExponentDigits, range: 24..27 }
+LexicalError { kind: IllegalUnderscore, range: 29..31 }
+LexicalError { kind: IllegalUnderscore, range: 34..36 }
+LexicalError { kind: IllegalUnderscore, range: 39..41 }
+LexicalError { kind: IllegalUnderscore, range: 45..47 }

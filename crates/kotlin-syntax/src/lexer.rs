@@ -484,6 +484,7 @@ impl<'a> Lexer<'a> {
         if !self.reader.is_at_end() {
             if self.reader.peek() == '\\' {
                 self.reader.advance(); // Consume '\'
+                // TODO: validate escape
                 match self.reader.peek() {
                     'u' => {
                         self.reader.advance(); // u
@@ -549,6 +550,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn handle_number(&mut self) {
+        // TODO: need a refactor
         let mut is_float = false;
         let mut last_was_underscore = false;
         let first = self.reader.advance(); // consume the first digit
@@ -558,6 +560,9 @@ impl<'a> Lexer<'a> {
             match self.reader.peek() {
                 'x' | 'X' => {
                     self.reader.advance();
+                    if self.reader.peek() == '_' {
+                        self.report_error(LexicalErrorKind::IllegalUnderscore);
+                    }
                     let mut digit_count = 0;
                     while !self.reader.is_at_end() {
                         let c = self.reader.peek();
@@ -584,6 +589,9 @@ impl<'a> Lexer<'a> {
                 }
                 'b' | 'B' => {
                     self.reader.advance();
+                    if self.reader.peek() == '_' {
+                        self.report_error(LexicalErrorKind::IllegalUnderscore);
+                    }
                     let mut digit_count = 0;
                     while !self.reader.is_at_end() {
                         let c = self.reader.peek();
@@ -634,12 +642,18 @@ impl<'a> Lexer<'a> {
         // Check for fractional part
         // We only consume the dot if it's followed by a digit.
         // This avoids consuming '.' in `1..2` (range) or `1.plus(2)` (method call).
-        if self.reader.peek() == '.' && self.reader.peek_next().is_ascii_digit() {
+        if self.reader.peek() == '.'
+            && (self.reader.peek_next().is_ascii_digit() || self.reader.peek_next() == '_')
+        {
             if last_was_underscore {
                 self.report_error(LexicalErrorKind::IllegalUnderscore);
             }
             is_float = true;
             self.reader.advance(); // .
+            if self.reader.peek() == '_' {
+                self.report_error(LexicalErrorKind::IllegalUnderscore);
+            }
+
             last_was_underscore = false;
             while !self.reader.is_at_end() {
                 let c = self.reader.peek();
@@ -665,6 +679,10 @@ impl<'a> Lexer<'a> {
             let sign = self.reader.peek();
             if sign == '+' || sign == '-' {
                 self.reader.advance();
+            }
+
+            if self.reader.peek() == '_' {
+                self.report_error(LexicalErrorKind::IllegalUnderscore);
             }
 
             let mut exp_digits = 0;
