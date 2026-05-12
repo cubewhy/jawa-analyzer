@@ -14,7 +14,7 @@ lexer_snapshot!(
 );
 
 lexer_snapshot!(
-    string_templates,
+    string_interpolations,
     indoc! {r#"
         fun greet(name: String) {
             println("Hello, $name!")
@@ -36,7 +36,7 @@ lexer_snapshot!(
 );
 
 lexer_snapshot!(
-    nested_template_expressions,
+    nested_interpolations_expressions,
     indoc! {r#"
         val result = "sum = ${1 + ${'$'}{2 + 3}}"
     "#}
