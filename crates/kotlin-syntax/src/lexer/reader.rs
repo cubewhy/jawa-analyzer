@@ -28,6 +28,7 @@ impl<'a> SourceReader<'a> {
             .unwrap_or('\0')
     }
 
+    /// Move the cursor and return the advanced character
     pub fn advance(&mut self) -> char {
         let c = self.peek();
 
@@ -40,7 +41,23 @@ impl<'a> SourceReader<'a> {
         self.current >= self.source.len()
     }
 
-    pub fn start(&mut self) {
+    /// Start a new token
+    pub fn new_token(&mut self) {
         self.start = self.current;
+    }
+
+    /// Get the start position (byte offset) of the token
+    pub fn start(&self) -> usize {
+        self.start
+    }
+
+    /// Get the current cursor position (byte offset)
+    pub fn current(&self) -> usize {
+        self.current
+    }
+
+    /// Get the current token lexeme
+    pub fn current_lexeme(&self) -> &'a str {
+        &self.source[self.start..self.current]
     }
 }

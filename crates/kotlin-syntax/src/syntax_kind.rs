@@ -5,14 +5,23 @@
 #[repr(u16)]
 #[allow(non_camel_case_types)]
 pub enum SyntaxKind {
-    L_PAREN,
-    R_PAREN,
+    L_PAREN, // (
+    R_PAREN, // )
 
-    L_BRACE,
-    R_BRACE,
+    L_BRACE, // {
+    R_BRACE, // }
 
-    DOT,
-    COMMA,
+    DOT,   // .
+    COMMA, // ,
+
+    TEMPLATE_SHORT_START,
+    TEMPLATE_EXPR_START,
+    ESCAPE_SEQUENCE,
+    OPEN_QUOTE,
+    CLOSE_QUOTE,
+    OPEN_RAW_QUOTE,
+    CLOSE_RAW_QUOTE,
+    STRING_CONTENT,
 
     STRING_LITERAL,
     TEXT_BLOCK,

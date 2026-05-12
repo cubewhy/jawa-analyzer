@@ -5,4 +5,8 @@ edition = "2024"
 publish = false
 
 [dependencies]
-rowan = { workspace = true }
+rowan.workspace = true
+
+[dev-dependencies]
+insta.workspace = true
+indoc.workspace = true
