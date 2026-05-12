@@ -2,9 +2,14 @@ use rowan::{TextRange, TextSize};
 
 use crate::{
     SyntaxKind::{self, *},
-    lexer::{reader::SourceReader, token::Token},
+    lexer::{
+        identifier::{is_kotlin_identifier_part, is_kotlin_identifier_start},
+        reader::SourceReader,
+        token::Token,
+    },
 };
 
+mod identifier;
 mod reader;
 pub mod token;
 
@@ -121,11 +126,82 @@ impl<'a> Lexer<'a> {
             '*' => self.handle_star(),
             '/' => self.handle_slash(),
             '%' => self.handle_modulo(),
-            _ => {
-                // TODO: identifiers
+            '`' => self.handle_backtick_identifier(),
+            c if is_kotlin_identifier_start(c) => self.handle_identifier(),
+            c => {
+                self.report_error(LexicalErrorKind::UnexpectedChar(c));
                 self.reader.advance();
             }
         }
+    }
+
+    fn handle_identifier(&mut self) {
+        while !self.reader.is_at_end() && is_kotlin_identifier_part(self.reader.peek()) {
+            self.reader.advance(); // consume next char
+        }
+
+        let text = self.reader.current_lexeme();
+        let token_type = match text {
+            "as" => AS_KW,
+            "break" => BREAK_KW,
+            "class" => CONTINUE_KW,
+            "do" => DO_KW,
+            "if" => IF_KW,
+            "else" => ELSE_KW,
+            "false" => FALSE_KW,
+            "fun" => FUN_KW,
+            "in" => IN_KW,
+            "interface" => INTERFACE_KW,
+            "null" => NULL_KW,
+            "object" => OBJECT_KW,
+            "package" => PACKAGE_KW,
+            "return" => RETURN_KW,
+            "super" => SUPER_KW,
+            "this" => THIS_KW,
+            "throw" => THROW_KW,
+            "true" => TRUE_KW,
+            "try" => TRY_KW,
+            "typealias" => TYPEALIAS_KW,
+            "typeof" => TYPEOF_KW,
+            "val" => VAL_KW,
+            "var" => VAR_KW,
+            "when" => WHEN_KW,
+            "while" => WHILE_KW,
+            "_" => UNDERSCORE,
+
+            _ => IDENTIFIER,
+        };
+
+        self.complete_token(token_type);
+    }
+
+    fn handle_backtick_identifier(&mut self) {
+        self.reader.advance(); // `
+
+        // Check for empty backticks (``) which are invalid in Kotlin
+        if self.reader.peek() == '`' {
+            self.report_error(LexicalErrorKind::EmptyIdentifier);
+            self.reader.advance();
+            self.complete_token(IDENTIFIER);
+            return;
+        }
+
+        while !self.reader.is_at_end() && self.reader.peek() != '`' {
+            if self.reader.peek() == '\n' {
+                // Backtick identifiers cannot span multiple lines
+                self.report_error(LexicalErrorKind::UnterminatedIdentifier);
+                break;
+            }
+            self.reader.advance();
+        }
+
+        if self.reader.is_at_end() {
+            self.report_error(LexicalErrorKind::UnterminatedIdentifier);
+        } else if self.reader.peek() == '`' {
+            self.reader.advance(); // `
+        }
+
+        self.complete_token(IDENTIFIER);
     }
 
     fn scan_string_mode(&mut self, is_raw: bool) {
@@ -196,7 +272,7 @@ impl<'a> Lexer<'a> {
                 // Start tracking braces: we start at depth 1 because we just consumed '{'
                 self.template_brace_depths.push(1);
                 return;
-            } else if self.is_valid_identifier_start(self.reader.peek()) {
+            } else if is_kotlin_identifier_start(self.reader.peek()) {
                 // Short Template: $identifier
                 self.complete_token(TEMPLATE_SHORT_START); // Emits `$`
                 return;
@@ -219,11 +295,6 @@ impl<'a> Lexer<'a> {
         }
 
         self.complete_token(STRING_CONTENT);
-    }
-
-    // Helper for short templates ($identifier)
-    fn is_valid_identifier_start(&self, c: char) -> bool {
-        c.is_alphabetic() || c == '_'
     }
 
     fn handle_char_literal(&mut self) {
@@ -453,6 +524,9 @@ pub enum LexicalErrorKind {
     EmptyCharLiteral,
     UnterminatedCharLiteral,
     UnsupportedEscapeSequence,
+    EmptyIdentifier,
+    UnterminatedIdentifier,
+    UnexpectedChar(char),
 }
 
 pub fn lex(src: &str) -> (Vec<Token<'_>>, Vec<LexicalError>) {
