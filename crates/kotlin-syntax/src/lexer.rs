@@ -639,18 +639,19 @@ impl<'a> Lexer<'a> {
             }
         }
 
-        // Check for type suffixes (f, F, L, U, u)
         let c = self.reader.peek();
-        if c == 'f' || c == 'F' {
-            is_float = true;
-            self.reader.advance();
-        } else {
-            self.consume_int_suffixes();
-        }
-
         if is_float {
+            if c == 'f' || c == 'F' {
+                self.reader.advance();
+            }
+            self.complete_token(FLOAT_LITERAL);
+        } else if c == 'f' || c == 'F' {
+            // A decimal integer followed by 'f' or 'F' is a float literal (e.g., 1f).
+            self.reader.advance();
             self.complete_token(FLOAT_LITERAL);
         } else {
+            // Only non-float decimal, hex, or binary literals can have 'u' or 'L' suffixes.
+            self.consume_int_suffixes();
             self.complete_token(INTEGER_LITERAL);
         }
     }

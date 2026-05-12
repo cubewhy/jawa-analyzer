@@ -10,6 +10,8 @@ val float1 = 1.5
 val float2 = 1e10
 val float3 = 1.5f
 val ulong = 123UL
+val invalidFloat1 = 1.0u
+val invalidFloat2 = 1.0l
 
 TOKENS:
 VAL_KW "val"
@@ -67,6 +69,24 @@ WHITESPACE " "
 EQUAL "="
 WHITESPACE " "
 INTEGER_LITERAL "123UL"
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "invalidFloat1"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+FLOAT_LITERAL "1.0"
+IDENTIFIER "u"
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "invalidFloat2"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+FLOAT_LITERAL "1.0"
+IDENTIFIER "l"
 NEWLINE "\n"
 EOF ""
 

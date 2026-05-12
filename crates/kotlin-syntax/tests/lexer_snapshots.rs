@@ -77,6 +77,8 @@ lexer_snapshot!(
         val float2 = 1e10
         val float3 = 1.5f
         val ulong = 123UL
+        val invalidFloat1 = 1.0u
+        val invalidFloat2 = 1.0l
     "#}
 );
 
