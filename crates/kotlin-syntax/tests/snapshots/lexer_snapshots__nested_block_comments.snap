@@ -21,6 +21,7 @@ EQUAL "="
 WHITESPACE " "
 INTEGER_LITERAL "1"
 NEWLINE "\n"
+EOF ""
 
 LEX_ERRORS:
 <none>

@@ -33,6 +33,7 @@ R_BRACE "}"
 R_BRACE "}"
 CLOSE_QUOTE "\""
 NEWLINE "\n"
+EOF ""
 
 LEX_ERRORS:
 <none>

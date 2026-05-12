@@ -18,7 +18,7 @@ IDENTIFIER "example"
 DOT "."
 IDENTIFIER "app"
 NEWLINE "\n\n"
-CONTINUE_KW "class"
+CLASS_KW "class"
 WHITESPACE " "
 IDENTIFIER "User"
 NEWLINE "\n"
@@ -30,6 +30,7 @@ OBJECT_KW "object"
 WHITESPACE " "
 IDENTIFIER "Singleton"
 NEWLINE "\n"
+EOF ""
 
 LEX_ERRORS:
 <none>

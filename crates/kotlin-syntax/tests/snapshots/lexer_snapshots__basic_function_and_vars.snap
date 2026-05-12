@@ -39,6 +39,7 @@ INTEGER_LITERAL "42"
 NEWLINE "\n"
 R_BRACE "}"
 NEWLINE "\n"
+EOF ""
 
 LEX_ERRORS:
 <none>

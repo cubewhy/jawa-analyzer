@@ -23,6 +23,7 @@ EQUAL "="
 WHITESPACE " "
 INTEGER_LITERAL "1Ul"
 NEWLINE "\n"
+EOF ""
 
 LEX_ERRORS:
 LexicalError { kind: WrongLongSuffixCase, range: 8..9 }

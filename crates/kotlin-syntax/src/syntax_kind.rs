@@ -121,6 +121,8 @@ pub enum SyntaxKind {
     BLOCK_COMMENT,
     NEWLINE,
 
+    EOF,
+
     MISSING,
     ERROR,
 

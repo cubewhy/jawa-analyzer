@@ -73,6 +73,7 @@ R_BRACE "}"
 NEWLINE "\n"
 R_BRACE "}"
 NEWLINE "\n"
+EOF ""
 
 LEX_ERRORS:
 LexicalError { kind: LeadingZerosNotAllowed, range: 31..32 }

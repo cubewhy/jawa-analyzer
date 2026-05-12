@@ -10,6 +10,7 @@ SEMICOLON ";"
 SEMICOLON ";"
 SEMICOLON ";"
 NEWLINE "\n"
+EOF ""
 
 LEX_ERRORS:
 <none>

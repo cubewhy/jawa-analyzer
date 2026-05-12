@@ -47,6 +47,10 @@ impl<'a> Lexer<'a> {
         ));
     }
 
+    fn complete_eof(&mut self) {
+        self.tokens.push(Token::new(EOF, "", self.reader.current()));
+    }
+
     fn report_error(&mut self, kind: LexicalErrorKind) {
         let start = TextSize::from(self.reader.start() as u32);
         let end = TextSize::from(self.reader.current() as u32);
@@ -62,6 +66,8 @@ impl<'a> Lexer<'a> {
         while !self.reader.is_at_end() {
             self.scan_next_token();
         }
+
+        self.complete_eof();
 
         (self.tokens, self.errors)
     }

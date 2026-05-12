@@ -113,6 +113,7 @@ SHNE "!=="
 WHITESPACE " "
 IDENTIFIER "y"
 NEWLINE "\n"
+EOF ""
 
 LEX_ERRORS:
 <none>

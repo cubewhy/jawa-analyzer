@@ -14,6 +14,7 @@ EQUAL "="
 WHITESPACE " "
 INTEGER_LITERAL "0123"
 NEWLINE "\n"
+EOF ""
 
 LEX_ERRORS:
 LexicalError { kind: LeadingZerosNotAllowed, range: 8..9 }

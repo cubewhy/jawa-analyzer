@@ -32,6 +32,7 @@ EQUAL "="
 WHITESPACE " "
 CHAR_LITERAL "'\\''"
 NEWLINE "\n"
+EOF ""
 
 LEX_ERRORS:
 <none>

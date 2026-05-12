@@ -8,6 +8,7 @@ SOURCE:
 
 TOKENS:
 BLOCK_COMMENT "/*\n    never closed\n"
+EOF ""
 
 LEX_ERRORS:
 LexicalError { kind: UnterminatedBlockComment, range: 0..20 }

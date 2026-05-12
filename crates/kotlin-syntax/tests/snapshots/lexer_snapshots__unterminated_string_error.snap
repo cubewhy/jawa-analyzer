@@ -15,6 +15,7 @@ WHITESPACE " "
 OPEN_QUOTE "\""
 STRING_CONTENT "hello"
 NEWLINE "\n"
+EOF ""
 
 LEX_ERRORS:
 LexicalError { kind: UnterminatedString, range: 14..14 }

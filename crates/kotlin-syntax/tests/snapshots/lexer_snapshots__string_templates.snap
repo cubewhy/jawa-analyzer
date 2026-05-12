@@ -47,6 +47,7 @@ R_PAREN ")"
 NEWLINE "\n"
 R_BRACE "}"
 NEWLINE "\n"
+EOF ""
 
 LEX_ERRORS:
 <none>

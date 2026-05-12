@@ -16,6 +16,7 @@ OPEN_QUOTE "\""
 ESCAPE_SEQUENCE "\\q"
 CLOSE_QUOTE "\""
 NEWLINE "\n"
+EOF ""
 
 LEX_ERRORS:
 LexicalError { kind: UnsupportedEscapeSequence, range: 11..12 }

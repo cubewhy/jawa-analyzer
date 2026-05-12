@@ -21,6 +21,7 @@ OPEN_RAW_QUOTE "\"\"\""
 STRING_CONTENT "\n    {\n        \"name\": \"kotlin\",\n        \"version\": 2\n    }\n"
 CLOSE_RAW_QUOTE "\"\"\""
 NEWLINE "\n"
+EOF ""
 
 LEX_ERRORS:
 <none>

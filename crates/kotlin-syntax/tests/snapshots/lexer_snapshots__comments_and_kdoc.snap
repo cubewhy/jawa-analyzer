@@ -53,6 +53,7 @@ IDENTIFIER "b"
 NEWLINE "\n"
 R_BRACE "}"
 NEWLINE "\n"
+EOF ""
 
 LEX_ERRORS:
 <none>

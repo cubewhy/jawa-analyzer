@@ -16,4 +16,8 @@ impl<'s> Token<'s> {
             offset: TextSize::new(offset as u32),
         }
     }
+
+    pub fn eof(offset: usize) -> Self {
+        Self::new(SyntaxKind::EOF, "", offset)
+    }
 }
