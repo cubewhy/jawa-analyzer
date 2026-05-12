@@ -1,0 +1,58 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+val valid = 'a'
+val invalidDouble = 'ab'
+val invalidTriple = 'abc'
+val empty = ''
+val nextValid = 'c'
+
+TOKENS:
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "valid"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+CHAR_LITERAL "'a'"
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "invalidDouble"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+CHAR_LITERAL "'ab'"
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "invalidTriple"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+CHAR_LITERAL "'abc'"
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "empty"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+CHAR_LITERAL "''"
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "nextValid"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+CHAR_LITERAL "'c'"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+LexicalError { kind: TooManyCharsInCharLiteral, range: 36..40 }
+LexicalError { kind: TooManyCharsInCharLiteral, range: 61..66 }
+LexicalError { kind: EmptyCharLiteral, range: 79..80 }

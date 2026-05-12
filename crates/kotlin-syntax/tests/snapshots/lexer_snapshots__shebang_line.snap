@@ -1,0 +1,35 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+#!/usr/bin/env kotlin
+fun main() {
+    println("Hello, script!")
+}
+
+TOKENS:
+SHEBANG_LINE "#!/usr/bin/env kotlin"
+NEWLINE "\n"
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "main"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "println"
+L_PAREN "("
+OPEN_QUOTE "\""
+STRING_CONTENT "Hello, script!"
+CLOSE_QUOTE "\""
+R_PAREN ")"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>

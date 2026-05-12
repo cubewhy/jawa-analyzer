@@ -1,0 +1,54 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+val copyright = "\u00A9 2024"
+val heart = '\u2764'
+val invalidStr = "\uXXYY"
+val invalidChar = '\uXX'
+
+TOKENS:
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "copyright"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+OPEN_QUOTE "\""
+ESCAPE_SEQUENCE "\\u00A9"
+STRING_CONTENT " 2024"
+CLOSE_QUOTE "\""
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "heart"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+CHAR_LITERAL "'\\u2764'"
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "invalidStr"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+OPEN_QUOTE "\""
+ESCAPE_SEQUENCE "\\u"
+STRING_CONTENT "XXYY"
+CLOSE_QUOTE "\""
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "invalidChar"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+CHAR_LITERAL "'\\uXX'"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+LexicalError { kind: UnsupportedEscapeSequence, range: 69..71 }
+LexicalError { kind: TooManyCharsInCharLiteral, range: 95..101 }

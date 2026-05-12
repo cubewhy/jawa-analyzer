@@ -191,3 +191,47 @@ lexer_snapshot!(
         ;;;
     "#}
 );
+
+lexer_snapshot!(
+    shebang_line,
+    indoc! {r#"
+        #!/usr/bin/env kotlin
+        fun main() {
+            println("Hello, script!")
+        }
+    "#}
+);
+
+lexer_snapshot!(
+    unicode_escapes,
+    indoc! {r#"
+        val copyright = "\u00A9 2024"
+        val heart = '\u2764'
+        val invalidStr = "\uXXYY"
+        val invalidChar = '\uXX'
+    "#}
+);
+
+lexer_snapshot!(
+    multi_dollar_interpolation,
+    indoc! {r#"
+        val short = $$"User: $$name"
+        val long = $$$"User: $$${user.name}"
+        val mixed = $$"Literal $ and $$variable"
+        val rawTemplate = $$"""
+            Cost: $$$$price
+            Items: $${items.size}
+        """
+    "#}
+);
+
+lexer_snapshot!(
+    char_literal_too_many_chars,
+    indoc! {r#"
+        val valid = 'a'
+        val invalidDouble = 'ab'
+        val invalidTriple = 'abc'
+        val empty = ''
+        val nextValid = 'c'
+    "#}
+);

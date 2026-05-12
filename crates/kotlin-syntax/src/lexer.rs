@@ -16,7 +16,7 @@ pub mod token;
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LexerMode {
     Default,
-    String { is_raw: bool },
+    String { is_raw: bool, dollar_depth: usize },
 }
 
 pub struct Lexer<'a> {
@@ -88,7 +88,10 @@ impl<'a> Lexer<'a> {
 
         match current_mode {
             LexerMode::Default => self.scan_default_mode(),
-            LexerMode::String { is_raw } => self.scan_string_mode(is_raw),
+            LexerMode::String {
+                is_raw,
+                dollar_depth,
+            } => self.scan_string_mode(is_raw, dollar_depth),
         }
     }
 
@@ -116,19 +119,39 @@ impl<'a> Lexer<'a> {
                     }
                 }
             }
-            '"' => {
-                // Check for Raw String (""")
-                if self.reader.peek_next() == '"' && self.reader.peek_n(2) == '"' {
-                    self.reader.advance();
-                    self.reader.advance();
-                    self.reader.advance();
-                    self.mode_stack.push(LexerMode::String { is_raw: true });
-                    self.complete_token(OPEN_RAW_QUOTE); // """
+            '$' | '"' => {
+                let mut dollar_count = 0;
+                while self.reader.peek_n(dollar_count) == '$' {
+                    dollar_count += 1;
+                }
+
+                if self.reader.peek_n(dollar_count) == '"' {
+                    // It's a string (potentially multi-dollar prefix)
+                    for _ in 0..dollar_count {
+                        self.reader.advance();
+                    }
+                    let is_raw = self.reader.peek_next() == '"' && self.reader.peek_n(2) == '"';
+                    if is_raw {
+                        self.reader.advance(); // "
+                        self.reader.advance(); // "
+                        self.reader.advance(); // "
+                        self.mode_stack.push(LexerMode::String {
+                            is_raw: true,
+                            dollar_depth: std::cmp::max(1, dollar_count),
+                        });
+                        self.complete_token(OPEN_RAW_QUOTE);
+                    } else {
+                        self.reader.advance(); // "
+                        self.mode_stack.push(LexerMode::String {
+                            is_raw: false,
+                            dollar_depth: std::cmp::max(1, dollar_count),
+                        });
+                        self.complete_token(OPEN_QUOTE);
+                    }
                 } else {
-                    // Standard String (")
+                    // It's just a lone dollar symbol (no string attached)
                     self.reader.advance();
-                    self.mode_stack.push(LexerMode::String { is_raw: false });
-                    self.complete_token(OPEN_QUOTE); // "
+                    self.complete_token(DOLLAR);
                 }
             }
             '\'' => self.handle_char_literal(),
@@ -170,7 +193,7 @@ impl<'a> Lexer<'a> {
         }
     }
 
-    fn scan_string_mode(&mut self, is_raw: bool) {
+    fn scan_string_mode(&mut self, is_raw: bool, dollar_depth: usize) {
         if self.reader.is_at_end() {
             self.report_error(LexicalErrorKind::UnterminatedString);
             self.mode_stack.pop();
@@ -211,13 +234,29 @@ impl<'a> Lexer<'a> {
                     self.reader.advance(); // Consume valid escape
                     self.complete_token(ESCAPE_SEQUENCE);
                 }
+                'u' => {
+                    self.reader.advance(); // u
+                    let mut valid = true;
+                    for _ in 0..4 {
+                        if !self.reader.peek().is_ascii_hexdigit() {
+                            valid = false;
+                            break; // Stop on first invalid hex
+                        }
+                        self.reader.advance();
+                    }
+                    if valid {
+                        self.complete_token(ESCAPE_SEQUENCE);
+                    } else {
+                        self.report_error(LexicalErrorKind::UnsupportedEscapeSequence);
+                        self.complete_token(ESCAPE_SEQUENCE);
+                    }
+                }
                 _ => {
                     // Unsupported escape sequence error!
                     self.report_error(LexicalErrorKind::UnsupportedEscapeSequence);
                     if !self.reader.is_at_end() {
                         self.reader.advance(); // Consume invalid char to recover
                     }
-                    // Still complete it as an escape sequence to avoid AST gaps
                     self.complete_token(ESCAPE_SEQUENCE);
                 }
             }
@@ -226,35 +265,46 @@ impl<'a> Lexer<'a> {
 
         // Handle String Templates
         if c == '$' {
-            self.reader.advance();
-
-            if self.reader.peek() == '{' {
-                // Long Template: ${...}
-                self.reader.advance(); // {
-                self.complete_token(TEMPLATE_EXPR_START); // Emits `${`
-
-                // Push default mode so the lexer processes normal code next
-                self.mode_stack.push(LexerMode::Default);
-                // Start tracking braces: we start at depth 1 because we just consumed '{'
-                self.template_brace_depths.push(1);
-                return;
-            } else if is_kotlin_identifier_start(self.reader.peek()) {
-                // Short Template: $identifier
-                self.complete_token(TEMPLATE_SHORT_START); // Emits `$`
-
-                // identifier after '$'
-                self.reader.new_token();
-                while !self.reader.is_at_end() && is_kotlin_identifier_part(self.reader.peek()) {
-                    self.reader.advance();
+            let mut is_template = true;
+            for i in 0..dollar_depth {
+                if self.reader.peek_n(i) != '$' {
+                    is_template = false;
+                    break;
                 }
-                self.complete_token(IDENTIFIER);
-                return;
             }
-            // If it's a lone '$' (like "$ "), it falls through to become normal text
+
+            // Checks whether the required prefix is met and followed directly by `{` or an identifier
+            if is_template {
+                let char_after = self.reader.peek_n(dollar_depth);
+                if char_after == '{' {
+                    for _ in 0..dollar_depth {
+                        self.reader.advance();
+                    }
+                    self.reader.advance(); // {
+                    self.complete_token(TEMPLATE_EXPR_START);
+
+                    self.mode_stack.push(LexerMode::Default);
+                    self.template_brace_depths.push(1);
+                    return;
+                } else if is_kotlin_identifier_start(char_after) {
+                    for _ in 0..dollar_depth {
+                        self.reader.advance();
+                    }
+                    self.complete_token(TEMPLATE_SHORT_START);
+
+                    self.reader.new_token();
+                    while !self.reader.is_at_end() && is_kotlin_identifier_part(self.reader.peek())
+                    {
+                        self.reader.advance();
+                    }
+                    self.complete_token(IDENTIFIER);
+                    return;
+                }
+            }
         }
 
         // Handle Standard String Text
-        // Consume characters until we hit a delimiter (Quote, Escape, or Template)
+        let mut consumed_text = false;
         while !self.reader.is_at_end() {
             let next = self.reader.peek();
 
@@ -264,13 +314,33 @@ impl<'a> Lexer<'a> {
                 && self.reader.peek_n(2) == '"';
             let hit_std_end = !is_raw && (next == '"' || is_kotlin_newline(next) || next == '\\');
 
-            if hit_raw_end || hit_std_end || next == '$' {
+            if hit_raw_end || hit_std_end {
                 break;
             }
+
+            if next == '$' {
+                let mut is_template = true;
+                for i in 0..dollar_depth {
+                    if self.reader.peek_n(i) != '$' {
+                        is_template = false;
+                        break;
+                    }
+                }
+                if is_template {
+                    let char_after = self.reader.peek_n(dollar_depth);
+                    if char_after == '{' || is_kotlin_identifier_start(char_after) {
+                        break; // Stop parsing regular text to handle interpolation
+                    }
+                }
+            }
+
             self.reader.advance();
+            consumed_text = true;
         }
 
-        self.complete_token(STRING_CONTENT);
+        if consumed_text {
+            self.complete_token(STRING_CONTENT);
+        }
     }
 
     fn handle_horizontal_whitespace(&mut self) {
@@ -388,31 +458,45 @@ impl<'a> Lexer<'a> {
         if !self.reader.is_at_end() {
             if self.reader.peek() == '\\' {
                 self.reader.advance(); // Consume '\'
-                if !self.reader.is_at_end() {
-                    self.reader.advance(); // Consume the escaped char (e.g., 'n', 't', '\'')
+                match self.reader.peek() {
+                    'u' => {
+                        self.reader.advance(); // u
+                        for _ in 0..4 {
+                            if self.reader.peek().is_ascii_hexdigit() {
+                                self.reader.advance();
+                            } else {
+                                break;
+                            }
+                        }
+                    }
+                    _ => {
+                        if !self.reader.is_at_end() {
+                            self.reader.advance(); // Consume the escaped char
+                        }
+                    }
                 }
             } else {
                 self.reader.advance(); // Consume the standard char
             }
         }
 
+        let mut too_many_chars = false;
+        while !self.reader.is_at_end()
+            && self.reader.peek() != '\''
+            && !is_kotlin_newline(self.reader.peek())
+        {
+            too_many_chars = true;
+            self.reader.advance();
+        }
+
         // Expect a closing single quote
         if self.reader.peek() == '\'' {
             self.reader.advance(); // Consume the closing '\''
+            if too_many_chars {
+                self.report_error(LexicalErrorKind::TooManyCharsInCharLiteral);
+            }
         } else {
             self.report_error(LexicalErrorKind::UnterminatedCharLiteral);
-
-            // Optional: Keep advancing until we find a closing quote or whitespace
-            // to recover gracefully and prevent cascade errors.
-            while !self.reader.is_at_end()
-                && self.reader.peek() != '\''
-                && self.reader.peek() != ' '
-            {
-                self.reader.advance();
-            }
-            if self.reader.peek() == '\'' {
-                self.reader.advance();
-            }
         }
 
         self.complete_token(CHAR_LITERAL);
@@ -871,6 +955,7 @@ pub enum LexicalErrorKind {
     UnterminatedString,
     EmptyCharLiteral,
     UnterminatedCharLiteral,
+    TooManyCharsInCharLiteral,
     UnsupportedEscapeSequence,
     EmptyIdentifier,
     UnterminatedIdentifier,
