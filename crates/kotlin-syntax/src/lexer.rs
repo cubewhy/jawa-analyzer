@@ -143,8 +143,6 @@ impl<'a> Lexer<'a> {
                 }
             },
         }
-
-        self.complete_token(IDENTIFIER);
     }
 
     fn scan_string_mode(&mut self, is_raw: bool) {
@@ -279,6 +277,76 @@ impl<'a> Lexer<'a> {
         }
         self.complete_token(NEWLINE);
     }
+
+    fn handle_identifier(&mut self) {
+        while !self.reader.is_at_end() && is_kotlin_identifier_part(self.reader.peek()) {
+            self.reader.advance(); // consume next char
+        }
+
+        let text = self.reader.current_lexeme();
+        let token_type = match text {
+            "as" => AS_KW,
+            "break" => BREAK_KW,
+            "class" => CONTINUE_KW,
+            "do" => DO_KW,
+            "if" => IF_KW,
+            "else" => ELSE_KW,
+            "false" => FALSE_KW,
+            "fun" => FUN_KW,
+            "in" => IN_KW,
+            "interface" => INTERFACE_KW,
+            "null" => NULL_KW,
+            "object" => OBJECT_KW,
+            "package" => PACKAGE_KW,
+            "return" => RETURN_KW,
+            "super" => SUPER_KW,
+            "this" => THIS_KW,
+            "throw" => THROW_KW,
+            "true" => TRUE_KW,
+            "try" => TRY_KW,
+            "typealias" => TYPEALIAS_KW,
+            "typeof" => TYPEOF_KW,
+            "val" => VAL_KW,
+            "var" => VAR_KW,
+            "when" => WHEN_KW,
+            "while" => WHILE_KW,
+            "_" => UNDERSCORE,
+
+            _ => IDENTIFIER,
+        };
+
+        self.complete_token(token_type);
+    }
+
+    fn handle_backtick_identifier(&mut self) {
+        self.reader.advance(); // `
+
+        // Check for empty backticks (``) which are invalid in Kotlin
+        if self.reader.peek() == '`' {
+            self.report_error(LexicalErrorKind::EmptyIdentifier);
+            self.reader.advance();
+            self.complete_token(IDENTIFIER);
+            return;
+        }
+
+        while !self.reader.is_at_end() && self.reader.peek() != '`' {
+            if is_kotlin_newline(self.reader.peek()) {
+                // Backtick identifiers cannot span multiple lines
+                self.report_error(LexicalErrorKind::UnterminatedIdentifier);
+                break;
+            }
+            self.reader.advance();
+        }
+
+        if self.reader.is_at_end() {
+            self.report_error(LexicalErrorKind::UnterminatedIdentifier);
+        } else if self.reader.peek() == '`' {
+            self.reader.advance(); // `
+        }
+
+        self.complete_token(IDENTIFIER);
+    }
+
     fn handle_char_literal(&mut self) {
         self.reader.advance(); // Consume the opening '\''
 
