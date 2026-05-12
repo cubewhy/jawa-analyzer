@@ -1,7 +1,18 @@
-use unicode_categories::UnicodeCategories;
+use unicode_general_category::{GeneralCategory, get_general_category};
 
 pub fn is_java_identifier_start(c: char) -> bool {
-    c.is_letter() || c.is_number_letter() || c.is_symbol_currency() || c.is_punctuation_connector()
+    use GeneralCategory::*;
+    matches!(
+        get_general_category(c),
+        UppercaseLetter      | // Lu
+        LowercaseLetter      | // Ll
+        TitlecaseLetter      | // Lt
+        ModifierLetter       | // Lm
+        OtherLetter          | // Lo
+        LetterNumber         | // Nl
+        CurrencySymbol       | // Sc
+        ConnectorPunctuation // Pc
+    )
 }
 
 fn is_java_identifier_ignorable(c: char) -> bool {
@@ -10,13 +21,20 @@ fn is_java_identifier_ignorable(c: char) -> bool {
         '\u{0000}'..='\u{0008}' |
         '\u{000E}'..='\u{001B}' |
         '\u{007F}'..='\u{009F}'
-    ) || c.is_other_format()
+    ) || get_general_category(c) == GeneralCategory::Format // Cf
 }
 
 pub fn is_java_identifier_part(c: char) -> bool {
-    is_java_identifier_start(c)
-        || c.is_number_decimal_digit()
-        || c.is_mark_spacing_combining()
-        || c.is_mark_nonspacing()
-        || is_java_identifier_ignorable(c)
+    use GeneralCategory::*;
+    if is_java_identifier_start(c) {
+        return true;
+    }
+
+    matches!(
+        get_general_category(c),
+        DecimalNumber          | // Nd
+        SpacingMark   | // Mc
+        NonspacingMark         | // Mn
+        Format // Cf (covered by ignorable)
+    ) || is_java_identifier_ignorable(c)
 }

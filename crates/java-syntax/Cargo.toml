@@ -7,7 +7,7 @@ publish = false
 [dependencies]
 drop_bomb = "0.1.5"
 derive_more = { version = "2.1.1", features = ["display"] }
-unicode_categories = { workspace = true }
+unicode-general-category = "1.1.0"
 rowan = { workspace = true }
 smallvec = { workspace = true }
 stacksafe = { workspace = true }
