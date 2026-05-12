@@ -1,0 +1,17 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+"$`an identifier`"
+
+TOKENS:
+OPEN_QUOTE "\""
+TEMPLATE_SHORT_START "$"
+IDENTIFIER "`an identifier`"
+CLOSE_QUOTE "\""
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>

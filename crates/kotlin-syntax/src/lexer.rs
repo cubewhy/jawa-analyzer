@@ -278,7 +278,7 @@ impl<'a> Lexer<'a> {
                 let char_after = self.reader.peek_n(dollar_depth);
                 if char_after == '{' {
                     for _ in 0..dollar_depth {
-                        self.reader.advance();
+                        self.reader.advance(); // $
                     }
                     self.reader.advance(); // {
                     self.complete_token(TEMPLATE_EXPR_START);
@@ -286,18 +286,25 @@ impl<'a> Lexer<'a> {
                     self.mode_stack.push(LexerMode::Default);
                     self.template_brace_depths.push(1);
                     return;
-                } else if is_kotlin_identifier_start(char_after) {
+                } else if is_kotlin_identifier_start(char_after) || char_after == '`' {
                     for _ in 0..dollar_depth {
-                        self.reader.advance();
+                        self.reader.advance(); // $
                     }
                     self.complete_token(TEMPLATE_SHORT_START);
 
+                    // identifier part
                     self.reader.new_token();
-                    while !self.reader.is_at_end() && is_kotlin_identifier_part(self.reader.peek())
-                    {
-                        self.reader.advance();
+                    if self.reader.peek() == '`' {
+                        self.handle_backtick_identifier();
+                    } else {
+                        // Fallback to standard identifier logic
+                        while !self.reader.is_at_end()
+                            && is_kotlin_identifier_part(self.reader.peek())
+                        {
+                            self.reader.advance();
+                        }
+                        self.complete_token(IDENTIFIER);
                     }
-                    self.complete_token(IDENTIFIER);
                     return;
                 }
             }
@@ -328,7 +335,10 @@ impl<'a> Lexer<'a> {
                 }
                 if is_template {
                     let char_after = self.reader.peek_n(dollar_depth);
-                    if char_after == '{' || is_kotlin_identifier_start(char_after) {
+                    if char_after == '{'
+                        || is_kotlin_identifier_start(char_after)
+                        || char_after == '`'
+                    {
                         break; // Stop parsing regular text to handle interpolation
                     }
                 }

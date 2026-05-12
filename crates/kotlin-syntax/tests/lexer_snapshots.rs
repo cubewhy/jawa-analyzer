@@ -242,3 +242,10 @@ lexer_snapshot!(
         0
     "#}
 );
+
+lexer_snapshot!(
+    backtick_identifier_in_string_interpolation,
+    indoc! {r#"
+        "$`an identifier`"
+    "#}
+);
