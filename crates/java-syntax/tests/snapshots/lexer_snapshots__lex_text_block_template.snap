@@ -12,6 +12,7 @@ TEXT_BLOCK_TEMPLATE_BEGIN "\"\"\"\n  Line 1 \\{"
 IDENTIFIER "a"
 TEXT_BLOCK_TEMPLATE_END "}\n  Line 2\"\"\""
 WHITESPACE "\n"
+EOF ""
 
 LEX_ERRORS:
 <none>

@@ -13,6 +13,7 @@ EQUAL "="
 WHITESPACE " "
 CHAR_LITERAL "'a'"
 SEMICOLON ";"
+EOF ""
 
 LEX_ERRORS:
 <none>

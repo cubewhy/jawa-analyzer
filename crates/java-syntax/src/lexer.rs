@@ -105,6 +105,8 @@ impl<'a> Lexer<'a> {
             self.report_error(LexicalErrorKind::UnterminatedTemplate);
         }
 
+        self.complete_eof();
+
         self.errors.extend(
             self.reader
                 .errors()
@@ -894,6 +896,11 @@ impl<'a> Lexer<'a> {
             self.reader.current_token_lexeme_raw(),
             self.reader.start(),
         ));
+    }
+
+    fn complete_eof(&mut self) {
+        self.tokens
+            .push(Token::new(SyntaxKind::EOF, "", self.reader.current()));
     }
 
     fn report_error(&mut self, error_type: LexicalErrorKind) {

@@ -6,6 +6,7 @@ SOURCE:
 019
 TOKENS:
 INTEGER_LITERAL "019"
+EOF ""
 
 LEX_ERRORS:
 LexicalError { kind: InvalidNumber, range: 0..3 }

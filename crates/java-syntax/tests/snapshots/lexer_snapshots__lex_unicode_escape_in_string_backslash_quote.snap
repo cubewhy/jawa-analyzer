@@ -13,6 +13,7 @@ EQUAL "="
 WHITESPACE " "
 STRING_LITERAL "\"\\u005C\\u0022\""
 SEMICOLON ";"
+EOF ""
 
 LEX_ERRORS:
 <none>

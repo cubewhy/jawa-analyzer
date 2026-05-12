@@ -12,6 +12,7 @@ WHITESPACE " "
 ENUM_KW "enum"
 WHITESPACE " "
 IDENTIFIER "record"
+EOF ""
 
 LEX_ERRORS:
 <none>

@@ -6,6 +6,7 @@ SOURCE:
 'abc'
 TOKENS:
 CHAR_LITERAL "'abc'"
+EOF ""
 
 LEX_ERRORS:
 LexicalError { kind: InvalidChar, range: 0..5 }

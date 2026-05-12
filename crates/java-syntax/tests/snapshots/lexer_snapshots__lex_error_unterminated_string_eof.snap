@@ -5,6 +5,7 @@ expression: out
 SOURCE:
 "this string has no end
 TOKENS:
+EOF ""
 
 LEX_ERRORS:
 LexicalError { kind: UnterminatedString, range: 0..23 }

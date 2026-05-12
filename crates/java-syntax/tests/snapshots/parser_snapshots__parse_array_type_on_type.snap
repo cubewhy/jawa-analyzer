@@ -19,6 +19,7 @@ IDENTIFIER "a"
 SEMICOLON ";"
 WHITESPACE " "
 R_BRACE "}"
+EOF ""
 
 LEX_ERRORS:
 <none>

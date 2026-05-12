@@ -11,6 +11,7 @@ SOURCE:
 TOKENS:
 TEXT_BLOCK "\"\"\"\n    line 1\\s\n    line 2\n\"\"\""
 WHITESPACE "\n"
+EOF ""
 
 LEX_ERRORS:
 <none>

@@ -79,6 +79,7 @@ AND "&&"
 WHITESPACE " "
 OR "||"
 WHITESPACE "\n"
+EOF ""
 
 LEX_ERRORS:
 <none>

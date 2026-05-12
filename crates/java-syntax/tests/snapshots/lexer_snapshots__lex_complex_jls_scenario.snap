@@ -22,6 +22,7 @@ GREATER ">"
 L_PAREN "("
 R_PAREN ")"
 SEMICOLON ";"
+EOF ""
 
 LEX_ERRORS:
 <none>

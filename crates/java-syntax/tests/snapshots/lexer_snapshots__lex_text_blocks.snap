@@ -11,6 +11,7 @@ Hello
 TOKENS:
 TEXT_BLOCK "\"\"\"\nHello\n  World\n\"\"\""
 WHITESPACE "\n"
+EOF ""
 
 LEX_ERRORS:
 <none>

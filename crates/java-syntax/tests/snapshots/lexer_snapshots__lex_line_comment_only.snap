@@ -8,6 +8,7 @@ SOURCE:
 TOKENS:
 LINE_COMMENT "// this is a line comment"
 WHITESPACE "\n"
+EOF ""
 
 LEX_ERRORS:
 <none>

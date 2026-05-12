@@ -9,6 +9,7 @@ TOKENS:
 DOT "."
 DOT "."
 WHITESPACE "\n"
+EOF ""
 
 LEX_ERRORS:
 <none>

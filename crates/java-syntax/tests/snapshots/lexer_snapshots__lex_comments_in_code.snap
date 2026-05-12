@@ -12,6 +12,7 @@ WHITESPACE " "
 IDENTIFIER "x"
 WHITESPACE " "
 LINE_COMMENT "// line"
+EOF ""
 
 LEX_ERRORS:
 <none>

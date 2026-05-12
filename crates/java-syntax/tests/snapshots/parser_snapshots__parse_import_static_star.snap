@@ -17,6 +17,7 @@ IDENTIFIER "Collections"
 DOT "."
 STAR "*"
 SEMICOLON ";"
+EOF ""
 
 LEX_ERRORS:
 <none>

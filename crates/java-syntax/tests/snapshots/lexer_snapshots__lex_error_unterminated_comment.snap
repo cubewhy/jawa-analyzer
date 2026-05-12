@@ -6,6 +6,7 @@ SOURCE:
 /* this block comment never ends 
 TOKENS:
 BLOCK_COMMENT "/* this block comment never ends "
+EOF ""
 
 LEX_ERRORS:
 LexicalError { kind: UnterminatedComment, range: 0..33 }

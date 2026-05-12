@@ -12,6 +12,7 @@ WHITESPACE " "
 EQUAL "="
 WHITESPACE " "
 STRING_LITERAL "\"\\u0022"
+EOF ""
 
 LEX_ERRORS:
 LexicalError { kind: UnterminatedString, range: 18..20 }

@@ -8,6 +8,7 @@ line2"
 TOKENS:
 WHITESPACE "\n"
 IDENTIFIER "line2"
+EOF ""
 
 LEX_ERRORS:
 LexicalError { kind: UnterminatedString, range: 0..6 }

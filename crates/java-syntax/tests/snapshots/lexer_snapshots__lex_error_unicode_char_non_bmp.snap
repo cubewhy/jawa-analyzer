@@ -6,6 +6,7 @@ SOURCE:
 '🐘'
 TOKENS:
 CHAR_LITERAL "'🐘'"
+EOF ""
 
 LEX_ERRORS:
 LexicalError { kind: InvalidChar, range: 0..6 }

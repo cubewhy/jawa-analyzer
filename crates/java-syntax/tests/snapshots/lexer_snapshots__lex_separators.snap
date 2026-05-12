@@ -28,6 +28,7 @@ WHITESPACE " "
 COLON_COLON "::"
 WHITESPACE " "
 AT "@"
+EOF ""
 
 LEX_ERRORS:
 <none>

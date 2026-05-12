@@ -21,6 +21,7 @@ IDENTIFIER "C"
 COMMA ","
 WHITESPACE " "
 R_BRACE "}"
+EOF ""
 
 LEX_ERRORS:
 <none>

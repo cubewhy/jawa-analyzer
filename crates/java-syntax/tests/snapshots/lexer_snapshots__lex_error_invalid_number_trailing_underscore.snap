@@ -6,6 +6,7 @@ SOURCE:
 123_
 TOKENS:
 INTEGER_LITERAL "123_"
+EOF ""
 
 LEX_ERRORS:
 LexicalError { kind: InvalidNumber, range: 0..4 }

@@ -19,6 +19,7 @@ L_BRACE "{"
 R_BRACE "}"
 WHITESPACE " "
 R_BRACE "}"
+EOF ""
 
 LEX_ERRORS:
 <none>

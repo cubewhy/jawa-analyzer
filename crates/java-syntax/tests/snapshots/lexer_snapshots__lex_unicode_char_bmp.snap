@@ -6,6 +6,7 @@ SOURCE:
 '你'
 TOKENS:
 CHAR_LITERAL "'你'"
+EOF ""
 
 LEX_ERRORS:
 <none>

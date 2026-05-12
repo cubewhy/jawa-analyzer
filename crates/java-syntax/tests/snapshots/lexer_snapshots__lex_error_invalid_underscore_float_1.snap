@@ -6,6 +6,7 @@ SOURCE:
 123_.45
 TOKENS:
 FLOAT_LITERAL "123_.45"
+EOF ""
 
 LEX_ERRORS:
 LexicalError { kind: InvalidNumber, range: 0..4 }

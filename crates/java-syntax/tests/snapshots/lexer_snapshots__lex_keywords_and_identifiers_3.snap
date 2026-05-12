@@ -10,6 +10,7 @@ WHITESPACE " "
 IDENTIFIER "_underscore"
 WHITESPACE " "
 IDENTIFIER "value123"
+EOF ""
 
 LEX_ERRORS:
 <none>

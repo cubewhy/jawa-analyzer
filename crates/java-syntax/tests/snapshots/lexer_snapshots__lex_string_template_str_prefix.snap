@@ -10,6 +10,7 @@ DOT "."
 STRING_TEMPLATE_BEGIN "\"Hello \\{"
 IDENTIFIER "name"
 STRING_TEMPLATE_END "}!\""
+EOF ""
 
 LEX_ERRORS:
 <none>

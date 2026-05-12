@@ -8,6 +8,7 @@ SOURCE:
 TOKENS:
 UNKNOWN "\\uD83C\\uDF51"
 WHITESPACE "\n"
+EOF ""
 
 LEX_ERRORS:
 LexicalError { kind: UnexpectedChar('🍑'), range: 0..12 }

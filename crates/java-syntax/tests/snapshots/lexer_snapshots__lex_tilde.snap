@@ -9,6 +9,7 @@ TOKENS:
 TILDE "~"
 INTEGER_LITERAL "1"
 WHITESPACE "\n"
+EOF ""
 
 LEX_ERRORS:
 <none>

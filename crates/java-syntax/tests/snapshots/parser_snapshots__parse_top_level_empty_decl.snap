@@ -8,6 +8,7 @@ SOURCE:
 TOKENS:
 SEMICOLON ";"
 WHITESPACE "\n"
+EOF ""
 
 LEX_ERRORS:
 <none>

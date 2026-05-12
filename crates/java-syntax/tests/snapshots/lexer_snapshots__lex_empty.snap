@@ -5,6 +5,7 @@ expression: out
 SOURCE:
 
 TOKENS:
+EOF ""
 
 LEX_ERRORS:
 <none>

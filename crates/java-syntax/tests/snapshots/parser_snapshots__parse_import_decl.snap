@@ -13,6 +13,7 @@ IDENTIFIER "util"
 DOT "."
 IDENTIFIER "List"
 SEMICOLON ";"
+EOF ""
 
 LEX_ERRORS:
 <none>

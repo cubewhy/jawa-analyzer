@@ -10,6 +10,7 @@ WHITESPACE " "
 CHAR_LITERAL "'\\n'"
 WHITESPACE " "
 CHAR_LITERAL "'\\''"
+EOF ""
 
 LEX_ERRORS:
 <none>

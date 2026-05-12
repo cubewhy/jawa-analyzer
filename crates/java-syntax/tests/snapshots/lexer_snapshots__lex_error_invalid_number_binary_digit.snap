@@ -6,6 +6,7 @@ SOURCE:
 0b1012
 TOKENS:
 INTEGER_LITERAL "0b1012"
+EOF ""
 
 LEX_ERRORS:
 LexicalError { kind: InvalidNumber, range: 0..5 }

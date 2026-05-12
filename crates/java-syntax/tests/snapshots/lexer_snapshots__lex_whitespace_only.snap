@@ -7,6 +7,7 @@ SOURCE:
   
 TOKENS:
 WHITESPACE " \t\n\r  "
+EOF ""
 
 LEX_ERRORS:
 <none>

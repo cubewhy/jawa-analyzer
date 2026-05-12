@@ -14,6 +14,7 @@ EQUAL "="
 WHITESPACE " "
 INTEGER_LITERAL "1"
 SEMICOLON ";"
+EOF ""
 
 LEX_ERRORS:
 LexicalError { kind: UnexpectedChar('\\'), range: 4..5 }

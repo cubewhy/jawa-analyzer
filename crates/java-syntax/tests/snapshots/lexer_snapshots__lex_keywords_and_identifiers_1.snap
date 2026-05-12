@@ -12,6 +12,7 @@ WHITESPACE " "
 VOID_KW "void"
 WHITESPACE " "
 IDENTIFIER "main"
+EOF ""
 
 LEX_ERRORS:
 <none>

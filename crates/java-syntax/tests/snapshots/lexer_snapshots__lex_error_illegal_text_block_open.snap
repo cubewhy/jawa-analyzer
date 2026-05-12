@@ -5,6 +5,7 @@ expression: out
 SOURCE:
 """illegal
 TOKENS:
+EOF ""
 
 LEX_ERRORS:
 LexicalError { kind: IllegalTextBlockOpen, range: 0..3 }

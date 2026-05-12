@@ -58,6 +58,7 @@ R_BRACE "}"
 WHITESPACE "\n"
 R_BRACE "}"
 WHITESPACE "\n"
+EOF ""
 
 LEX_ERRORS:
 <none>

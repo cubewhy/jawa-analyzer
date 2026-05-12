@@ -6,6 +6,7 @@ SOURCE:
 0._1f
 TOKENS:
 FLOAT_LITERAL "0._1f"
+EOF ""
 
 LEX_ERRORS:
 LexicalError { kind: InvalidNumber, range: 0..2 }

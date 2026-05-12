@@ -12,6 +12,7 @@ STRING_LITERAL "\"escape \\\" test\""
 WHITESPACE " "
 STRING_LITERAL "\"\""
 WHITESPACE " "
+EOF ""
 
 LEX_ERRORS:
 <none>

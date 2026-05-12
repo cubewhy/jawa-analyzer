@@ -19,6 +19,7 @@ GREATER ">"
 WHITESPACE " "
 L_BRACE "{"
 R_BRACE "}"
+EOF ""
 
 LEX_ERRORS:
 <none>

@@ -20,6 +20,7 @@ R_PAREN ")"
 SEMICOLON ";"
 WHITESPACE " "
 R_BRACE "}"
+EOF ""
 
 LEX_ERRORS:
 <none>

@@ -259,7 +259,7 @@ impl<'a> Parser<'a> {
     }
 
     pub(crate) fn is_at_end(&self) -> bool {
-        self.source.is_at_end()
+        self.at(EOF) || self.source.is_at_end()
     }
 
     pub(crate) fn at(&self, kind: SyntaxKind) -> bool {

@@ -21,6 +21,7 @@ fn item(p: &mut Parser) {
     match p.current() {
         Some(PACKAGE_KW) => package_decl(p),
         Some(IMPORT_KW) => import_decl(p),
+        Some(EOF) => {}
         Some(_) => decl::decl(p),
         None => {}
     }

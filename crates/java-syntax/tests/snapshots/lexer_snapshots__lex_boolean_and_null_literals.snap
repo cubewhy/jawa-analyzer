@@ -10,6 +10,7 @@ WHITESPACE " "
 FALSE_LITERAL "false"
 WHITESPACE " "
 NULL_LITERAL "null"
+EOF ""
 
 LEX_ERRORS:
 <none>
