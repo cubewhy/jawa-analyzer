@@ -123,6 +123,15 @@ impl<'a> Lexer<'a> {
             '/' => self.handle_slash(),
             '%' => self.handle_modulo(),
             '`' => self.handle_backtick_identifier(),
+            ':' => self.handle_colon(),
+            '?' => self.handle_question(),
+            '!' => self.handle_bang(),
+            '<' => self.handle_less(),
+            '>' => self.handle_greater(),
+            '=' => self.handle_equal(),
+            '&' => self.handle_and(),
+            '|' => self.handle_or(),
+
             c if is_kotlin_newline(c) => self.handle_newline(),
             ' ' | '\t' => self.handle_horizontal_whitespace(),
             c if is_kotlin_identifier_start(c) => self.handle_identifier(),
@@ -390,6 +399,123 @@ impl<'a> Lexer<'a> {
         }
 
         self.complete_token(CHAR_LITERAL);
+    }
+
+    fn handle_equal(&mut self) {
+        self.reader.advance(); // =
+        let token_kind = match self.reader.peek() {
+            '=' => {
+                self.reader.advance(); // ==
+                if self.reader.peek() == '=' {
+                    self.reader.advance(); // ===
+                    SHEQ
+                } else {
+                    EQUAL_EQUAL
+                }
+            }
+            _ => EQUAL,
+        };
+        self.complete_token(token_kind);
+    }
+
+    fn handle_colon(&mut self) {
+        self.reader.advance(); // :
+        let token_kind = match self.reader.peek() {
+            ':' => {
+                self.reader.advance(); // ::
+                COLON_COLON
+            }
+            _ => COLON,
+        };
+        self.complete_token(token_kind);
+    }
+
+    fn handle_question(&mut self) {
+        self.reader.advance(); // ?
+        let token_kind = match self.reader.peek() {
+            '.' => {
+                self.reader.advance(); // ?.
+                SAFE_ACCESS
+            }
+            ':' => {
+                self.reader.advance(); // ?:
+                ELVIS
+            }
+            _ => QUESTION,
+        };
+        self.complete_token(token_kind);
+    }
+
+    fn handle_bang(&mut self) {
+        self.reader.advance(); // !
+        let token_kind = match self.reader.peek() {
+            '=' => {
+                self.reader.advance(); // !=
+                if self.reader.peek() == '=' {
+                    self.reader.advance(); // !==
+                    SHNE
+                } else {
+                    NOT_EQUAL
+                }
+            }
+            '!' => {
+                self.reader.advance(); // !!
+                NOT_NULL_ASSERT
+            }
+            _ => NOT,
+        };
+        self.complete_token(token_kind);
+    }
+
+    fn handle_less(&mut self) {
+        self.reader.advance(); // <
+        let token_kind = match self.reader.peek() {
+            '=' => {
+                self.reader.advance(); // <=
+                LESS_EQUAL
+            }
+            _ => LESS,
+        };
+        self.complete_token(token_kind);
+    }
+
+    fn handle_greater(&mut self) {
+        self.reader.advance(); // >
+        let token_kind = match self.reader.peek() {
+            '=' => {
+                self.reader.advance(); // >=
+                GREATER_EQUAL
+            }
+            _ => GREATER,
+        };
+        self.complete_token(token_kind);
+    }
+
+    fn handle_and(&mut self) {
+        let start_char = self.reader.advance(); // &
+
+        if self.reader.peek() == '&' {
+            self.reader.advance(); // &
+            self.complete_token(AND);
+        } else {
+            // Lone '&' is invalid. We report it and move on.
+            self.report_error(LexicalErrorKind::UnexpectedChar(start_char));
+            // We can emit a placeholder or just let the error stand
+            self.complete_token(ERROR);
+        }
+    }
+
+    fn handle_or(&mut self) {
+        let start_char = self.reader.advance(); // |
+
+        if self.reader.peek() == '|' {
+            self.reader.advance(); // |
+            self.complete_token(OR);
+        } else {
+            // Lone '|' is invalid in Kotlin.
+            self.report_error(LexicalErrorKind::UnexpectedChar(start_char));
+            self.complete_token(ERROR);
+        }
     }
 
     fn handle_plus(&mut self) {
