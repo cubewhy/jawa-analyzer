@@ -79,10 +79,8 @@ impl<'a> Lexer<'a> {
 
     fn scan_default_mode(&mut self) {
         match self.reader.peek() {
-            '(' => self.complete_token(L_PAREN),
-            ')' => self.complete_token(R_PAREN),
             '{' => {
-                self.reader.advance();
+                self.reader.advance(); // {
                 // If we are tracking template depths, increment the top one
                 if let Some(depth) = self.template_brace_depths.last_mut() {
                     *depth += 1;
@@ -90,7 +88,7 @@ impl<'a> Lexer<'a> {
                 self.complete_token(L_BRACE);
             }
             '}' => {
-                self.reader.advance();
+                self.reader.advance(); // }
                 self.complete_token(R_BRACE);
 
                 // Check if this '}' closes a string template
@@ -118,8 +116,6 @@ impl<'a> Lexer<'a> {
                     self.complete_token(OPEN_QUOTE); // "
                 }
             }
-            '.' => self.complete_token(DOT),
-            ',' => self.complete_token(COMMA),
             '\'' => self.handle_char_literal(),
             '+' => self.handle_plus(),
             '-' => self.handle_minus(),
@@ -130,77 +126,22 @@ impl<'a> Lexer<'a> {
             c if is_kotlin_newline(c) => self.handle_newline(),
             ' ' | '\t' => self.handle_horizontal_whitespace(),
             c if is_kotlin_identifier_start(c) => self.handle_identifier(),
-            c => {
-                self.report_error(LexicalErrorKind::UnexpectedChar(c));
-                self.reader.advance();
-            }
-        }
-    }
+            _ => match self.reader.advance() {
+                '(' => self.complete_token(L_PAREN),
+                ')' => self.complete_token(R_PAREN),
+                '[' => self.complete_token(L_BRACKET),
+                ']' => self.complete_token(R_BRACKET),
+                '.' => self.complete_token(DOT),
+                ',' => self.complete_token(COMMA),
+                ';' => self.complete_token(SEMICOLON),
+                '$' => self.complete_token(DOLLAR),
+                '@' => self.complete_token(AT),
 
-    fn handle_identifier(&mut self) {
-        while !self.reader.is_at_end() && is_kotlin_identifier_part(self.reader.peek()) {
-            self.reader.advance(); // consume next char
-        }
-
-        let text = self.reader.current_lexeme();
-        let token_type = match text {
-            "as" => AS_KW,
-            "break" => BREAK_KW,
-            "class" => CONTINUE_KW,
-            "do" => DO_KW,
-            "if" => IF_KW,
-            "else" => ELSE_KW,
-            "false" => FALSE_KW,
-            "fun" => FUN_KW,
-            "in" => IN_KW,
-            "interface" => INTERFACE_KW,
-            "null" => NULL_KW,
-            "object" => OBJECT_KW,
-            "package" => PACKAGE_KW,
-            "return" => RETURN_KW,
-            "super" => SUPER_KW,
-            "this" => THIS_KW,
-            "throw" => THROW_KW,
-            "true" => TRUE_KW,
-            "try" => TRY_KW,
-            "typealias" => TYPEALIAS_KW,
-            "typeof" => TYPEOF_KW,
-            "val" => VAL_KW,
-            "var" => VAR_KW,
-            "when" => WHEN_KW,
-            "while" => WHILE_KW,
-            "_" => UNDERSCORE,
-
-            _ => IDENTIFIER,
-        };
-
-        self.complete_token(token_type);
-    }
-
-    fn handle_backtick_identifier(&mut self) {
-        self.reader.advance(); // `
-
-        // Check for empty backticks (``) which are invalid in Kotlin
-        if self.reader.peek() == '`' {
-            self.report_error(LexicalErrorKind::EmptyIdentifier);
-            self.reader.advance();
-            self.complete_token(IDENTIFIER);
-            return;
-        }
-
-        while !self.reader.is_at_end() && self.reader.peek() != '`' {
-            if self.reader.peek() == '\n' {
-                // Backtick identifiers cannot span multiple lines
-                self.report_error(LexicalErrorKind::UnterminatedIdentifier);
-                break;
-            }
-            self.reader.advance();
-        }
-
-        if self.reader.is_at_end() {
-            self.report_error(LexicalErrorKind::UnterminatedIdentifier);
-        } else if self.reader.peek() == '`' {
-            self.reader.advance(); // `
+                c => {
+                    self.report_error(LexicalErrorKind::UnexpectedChar(c));
+                    self.reader.advance();
+                }
+            },
         }
 
         self.complete_token(IDENTIFIER);
