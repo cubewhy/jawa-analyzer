@@ -1,0 +1,15 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+"""
+unterminated
+
+TOKENS:
+OPEN_RAW_QUOTE "\"\"\""
+STRING_CONTENT "\nunterminated\n"
+EOF ""
+
+LEX_ERRORS:
+LexicalError { kind: UnterminatedString, range: 3..17 }

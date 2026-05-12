@@ -93,6 +93,13 @@ impl<'a> Lexer<'a> {
                 dollar_depth,
             } => self.scan_string_mode(is_raw, dollar_depth),
         }
+
+        if self.reader.is_at_end()
+            && let Some(LexerMode::String { .. }) = self.mode_stack.last()
+        {
+            self.report_error(LexicalErrorKind::UnterminatedString);
+            self.mode_stack.pop();
+        }
     }
 
     fn scan_default_mode(&mut self) {

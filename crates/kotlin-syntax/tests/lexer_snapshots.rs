@@ -263,3 +263,11 @@ lexer_snapshot!(
         as?
     "#}
 );
+
+lexer_snapshot!(
+    unterminated_raw_string,
+    indoc! {r#"
+        """
+        unterminated
+    "#}
+);
