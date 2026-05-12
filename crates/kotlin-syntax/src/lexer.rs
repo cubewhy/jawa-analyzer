@@ -207,7 +207,7 @@ impl<'a> Lexer<'a> {
 
             if self.reader.peek() == '{' {
                 // Long Template: ${...}
-                self.reader.advance();
+                self.reader.advance(); // {
                 self.complete_token(TEMPLATE_EXPR_START); // Emits `${`
 
                 // Push default mode so the lexer processes normal code next
@@ -218,6 +218,13 @@ impl<'a> Lexer<'a> {
             } else if is_kotlin_identifier_start(self.reader.peek()) {
                 // Short Template: $identifier
                 self.complete_token(TEMPLATE_SHORT_START); // Emits `$`
+
+                // identifier after '$'
+                self.reader.new_token();
+                while !self.reader.is_at_end() && is_kotlin_identifier_part(self.reader.peek()) {
+                    self.reader.advance();
+                }
+                self.complete_token(IDENTIFIER);
                 return;
             }
             // If it's a lone '$' (like "$ "), it falls through to become normal text
@@ -228,8 +235,11 @@ impl<'a> Lexer<'a> {
         while !self.reader.is_at_end() {
             let next = self.reader.peek();
 
-            let hit_raw_end = is_raw && next == '"' && self.reader.peek_next() == '"';
-            let hit_std_end = !is_raw && (next == '"' || next == '\n' || next == '\\');
+            let hit_raw_end = is_raw
+                && next == '"'
+                && self.reader.peek_next() == '"'
+                && self.reader.peek_n(2) == '"';
+            let hit_std_end = !is_raw && (next == '"' || is_kotlin_newline(next) || next == '\\');
 
             if hit_raw_end || hit_std_end || next == '$' {
                 break;
