@@ -297,7 +297,8 @@ impl<'a> Lexer<'a> {
         let token_type = match text {
             "as" => AS_KW,
             "break" => BREAK_KW,
-            "class" => CONTINUE_KW,
+            "continue" => CONTINUE_KW,
+            "class" => CLASS_KW,
             "do" => DO_KW,
             "if" => IF_KW,
             "else" => ELSE_KW,
