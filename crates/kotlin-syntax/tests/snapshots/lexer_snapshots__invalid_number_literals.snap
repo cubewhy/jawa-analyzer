@@ -1,0 +1,41 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+1.0u
+1.0l
+1_
+0x_
+0b_
+1e
+1e+ 
+
+TOKENS:
+FLOAT_LITERAL "1.0"
+IDENTIFIER "u"
+NEWLINE "\n"
+FLOAT_LITERAL "1.0"
+IDENTIFIER "l"
+NEWLINE "\n"
+INTEGER_LITERAL "1_"
+NEWLINE "\n"
+INTEGER_LITERAL "0x_"
+NEWLINE "\n"
+INTEGER_LITERAL "0b_"
+NEWLINE "\n"
+FLOAT_LITERAL "1e"
+NEWLINE "\n"
+FLOAT_LITERAL "1e+"
+WHITESPACE " "
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+LexicalError { kind: IllegalUnderscore, range: 10..12 }
+LexicalError { kind: MissingNumericDigits, range: 13..16 }
+LexicalError { kind: IllegalUnderscore, range: 13..16 }
+LexicalError { kind: MissingNumericDigits, range: 17..20 }
+LexicalError { kind: IllegalUnderscore, range: 17..20 }
+LexicalError { kind: MissingExponentDigits, range: 21..23 }
+LexicalError { kind: MissingExponentDigits, range: 24..27 }
