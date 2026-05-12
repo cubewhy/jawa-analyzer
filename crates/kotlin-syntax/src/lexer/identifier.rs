@@ -17,6 +17,10 @@ fn is_unicode_digit(c: char) -> bool {
     matches!(get_general_category(c), GeneralCategory::DecimalNumber) // Nd
 }
 
+pub fn is_kotlin_newline(c: char) -> bool {
+    matches!(c, '\n' | '\r')
+}
+
 pub fn is_kotlin_identifier_start(c: char) -> bool {
     c == '_' || is_unicode_letter(c)
 }

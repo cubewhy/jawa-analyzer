@@ -3,7 +3,7 @@ use rowan::{TextRange, TextSize};
 use crate::{
     SyntaxKind::{self, *},
     lexer::{
-        identifier::{is_kotlin_identifier_part, is_kotlin_identifier_start},
+        identifier::{is_kotlin_identifier_part, is_kotlin_identifier_start, is_kotlin_newline},
         reader::SourceReader,
         token::Token,
     },
@@ -127,6 +127,8 @@ impl<'a> Lexer<'a> {
             '/' => self.handle_slash(),
             '%' => self.handle_modulo(),
             '`' => self.handle_backtick_identifier(),
+            c if is_kotlin_newline(c) => self.handle_newline(),
+            ' ' | '\t' => self.handle_horizontal_whitespace(),
             c if is_kotlin_identifier_start(c) => self.handle_identifier(),
             c => {
                 self.report_error(LexicalErrorKind::UnexpectedChar(c));
@@ -230,7 +232,7 @@ impl<'a> Lexer<'a> {
                 self.complete_token(CLOSE_QUOTE);
                 return;
             }
-            if c == '\n' {
+            if is_kotlin_newline(c) {
                 self.report_error(LexicalErrorKind::UnterminatedString);
                 self.mode_stack.pop(); // End string mode to recover
                 return;
@@ -297,6 +299,35 @@ impl<'a> Lexer<'a> {
         self.complete_token(STRING_CONTENT);
     }
 
+    fn handle_horizontal_whitespace(&mut self) {
+        while !self.reader.is_at_end() {
+            let c = self.reader.peek();
+            if c == ' ' || c == '\t' {
+                self.reader.advance();
+            } else {
+                break;
+            }
+        }
+        self.complete_token(WHITESPACE);
+    }
+
+    fn handle_newline(&mut self) {
+        while !self.reader.is_at_end() {
+            let c = self.reader.peek();
+            if c == '\n' {
+                self.reader.advance();
+            } else if c == '\r' {
+                self.reader.advance();
+                // Handle CRLF: peek for \n after \r
+                if self.reader.peek() == '\n' {
+                    self.reader.advance();
+                }
+            } else {
+                break;
+            }
+        }
+        self.complete_token(NEWLINE);
+    }
     fn handle_char_literal(&mut self) {
         self.reader.advance(); // Consume the opening '\''
 

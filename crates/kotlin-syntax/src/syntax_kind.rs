@@ -118,6 +118,7 @@ pub enum SyntaxKind {
     KDOC,
     LINE_COMMENT,
     BLOCK_COMMENT,
+    NEWLINE,
 
     MISSING,
     ERROR,
