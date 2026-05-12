@@ -918,7 +918,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn process_line_comment(&mut self) {
-        while !self.reader.is_at_end() && is_kotlin_newline(self.reader.peek()) {
+        while !self.reader.is_at_end() && !is_kotlin_newline(self.reader.peek()) {
             self.reader.advance();
         }
 
