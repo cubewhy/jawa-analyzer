@@ -390,7 +390,14 @@ impl<'a> Lexer<'a> {
 
         let text = self.reader.current_lexeme();
         let token_type = match text {
-            "as" => AS_KW,
+            "as" => {
+                if self.reader.peek() == '?' {
+                    self.reader.advance(); // ?
+                    AS_SAFE
+                } else {
+                    AS_KW
+                }
+            }
             "break" => BREAK_KW,
             "continue" => CONTINUE_KW,
             "class" => CLASS_KW,
@@ -724,6 +731,23 @@ impl<'a> Lexer<'a> {
             '!' => {
                 self.reader.advance(); // !!
                 NOT_NULL_ASSERT
+            }
+            'i' => {
+                match self.reader.peek_next() {
+                    'n' if !is_kotlin_identifier_part(self.reader.peek_n(2)) => {
+                        // !in
+                        self.reader.advance(); // i
+                        self.reader.advance(); // n
+                        NOT_IN
+                    }
+                    's' if !is_kotlin_identifier_part(self.reader.peek_n(2)) => {
+                        // !is
+                        self.reader.advance(); // i
+                        self.reader.advance(); // s
+                        NOT_IS
+                    }
+                    _ => NOT,
+                }
             }
             _ => NOT,
         };

@@ -1,0 +1,16 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+!is !in
+
+TOKENS:
+NOT_IS "!is"
+WHITESPACE " "
+NOT_IN "!in"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>

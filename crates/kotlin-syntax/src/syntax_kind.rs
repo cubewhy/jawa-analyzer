@@ -86,6 +86,7 @@ pub enum SyntaxKind {
 
     // Keywords
     AS_KW,
+    AS_SAFE, // as?
     BREAK_KW,
     CLASS_KW,
     CONTINUE_KW,
@@ -96,8 +97,10 @@ pub enum SyntaxKind {
     FOR_KW,
     FUN_KW,
     IN_KW,
+    NOT_IN,
     INTERFACE_KW,
     IS_KW,
+    NOT_IS,
     NULL_KW,
     OBJECT_KW,
     PACKAGE_KW,

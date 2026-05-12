@@ -249,3 +249,17 @@ lexer_snapshot!(
         "$`an identifier`"
     "#}
 );
+
+lexer_snapshot!(
+    not_is_and_not_in,
+    indoc! {r#"
+        !is !in
+    "#}
+);
+
+lexer_snapshot!(
+    safe_as,
+    indoc! {r#"
+        as?
+    "#}
+);

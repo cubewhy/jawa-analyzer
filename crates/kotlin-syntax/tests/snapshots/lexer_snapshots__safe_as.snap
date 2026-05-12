@@ -1,0 +1,14 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+as?
+
+TOKENS:
+AS_SAFE "as?"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>
