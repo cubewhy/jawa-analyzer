@@ -235,3 +235,10 @@ lexer_snapshot!(
         val nextValid = 'c'
     "#}
 );
+
+lexer_snapshot!(
+    zero,
+    indoc! {r#"
+        0
+    "#}
+);

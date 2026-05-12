@@ -557,10 +557,12 @@ impl<'a> Lexer<'a> {
                     self.complete_token(INTEGER_LITERAL);
                     return;
                 }
-                _ => {
+                '0'..='9' => {
                     // no octal in kotlin
+                    // Leading zeros followed by digits are not allowed
                     self.report_error(LexicalErrorKind::LeadingZerosNotAllowed);
                 }
+                _ => {}
             }
         }
 
