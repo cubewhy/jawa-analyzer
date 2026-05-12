@@ -1,0 +1,39 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+val `when` = 42
+
+fun `strange function name`() {
+    println(`when`)
+}
+
+TOKENS:
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "`when`"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "42"
+NEWLINE "\n\n"
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "`strange function name`"
+L_PAREN "("
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "println"
+L_PAREN "("
+IDENTIFIER "`when`"
+R_PAREN ")"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+
+LEX_ERRORS:
+<none>

@@ -1,0 +1,29 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+val a = 1l
+val b = 1Ul
+
+TOKENS:
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "a"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "1l"
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "b"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "1Ul"
+NEWLINE "\n"
+
+LEX_ERRORS:
+LexicalError { kind: WrongLongSuffixCase, range: 8..9 }
+LexicalError { kind: WrongLongSuffixCase, range: 19..21 }

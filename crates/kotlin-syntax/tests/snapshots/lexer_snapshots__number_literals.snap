@@ -1,0 +1,73 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+val dec = 123
+val hex = 0xFFEE
+val bin = 0b1010
+val float1 = 1.5
+val float2 = 1e10
+val float3 = 1.5f
+val ulong = 123UL
+
+TOKENS:
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "dec"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "123"
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "hex"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "0xFFEE"
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "bin"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "0b1010"
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "float1"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+FLOAT_LITERAL "1.5"
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "float2"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+FLOAT_LITERAL "1e10"
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "float3"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+FLOAT_LITERAL "1.5f"
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "ulong"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "123UL"
+NEWLINE "\n"
+
+LEX_ERRORS:
+<none>

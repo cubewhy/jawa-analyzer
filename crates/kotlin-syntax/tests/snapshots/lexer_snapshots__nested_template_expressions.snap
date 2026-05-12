@@ -1,0 +1,38 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+val result = "sum = ${1 + ${'$'}{2 + 3}}"
+
+TOKENS:
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "result"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+OPEN_QUOTE "\""
+STRING_CONTENT "sum = "
+TEMPLATE_EXPR_START "${"
+INTEGER_LITERAL "1"
+WHITESPACE " "
+PLUS "+"
+WHITESPACE " "
+DOLLAR "$"
+L_BRACE "{"
+CHAR_LITERAL "'$'"
+R_BRACE "}"
+L_BRACE "{"
+INTEGER_LITERAL "2"
+WHITESPACE " "
+PLUS "+"
+WHITESPACE " "
+INTEGER_LITERAL "3"
+R_BRACE "}"
+R_BRACE "}"
+CLOSE_QUOTE "\""
+NEWLINE "\n"
+
+LEX_ERRORS:
+<none>

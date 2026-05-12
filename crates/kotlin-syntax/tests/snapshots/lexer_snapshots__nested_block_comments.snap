@@ -1,0 +1,26 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+/*
+    outer
+    /* inner */
+    still outer
+*/
+val x = 1
+
+TOKENS:
+BLOCK_COMMENT "/*\n    outer\n    /* inner */\n    still outer\n*/"
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "x"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "1"
+NEWLINE "\n"
+
+LEX_ERRORS:
+<none>

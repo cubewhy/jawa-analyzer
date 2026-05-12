@@ -1,0 +1,58 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+/**
+ * Adds two numbers
+ */
+fun add(a: Int, b: Int): Int {
+    // return result
+    return a + b
+}
+
+TOKENS:
+KDOC "/**\n * Adds two numbers\n */"
+NEWLINE "\n"
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "add"
+L_PAREN "("
+IDENTIFIER "a"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+COMMA ","
+WHITESPACE " "
+IDENTIFIER "b"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+R_PAREN ")"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+LINE_COMMENT "//"
+WHITESPACE " "
+RETURN_KW "return"
+WHITESPACE " "
+IDENTIFIER "result"
+NEWLINE "\n"
+WHITESPACE "    "
+RETURN_KW "return"
+WHITESPACE " "
+IDENTIFIER "a"
+WHITESPACE " "
+PLUS "+"
+WHITESPACE " "
+IDENTIFIER "b"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+
+LEX_ERRORS:
+<none>

@@ -1,0 +1,21 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+val bad = "\q"
+
+TOKENS:
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "bad"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+OPEN_QUOTE "\""
+ESCAPE_SEQUENCE "\\q"
+CLOSE_QUOTE "\""
+NEWLINE "\n"
+
+LEX_ERRORS:
+LexicalError { kind: UnsupportedEscapeSequence, range: 11..12 }

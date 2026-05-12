@@ -1,0 +1,78 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+fun test(x: Int) {
+    if (x > 0) {
+        while (x > 1) {
+            break
+        }
+    } else {
+        return
+    }
+}
+
+TOKENS:
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "test"
+L_PAREN "("
+IDENTIFIER "x"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "Int"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+IF_KW "if"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "x"
+WHITESPACE " "
+GREATER ">"
+WHITESPACE " "
+INTEGER_LITERAL "0"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "        "
+WHILE_KW "while"
+WHITESPACE " "
+L_PAREN "("
+IDENTIFIER "x"
+WHITESPACE " "
+GREATER ">"
+WHITESPACE " "
+INTEGER_LITERAL "1"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "            "
+BREAK_KW "break"
+NEWLINE "\n"
+WHITESPACE "        "
+R_BRACE "}"
+NEWLINE "\n"
+WHITESPACE "    "
+R_BRACE "}"
+WHITESPACE " "
+ELSE_KW "else"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "        "
+RETURN_KW "return"
+NEWLINE "\n"
+WHITESPACE "    "
+R_BRACE "}"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+
+LEX_ERRORS:
+LexicalError { kind: LeadingZerosNotAllowed, range: 31..32 }

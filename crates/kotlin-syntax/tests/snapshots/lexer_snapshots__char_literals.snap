@@ -1,0 +1,37 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+val a = 'a'
+val b = '\n'
+val c = '\''
+
+TOKENS:
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "a"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+CHAR_LITERAL "'a'"
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "b"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+CHAR_LITERAL "'\\n'"
+NEWLINE "\n"
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "c"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+CHAR_LITERAL "'\\''"
+NEWLINE "\n"
+
+LEX_ERRORS:
+<none>

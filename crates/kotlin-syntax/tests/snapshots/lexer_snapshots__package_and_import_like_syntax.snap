@@ -1,0 +1,35 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+package com.example.app
+
+class User
+interface Repository
+object Singleton
+
+TOKENS:
+PACKAGE_KW "package"
+WHITESPACE " "
+IDENTIFIER "com"
+DOT "."
+IDENTIFIER "example"
+DOT "."
+IDENTIFIER "app"
+NEWLINE "\n\n"
+CONTINUE_KW "class"
+WHITESPACE " "
+IDENTIFIER "User"
+NEWLINE "\n"
+INTERFACE_KW "interface"
+WHITESPACE " "
+IDENTIFIER "Repository"
+NEWLINE "\n"
+OBJECT_KW "object"
+WHITESPACE " "
+IDENTIFIER "Singleton"
+NEWLINE "\n"
+
+LEX_ERRORS:
+<none>

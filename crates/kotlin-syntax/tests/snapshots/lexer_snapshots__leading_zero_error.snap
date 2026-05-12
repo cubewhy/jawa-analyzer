@@ -1,0 +1,19 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+val x = 0123
+
+TOKENS:
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "x"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+INTEGER_LITERAL "0123"
+NEWLINE "\n"
+
+LEX_ERRORS:
+LexicalError { kind: LeadingZerosNotAllowed, range: 8..9 }

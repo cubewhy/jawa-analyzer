@@ -4,28 +4,190 @@ use indoc::indoc;
 mod common;
 
 lexer_snapshot!(
-    lex_string,
+    basic_function_and_vars,
     indoc! {r#"
-    "a normal string"
-"#}
+        fun main() {
+            val name = "Kotlin"
+            var count = 42
+        }
+    "#}
 );
 
 lexer_snapshot!(
-    lex_raw_string,
+    string_templates,
     indoc! {r#"
-    """
-    a
-    raw
-    string"""
-"#}
+        fun greet(name: String) {
+            println("Hello, $name!")
+            println("Length: ${name.length}")
+        }
+    "#}
 );
 
 lexer_snapshot!(
-    lex_string_template,
+    raw_strings,
     indoc! {r#"
-    """
-    a
-    raw
-    string with $shortTemplate and ${long.template()}"""
-"#}
+        val json = """
+            {
+                "name": "kotlin",
+                "version": 2
+            }
+        """
+    "#}
+);
+
+lexer_snapshot!(
+    nested_template_expressions,
+    indoc! {r#"
+        val result = "sum = ${1 + ${'$'}{2 + 3}}"
+    "#}
+);
+
+lexer_snapshot!(
+    comments_and_kdoc,
+    indoc! {r#"
+        /**
+         * Adds two numbers
+         */
+        fun add(a: Int, b: Int): Int {
+            // return result
+            return a + b
+        }
+    "#}
+);
+
+lexer_snapshot!(
+    nested_block_comments,
+    indoc! {r#"
+        /*
+            outer
+            /* inner */
+            still outer
+        */
+        val x = 1
+    "#}
+);
+
+lexer_snapshot!(
+    number_literals,
+    indoc! {r#"
+        val dec = 123
+        val hex = 0xFFEE
+        val bin = 0b1010
+        val float1 = 1.5
+        val float2 = 1e10
+        val float3 = 1.5f
+        val ulong = 123UL
+    "#}
+);
+
+lexer_snapshot!(
+    operators,
+    indoc! {r#"
+        val a = b ?: c
+        val d = a?.length
+        val e = !!d
+        val f = 1..10
+        val g = 1..<10
+        val h = x == y
+        val i = x === y
+        val j = x != y
+        val k = x !== y
+    "#}
+);
+
+lexer_snapshot!(
+    char_literals,
+    indoc! {r#"
+        val a = 'a'
+        val b = '\n'
+        val c = '\''
+    "#}
+);
+
+lexer_snapshot!(
+    backtick_identifiers,
+    indoc! {r#"
+        val `when` = 42
+
+        fun `strange function name`() {
+            println(`when`)
+        }
+    "#}
+);
+
+lexer_snapshot!(
+    control_flow_keywords,
+    indoc! {r#"
+        fun test(x: Int) {
+            if (x > 0) {
+                while (x > 1) {
+                    break
+                }
+            } else {
+                return
+            }
+        }
+    "#}
+);
+
+lexer_snapshot!(
+    package_and_import_like_syntax,
+    indoc! {r#"
+        package com.example.app
+
+        class User
+        interface Repository
+        object Singleton
+    "#}
+);
+
+lexer_snapshot!(
+    unterminated_string_error,
+    indoc! {r#"
+        val x = "hello
+    "#}
+);
+
+lexer_snapshot!(
+    unterminated_block_comment_error,
+    indoc! {r#"
+        /*
+            never closed
+    "#}
+);
+
+lexer_snapshot!(
+    unsupported_escape_sequence_error,
+    indoc! {r#"
+        val bad = "\q"
+    "#}
+);
+
+lexer_snapshot!(
+    empty_char_literal_error,
+    indoc! {r#"
+        val c = ''
+    "#}
+);
+
+lexer_snapshot!(
+    wrong_long_suffix_case_error,
+    indoc! {r#"
+        val a = 1l
+        val b = 1Ul
+    "#}
+);
+
+lexer_snapshot!(
+    leading_zero_error,
+    indoc! {r#"
+        val x = 0123
+    "#}
+);
+
+lexer_snapshot!(
+    semicolon,
+    indoc! {r#"
+        ;;;
+    "#}
 );

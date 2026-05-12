@@ -1,0 +1,20 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+val x = "hello
+
+TOKENS:
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "x"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+OPEN_QUOTE "\""
+STRING_CONTENT "hello"
+NEWLINE "\n"
+
+LEX_ERRORS:
+LexicalError { kind: UnterminatedString, range: 14..14 }

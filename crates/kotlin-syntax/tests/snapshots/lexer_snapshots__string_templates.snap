@@ -1,0 +1,52 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+fun greet(name: String) {
+    println("Hello, $name!")
+    println("Length: ${name.length}")
+}
+
+TOKENS:
+FUN_KW "fun"
+WHITESPACE " "
+IDENTIFIER "greet"
+L_PAREN "("
+IDENTIFIER "name"
+COLON ":"
+WHITESPACE " "
+IDENTIFIER "String"
+R_PAREN ")"
+WHITESPACE " "
+L_BRACE "{"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "println"
+L_PAREN "("
+OPEN_QUOTE "\""
+STRING_CONTENT "Hello, "
+TEMPLATE_SHORT_START "$"
+IDENTIFIER "name"
+STRING_CONTENT "!"
+CLOSE_QUOTE "\""
+R_PAREN ")"
+NEWLINE "\n"
+WHITESPACE "    "
+IDENTIFIER "println"
+L_PAREN "("
+OPEN_QUOTE "\""
+STRING_CONTENT "Length: "
+TEMPLATE_EXPR_START "${"
+IDENTIFIER "name"
+DOT "."
+IDENTIFIER "length"
+R_BRACE "}"
+CLOSE_QUOTE "\""
+R_PAREN ")"
+NEWLINE "\n"
+R_BRACE "}"
+NEWLINE "\n"
+
+LEX_ERRORS:
+<none>

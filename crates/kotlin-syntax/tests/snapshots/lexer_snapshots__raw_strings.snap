@@ -1,0 +1,26 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+val json = """
+    {
+        "name": "kotlin",
+        "version": 2
+    }
+"""
+
+TOKENS:
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "json"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+OPEN_RAW_QUOTE "\"\"\""
+STRING_CONTENT "\n    {\n        \"name\": \"kotlin\",\n        \"version\": 2\n    }\n"
+CLOSE_RAW_QUOTE "\"\"\""
+NEWLINE "\n"
+
+LEX_ERRORS:
+<none>

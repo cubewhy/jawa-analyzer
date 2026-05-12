@@ -1,0 +1,19 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+val c = ''
+
+TOKENS:
+VAL_KW "val"
+WHITESPACE " "
+IDENTIFIER "c"
+WHITESPACE " "
+EQUAL "="
+WHITESPACE " "
+CHAR_LITERAL "''"
+NEWLINE "\n"
+
+LEX_ERRORS:
+LexicalError { kind: EmptyCharLiteral, range: 8..9 }
