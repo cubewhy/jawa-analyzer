@@ -114,6 +114,7 @@ pub enum SyntaxKind {
     WHEN_KW,
     WHILE_KW,
 
+    SHEBANG_LINE,
     IDENTIFIER,
     WHITESPACE,
     KDOC,

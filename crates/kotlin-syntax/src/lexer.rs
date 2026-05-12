@@ -63,6 +63,15 @@ impl<'a> Lexer<'a> {
             self.reader.advance();
         }
 
+        // Shebang line
+        if self.reader.peek() == '#' && self.reader.peek_next() == '!' {
+            self.reader.new_token();
+            while !self.reader.is_at_end() && !is_kotlin_newline(self.reader.peek()) {
+                self.reader.advance();
+            }
+            self.complete_token(SHEBANG_LINE);
+        }
+
         while !self.reader.is_at_end() {
             self.scan_next_token();
         }
