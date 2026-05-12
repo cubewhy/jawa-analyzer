@@ -1,0 +1,18 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+"""
+a
+raw
+string"""
+
+TOKENS:
+OPEN_RAW_QUOTE "\"\"\""
+STRING_CONTENT "\na\nraw\nstring"
+CLOSE_RAW_QUOTE "\"\"\""
+NEWLINE "\n"
+
+LEX_ERRORS:
+<none>

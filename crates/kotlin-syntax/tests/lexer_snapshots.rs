@@ -19,3 +19,13 @@ lexer_snapshot!(
     string"""
 "#}
 );
+
+lexer_snapshot!(
+    lex_string_template,
+    indoc! {r#"
+    """
+    a
+    raw
+    string with $shortTemplate and ${long.template()}"""
+"#}
+);

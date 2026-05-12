@@ -1,0 +1,28 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+"""
+a
+raw
+string with $shortTemplate and ${long.template()}"""
+
+TOKENS:
+OPEN_RAW_QUOTE "\"\"\""
+STRING_CONTENT "\na\nraw\nstring with "
+TEMPLATE_SHORT_START "$"
+IDENTIFIER "shortTemplate"
+STRING_CONTENT " and "
+TEMPLATE_EXPR_START "${"
+IDENTIFIER "long"
+DOT "."
+IDENTIFIER "template"
+L_PAREN "("
+R_PAREN ")"
+R_BRACE "}"
+CLOSE_RAW_QUOTE "\"\"\""
+NEWLINE "\n"
+
+LEX_ERRORS:
+<none>
