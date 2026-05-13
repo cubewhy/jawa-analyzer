@@ -1,0 +1,44 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+'a'
+'0'
+'\t'
+'\b'
+'\n'
+'\r'
+'\''
+'\"'
+'\\'
+'\$'
+'\u0041'
+
+TOKENS:
+CHAR_LITERAL "'a'"
+NEWLINE "\n"
+CHAR_LITERAL "'0'"
+NEWLINE "\n"
+CHAR_LITERAL "'\\t'"
+NEWLINE "\n"
+CHAR_LITERAL "'\\b'"
+NEWLINE "\n"
+CHAR_LITERAL "'\\n'"
+NEWLINE "\n"
+CHAR_LITERAL "'\\r'"
+NEWLINE "\n"
+CHAR_LITERAL "'\\''"
+NEWLINE "\n"
+CHAR_LITERAL "'\\\"'"
+NEWLINE "\n"
+CHAR_LITERAL "'\\\\'"
+NEWLINE "\n"
+CHAR_LITERAL "'\\$'"
+NEWLINE "\n"
+CHAR_LITERAL "'\\u0041'"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+<none>

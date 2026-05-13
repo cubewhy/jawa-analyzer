@@ -288,3 +288,31 @@ lexer_snapshot!(
         unterminated
     "#}
 );
+
+lexer_snapshot!(
+    char_literals_valid,
+    indoc! {r#"
+        'a'
+        '0'
+        '\t'
+        '\b'
+        '\n'
+        '\r'
+        '\''
+        '\"'
+        '\\'
+        '\$'
+        '\u0041'
+    "#}
+);
+
+lexer_snapshot!(
+    char_literals_invalid,
+    indoc! {r#"
+        ''
+        'abc'
+        '\x'
+        '\u12G4'
+        'a
+    "#}
+);

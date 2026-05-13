@@ -235,38 +235,8 @@ impl<'a> Lexer<'a> {
 
         // Handle Escape Sequences (Only in non-raw strings)
         if !is_raw && c == '\\' {
-            self.reader.advance(); // \
-            match self.reader.peek() {
-                't' | 'b' | 'n' | 'r' | '\'' | '"' | '\\' | '$' => {
-                    self.reader.advance(); // Consume valid escape
-                    self.complete_token(ESCAPE_SEQUENCE);
-                }
-                'u' => {
-                    self.reader.advance(); // u
-                    let mut valid = true;
-                    for _ in 0..4 {
-                        if !self.reader.peek().is_ascii_hexdigit() {
-                            valid = false;
-                            break; // Stop on first invalid hex
-                        }
-                        self.reader.advance();
-                    }
-                    if valid {
-                        self.complete_token(ESCAPE_SEQUENCE);
-                    } else {
-                        self.report_error(LexicalErrorKind::UnsupportedEscapeSequence);
-                        self.complete_token(ESCAPE_SEQUENCE);
-                    }
-                }
-                _ => {
-                    // Unsupported escape sequence error!
-                    self.report_error(LexicalErrorKind::UnsupportedEscapeSequence);
-                    if !self.reader.is_at_end() {
-                        self.reader.advance(); // Consume invalid char to recover
-                    }
-                    self.complete_token(ESCAPE_SEQUENCE);
-                }
-            }
+            self.consume_escape_sequence();
+            self.complete_token(ESCAPE_SEQUENCE);
             return;
         }
 
@@ -469,8 +439,40 @@ impl<'a> Lexer<'a> {
         self.complete_token(IDENTIFIER);
     }
 
+    fn consume_escape_sequence(&mut self) {
+        self.reader.advance(); // \
+
+        match self.reader.peek() {
+            't' | 'b' | 'n' | 'r' | '\'' | '"' | '\\' | '$' => {
+                self.reader.advance(); // Consume valid escape
+            }
+            'u' => {
+                self.reader.advance(); // u
+                let mut valid = true;
+                for _ in 0..4 {
+                    if !self.reader.peek().is_ascii_hexdigit() {
+                        valid = false;
+                        break; // Stop on first invalid hex
+                    }
+                    self.reader.advance();
+                }
+
+                if !valid {
+                    self.report_error(LexicalErrorKind::UnsupportedEscapeSequence);
+                }
+            }
+            _ => {
+                // Unsupported escape sequence error!
+                self.report_error(LexicalErrorKind::UnsupportedEscapeSequence);
+                if !self.reader.is_at_end() {
+                    self.reader.advance(); // Consume invalid char to recover
+                }
+            }
+        }
+    }
+
     fn handle_char_literal(&mut self) {
-        self.reader.advance(); // Consume the opening '\''
+        self.reader.advance(); // '
 
         // Handle empty char literal error: ''
         if self.reader.peek() == '\'' {
@@ -483,27 +485,9 @@ impl<'a> Lexer<'a> {
         // Handle the contents of the char literal
         if !self.reader.is_at_end() {
             if self.reader.peek() == '\\' {
-                self.reader.advance(); // Consume '\'
-                // TODO: validate escape
-                match self.reader.peek() {
-                    'u' => {
-                        self.reader.advance(); // u
-                        for _ in 0..4 {
-                            if self.reader.peek().is_ascii_hexdigit() {
-                                self.reader.advance();
-                            } else {
-                                break;
-                            }
-                        }
-                    }
-                    _ => {
-                        if !self.reader.is_at_end() {
-                            self.reader.advance(); // Consume the escaped char
-                        }
-                    }
-                }
+                self.consume_escape_sequence();
             } else {
-                self.reader.advance(); // Consume the standard char
+                self.reader.advance();
             }
         }
 
@@ -518,7 +502,7 @@ impl<'a> Lexer<'a> {
 
         // Expect a closing single quote
         if self.reader.peek() == '\'' {
-            self.reader.advance(); // Consume the closing '\''
+            self.reader.advance(); // '
             if too_many_chars {
                 self.report_error(LexicalErrorKind::TooManyCharsInCharLiteral);
             }

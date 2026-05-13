@@ -51,4 +51,5 @@ EOF ""
 
 LEX_ERRORS:
 LexicalError { kind: UnsupportedEscapeSequence, range: 69..71 }
+LexicalError { kind: UnsupportedEscapeSequence, range: 95..98 }
 LexicalError { kind: TooManyCharsInCharLiteral, range: 95..101 }

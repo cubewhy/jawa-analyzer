@@ -1,0 +1,31 @@
+---
+source: crates/kotlin-syntax/tests/lexer_snapshots.rs
+expression: out
+---
+SOURCE:
+''
+'abc'
+'\x'
+'\u12G4'
+'a
+
+TOKENS:
+CHAR_LITERAL "''"
+NEWLINE "\n"
+CHAR_LITERAL "'abc'"
+NEWLINE "\n"
+CHAR_LITERAL "'\\x'"
+NEWLINE "\n"
+CHAR_LITERAL "'\\u12G4'"
+NEWLINE "\n"
+CHAR_LITERAL "'a"
+NEWLINE "\n"
+EOF ""
+
+LEX_ERRORS:
+LexicalError { kind: EmptyCharLiteral, range: 0..1 }
+LexicalError { kind: TooManyCharsInCharLiteral, range: 3..8 }
+LexicalError { kind: UnsupportedEscapeSequence, range: 9..11 }
+LexicalError { kind: UnsupportedEscapeSequence, range: 14..19 }
+LexicalError { kind: TooManyCharsInCharLiteral, range: 14..22 }
+LexicalError { kind: UnterminatedCharLiteral, range: 23..25 }
