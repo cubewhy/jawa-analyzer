@@ -534,96 +534,62 @@ impl<'a> Lexer<'a> {
     }
 
     fn handle_number(&mut self) {
-        // TODO: need a refactor
-        let mut is_float = false;
-        let mut last_was_underscore = false;
-        let first = self.reader.advance(); // consume the first digit
+        let first = self.reader.peek();
 
         // Check for Hex or Binary prefixes
         if first == '0' {
-            match self.reader.peek() {
-                'x' | 'X' => {
-                    self.reader.advance();
-                    if self.reader.peek() == '_' {
-                        self.report_error(LexicalErrorKind::IllegalUnderscore);
-                    }
-                    let mut digit_count = 0;
-                    while !self.reader.is_at_end() {
-                        let c = self.reader.peek();
-                        if c.is_ascii_hexdigit() {
-                            self.reader.advance();
-                            digit_count += 1;
-                            last_was_underscore = false;
-                        } else if c == '_' {
-                            self.reader.advance();
-                            last_was_underscore = true;
-                        } else {
-                            break;
-                        }
-                    }
-                    if digit_count == 0 {
-                        self.report_error(LexicalErrorKind::MissingNumericDigits);
-                    }
-                    if last_was_underscore {
-                        self.report_error(LexicalErrorKind::IllegalUnderscore);
-                    }
-                    self.consume_int_suffixes();
-                    self.complete_token(INTEGER_LITERAL);
-                    return;
-                }
-                'b' | 'B' => {
-                    self.reader.advance();
-                    if self.reader.peek() == '_' {
-                        self.report_error(LexicalErrorKind::IllegalUnderscore);
-                    }
-                    let mut digit_count = 0;
-                    while !self.reader.is_at_end() {
-                        let c = self.reader.peek();
-                        if c == '0' || c == '1' {
-                            self.reader.advance();
-                            digit_count += 1;
-                            last_was_underscore = false;
-                        } else if c == '_' {
-                            self.reader.advance();
-                            last_was_underscore = true;
-                        } else {
-                            break;
-                        }
-                    }
-                    if digit_count == 0 {
-                        self.report_error(LexicalErrorKind::MissingNumericDigits);
-                    }
-                    if last_was_underscore {
-                        self.report_error(LexicalErrorKind::IllegalUnderscore);
-                    }
-                    self.consume_int_suffixes();
-                    self.complete_token(INTEGER_LITERAL);
-                    return;
-                }
-                '0'..='9' => {
-                    // no octal in kotlin
-                    // Leading zeros followed by digits are not allowed
-                    self.report_error(LexicalErrorKind::LeadingZerosNotAllowed);
-                }
-                _ => {}
+            let next = self.reader.peek_next();
+            if next == 'x' || next == 'X' {
+                self.reader.advance(); // Consume '0'
+                self.reader.advance(); // Consume 'x' or 'X'
+                self.handle_radix_literal(|c| c.is_ascii_hexdigit());
+                return;
+            }
+
+            if next == 'b' || next == 'B' {
+                self.reader.advance(); // Consume '0'
+                self.reader.advance(); // Consume 'b' or 'B'
+                self.handle_radix_literal(|c| c == '0' || c == '1');
+                return;
+            }
+
+            // Kotlin forbids octal. Check for leading zeros.
+            if next.is_ascii_digit() {
+                self.report_error(LexicalErrorKind::LeadingZerosNotAllowed);
             }
         }
 
-        // integer part (decimal digits and underscores)
-        while !self.reader.is_at_end() {
-            let c = self.reader.peek();
-            if c.is_ascii_digit() {
-                self.reader.advance();
-                last_was_underscore = false;
-            } else if c == '_' {
-                self.reader.advance();
-                last_was_underscore = true;
-            } else {
-                break;
-            }
+        self.handle_decimal_or_float();
+    }
+
+    fn handle_radix_literal<F>(&mut self, is_valid_digit: F)
+    where
+        F: Fn(char) -> bool,
+    {
+        if self.reader.peek() == '_' {
+            self.report_error(LexicalErrorKind::IllegalUnderscore);
         }
 
-        // Check for fractional part
+        let (digit_count, last_was_underscore) = self.consume_digits(is_valid_digit);
+
+        if digit_count == 0 {
+            self.report_error(LexicalErrorKind::MissingNumericDigits);
+        }
+        if last_was_underscore {
+            self.report_error(LexicalErrorKind::IllegalUnderscore);
+        }
+
+        self.consume_int_suffixes();
+        self.complete_token(INTEGER_LITERAL);
+    }
+
+    fn handle_decimal_or_float(&mut self) {
+        let mut is_float = false;
+
+        // Integer part
+        let (_, mut last_was_underscore) = self.consume_digits(|c| c.is_ascii_digit());
+
+        // Fractional part
         // We only consume the dot if it's followed by a digit.
         // This avoids consuming '.' in `1..2` (range) or `1.plus(2)` (method call).
         if self.reader.peek() == '.'
@@ -632,58 +598,39 @@ impl<'a> Lexer<'a> {
             if last_was_underscore {
                 self.report_error(LexicalErrorKind::IllegalUnderscore);
             }
+
             is_float = true;
-            self.reader.advance(); // .
+            self.reader.advance(); // Consume '.'
+
             if self.reader.peek() == '_' {
                 self.report_error(LexicalErrorKind::IllegalUnderscore);
             }
 
-            last_was_underscore = false;
-            while !self.reader.is_at_end() {
-                let c = self.reader.peek();
-                if c.is_ascii_digit() {
-                    self.reader.advance();
-                    last_was_underscore = false;
-                } else if c == '_' {
-                    self.reader.advance();
-                    last_was_underscore = true;
-                } else {
-                    break;
-                }
-            }
+            let (_, ended_with_underscore) = self.consume_digits(|c| c.is_ascii_digit());
+            last_was_underscore = ended_with_underscore;
         }
 
-        // Check for exponent part
+        // Exponent part
         if self.reader.peek() == 'e' || self.reader.peek() == 'E' {
             if last_was_underscore {
                 self.report_error(LexicalErrorKind::IllegalUnderscore);
             }
+
             is_float = true;
-            self.reader.advance();
+            self.reader.advance(); // Consume 'e' or 'E'
+
             let sign = self.reader.peek();
             if sign == '+' || sign == '-' {
-                self.reader.advance();
+                self.reader.advance(); // Consume sign
             }
 
             if self.reader.peek() == '_' {
                 self.report_error(LexicalErrorKind::IllegalUnderscore);
             }
 
-            let mut exp_digits = 0;
-            last_was_underscore = false;
-            while !self.reader.is_at_end() {
-                let c = self.reader.peek();
-                if c.is_ascii_digit() {
-                    self.reader.advance();
-                    exp_digits += 1;
-                    last_was_underscore = false;
-                } else if c == '_' {
-                    self.reader.advance();
-                    last_was_underscore = true;
-                } else {
-                    break;
-                }
-            }
+            let (exp_digits, ended_with_underscore) = self.consume_digits(|c| c.is_ascii_digit());
+            last_was_underscore = ended_with_underscore;
+
             if exp_digits == 0 {
                 self.report_error(LexicalErrorKind::MissingExponentDigits);
             }
@@ -693,6 +640,7 @@ impl<'a> Lexer<'a> {
             self.report_error(LexicalErrorKind::IllegalUnderscore);
         }
 
+        // Type suffixes
         let c = self.reader.peek();
         if is_float {
             if c == 'f' || c == 'F' {
@@ -704,10 +652,36 @@ impl<'a> Lexer<'a> {
             self.reader.advance();
             self.complete_token(FLOAT_LITERAL);
         } else {
-            // Only non-float decimal, hex, or binary literals can have 'u' or 'L' suffixes.
+            // Only non-float decimal literals can have 'u' or 'L' suffixes.
             self.consume_int_suffixes();
             self.complete_token(INTEGER_LITERAL);
         }
+    }
+
+    /// Helper to consume consecutive valid digits or underscores.
+    /// Returns a tuple containing: (count_of_valid_digits, ended_with_underscore)
+    fn consume_digits<F>(&mut self, is_valid_digit: F) -> (usize, bool)
+    where
+        F: Fn(char) -> bool,
+    {
+        let mut digit_count = 0;
+        let mut last_was_underscore = false;
+
+        while !self.reader.is_at_end() {
+            let c = self.reader.peek();
+            if is_valid_digit(c) {
+                self.reader.advance();
+                digit_count += 1;
+                last_was_underscore = false;
+            } else if c == '_' {
+                self.reader.advance();
+                last_was_underscore = true;
+            } else {
+                break;
+            }
+        }
+
+        (digit_count, last_was_underscore)
     }
 
     fn consume_int_suffixes(&mut self) {

@@ -17,4 +17,4 @@ NEWLINE "\n"
 EOF ""
 
 LEX_ERRORS:
-LexicalError { kind: LeadingZerosNotAllowed, range: 8..9 }
+LexicalError { kind: LeadingZerosNotAllowed, range: 8..8 }
