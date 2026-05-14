@@ -6,7 +6,9 @@ publish = false
 
 [dependencies]
 rowan.workspace = true
-unicode-general-category = "1.1.0"
+derive_more = { version = "2.1.1", features = ["display"] }
+unicode-general-category.workspace = true
+drop_bomb.workspace = true
 
 [dev-dependencies]
 insta.workspace = true

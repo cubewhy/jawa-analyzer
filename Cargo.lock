@@ -1103,6 +1103,8 @@ dependencies = [
 name = "kotlin-syntax"
 version = "0.0.0"
 dependencies = [
+ "derive_more",
+ "drop_bomb",
  "indoc",
  "insta",
  "rowan",
@@ -1552,18 +1554,18 @@ dependencies = [
 
 [[package]]
 name = "ra_ap_paths"
-version = "0.0.331"
+version = "0.0.332"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "84f9313ecd7bb1deec52c2b361db33fa95f685cd15d596018e0a0862be2c7ca0"
+checksum = "9db2538d3758164fe316b6f4c0fdff8b0f77dc3e62d9aeb950ffa812f72d9b1d"
 dependencies = [
  "camino",
 ]
 
 [[package]]
 name = "ra_ap_stdx"
-version = "0.0.331"
+version = "0.0.332"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0ebcaa9da49ee86809a3c5ff57c0af35530951ded4e7aad371839f173da7ef7"
+checksum = "f9b22de4468431433c5d76d2f5bcf0e39830ed87456bb6bea2c24d774e9ffc9d"
 dependencies = [
  "crossbeam-channel",
  "crossbeam-utils",
@@ -1577,9 +1579,9 @@ dependencies = [
 
 [[package]]
 name = "ra_ap_vfs"
-version = "0.0.331"
+version = "0.0.332"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7867f6c4e56e54304e24eb7c422f67bc75034fb3b59b013736668043e13fbd3f"
+checksum = "51c7d6d7846aebdd4636a4383c5202223eeac6fb2823796e5649c0f6473fa371"
 dependencies = [
  "crossbeam-channel",
  "fst",
@@ -1593,9 +1595,9 @@ dependencies = [
 
 [[package]]
 name = "ra_ap_vfs-notify"
-version = "0.0.331"
+version = "0.0.332"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "950f70a43d62aabe8ea76c12b1407f96870b1d6414eb3d83a686cd015e81039e"
+checksum = "27c733516b26b1c47ca953bdb8bb9a9e4e9ff30778dbc12c847b2f21c3f87e76"
 dependencies = [
  "crossbeam-channel",
  "notify",

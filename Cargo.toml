@@ -14,8 +14,8 @@ lsp-test = { path = "./crates/lsp-test/" }
 
 lsp-server = "0.7.9"
 lsp-types = { version = "=0.95.1", features = ["proposed"] }
-vfs = { package = "ra_ap_vfs", version = "0.0.331" }
-vfs-notify = { package = "ra_ap_vfs-notify", version = "0.0.331" }
+vfs = { package = "ra_ap_vfs", version = "0.0.332" }
+vfs-notify = { package = "ra_ap_vfs-notify", version = "0.0.332" }
 line-index = { package = "ra_ap_line-index", version = "0.0.17" }
 bytes = "1.11.1"
 zip = "8.6.0"
@@ -24,6 +24,8 @@ indoc = "2.0"
 insta = "1.47.2"
 anyhow = "1"
 salsa = "0.26.1"
+unicode-general-category = "1.1.0"
+drop_bomb = "0.1.5"
 stacksafe = "1.0"
 smallvec = "1.15.1"
 tracing = "0.1"

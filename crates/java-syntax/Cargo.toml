@@ -5,9 +5,9 @@ edition = "2024"
 publish = false
 
 [dependencies]
-drop_bomb = "0.1.5"
+drop_bomb.workspace = true
 derive_more = { version = "2.1.1", features = ["display"] }
-unicode-general-category = "1.1.0"
+unicode-general-category.workspace = true
 rowan = { workspace = true }
 smallvec = { workspace = true }
 stacksafe = { workspace = true }
