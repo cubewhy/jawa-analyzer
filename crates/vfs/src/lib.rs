@@ -1,34 +1,217 @@
 use std::{
-    path::PathBuf,
-    sync::{
-        Arc,
-        atomic::{AtomicU32, Ordering},
-        mpsc::Sender,
-    },
-    time::Duration,
+    path::{Path, PathBuf},
+    sync::Arc,
 };
 
-use notify_debouncer_mini::{
-    DebouncedEvent, new_debouncer,
-    notify::{self, RecursiveMode},
-};
+use camino::{Utf8Path, Utf8PathBuf};
 use rustc_hash::FxHashMap;
+use url::Url;
 
 use crate::virtual_path::VirtualPathHandler;
 
+pub mod loader;
 pub mod virtual_path;
 
 #[derive(Debug, Clone, Copy, Ord, PartialOrd, Eq, PartialEq, Hash)]
 pub struct FileId(pub u32);
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct AbsPathBuf(Utf8PathBuf);
+
+impl AbsPathBuf {
+    pub fn assert_utf8(path: std::path::PathBuf) -> Self {
+        let utf8_path = Utf8PathBuf::try_from(path).expect("Path is not valid UTF-8");
+
+        assert!(
+            utf8_path.is_absolute(),
+            "Path is not absolute: {}",
+            utf8_path
+        );
+
+        Self(utf8_path)
+    }
+
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+
+    pub fn assert_from(base: &AbsPath, path: impl AsRef<Utf8Path>) -> Self {
+        let joined = base.join(path);
+        Self(joined)
+    }
+}
+
+impl TryFrom<Utf8PathBuf> for AbsPathBuf {
+    type Error = Utf8PathBuf;
+
+    fn try_from(path: Utf8PathBuf) -> Result<Self, Self::Error> {
+        if path.is_absolute() {
+            Ok(Self(path))
+        } else {
+            Err(path)
+        }
+    }
+}
+
+impl TryFrom<PathBuf> for AbsPathBuf {
+    type Error = PathBuf;
+
+    fn try_from(path: PathBuf) -> Result<Self, Self::Error> {
+        if !path.is_absolute() {
+            return Err(path);
+        }
+
+        match Utf8PathBuf::try_from(path) {
+            Ok(utf8_path) => Ok(Self(utf8_path)),
+            Err(err) => Err(err.into_path_buf()),
+        }
+    }
+}
+
+#[derive(Debug, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+pub struct AbsPath(Utf8Path);
+
+impl AbsPath {
+    pub fn as_str(&self) -> &str {
+        self.0.as_str()
+    }
+
+    pub fn assert(path: &Utf8Path) -> &Self {
+        assert!(path.is_absolute(), "path is not absolute: {}", path);
+        unsafe { Self::new_unchecked(path) }
+    }
+
+    /// # Safety
+    /// AbsPath is a wrapper type of Utf8Path, so the conversion is safe
+    pub unsafe fn new_unchecked(path: &Utf8Path) -> &Self {
+        unsafe { &*(path as *const Utf8Path as *const AbsPath) }
+    }
+}
+
+impl std::ops::Deref for AbsPathBuf {
+    type Target = AbsPath;
+
+    fn deref(&self) -> &AbsPath {
+        // 内部必定是绝对路径，零开销转换
+        unsafe { AbsPath::new_unchecked(&self.0) }
+    }
+}
+
+impl std::ops::Deref for AbsPath {
+    type Target = Utf8Path;
+
+    fn deref(&self) -> &Utf8Path {
+        &self.0
+    }
+}
+
+impl std::borrow::Borrow<AbsPath> for AbsPathBuf {
+    fn borrow(&self) -> &AbsPath {
+        self
+    }
+}
+
+impl AsRef<Utf8Path> for AbsPathBuf {
+    fn as_ref(&self) -> &Utf8Path {
+        &self.0
+    }
+}
+
+impl AsRef<Utf8Path> for AbsPath {
+    fn as_ref(&self) -> &Utf8Path {
+        &self.0
+    }
+}
+
+impl AsRef<Path> for AbsPathBuf {
+    fn as_ref(&self) -> &Path {
+        self.0.as_std_path()
+    }
+}
+
+impl AsRef<Path> for AbsPath {
+    fn as_ref(&self) -> &Path {
+        self.0.as_std_path()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum VfsPath {
+    Physical(AbsPathBuf),
+    Virtual(Url),
+}
+
+impl VfsPath {
+    pub fn as_str(&self) -> std::borrow::Cow<'_, str> {
+        match self {
+            VfsPath::Physical(path) => path.as_str().into(),
+            VfsPath::Virtual(url) => std::borrow::Cow::Borrowed(url.as_str()),
+        }
+    }
+
+    pub fn into_physical(self) -> Option<AbsPathBuf> {
+        match self {
+            VfsPath::Physical(path_buf) => Some(path_buf),
+            VfsPath::Virtual(_) => None,
+        }
+    }
+
+    pub fn exists(&self) -> bool {
+        match self {
+            VfsPath::Physical(path_buf) => path_buf.exists(),
+            VfsPath::Virtual(_) => true,
+        }
+    }
+
+    pub fn extension(&self) -> Option<&str> {
+        match self {
+            VfsPath::Physical(path) => path.extension(),
+            VfsPath::Virtual(url) => {
+                let file_name = url.path_segments()?.next_back()?;
+
+                let dot_idx = file_name.rfind('.')?;
+
+                if dot_idx == 0 {
+                    return None;
+                }
+
+                Some(&file_name[dot_idx + 1..])
+            }
+        }
+    }
+
+    pub fn to_url(&self) -> Url {
+        match self {
+            VfsPath::Physical(abs_path) => Url::from_file_path(abs_path).expect(
+                "AbsPathBuf is guaranteed to be absolute, please report this to developers!",
+            ),
+            VfsPath::Virtual(url) => url.clone(),
+        }
+    }
+}
+
+impl From<&Url> for VfsPath {
+    fn from(url: &Url) -> Self {
+        if url.scheme() == "file"
+            && let Ok(path) = url.to_file_path()
+            && let Ok(abs_path) = AbsPathBuf::try_from(path)
+        {
+            return VfsPath::Physical(abs_path);
+        }
+
+        VfsPath::Virtual(url.clone())
+    }
+}
+
 #[derive(Default)]
 pub struct Vfs {
-    next_id: AtomicU32,
+    next_id: u32,
 
-    uri_to_id: FxHashMap<String, FileId>,
-    id_to_uri: FxHashMap<FileId, String>,
+    path_to_id: FxHashMap<VfsPath, FileId>,
+    id_to_path: FxHashMap<FileId, VfsPath>,
 
-    overlays: FxHashMap<FileId, Arc<str>>,
+    overlays: FxHashMap<FileId, Arc<[u8]>>,
 
     handlers: Vec<Box<dyn VirtualPathHandler>>,
     pending_events: Vec<VfsEvent>,
@@ -43,89 +226,86 @@ impl Vfs {
         self.handlers.push(Box::new(handler));
     }
 
-    pub fn alloc_file_id(&mut self, uri: &str) -> FileId {
-        if let Some(&id) = self.uri_to_id.get(uri) {
+    pub fn alloc_file_id(&mut self, path: VfsPath) -> FileId {
+        if let Some(&id) = self.path_to_id.get(&path) {
             return id;
         }
 
-        let id = FileId(self.next_id.fetch_add(1, Ordering::SeqCst));
+        let id = FileId(self.next_id);
+        self.next_id += 1;
 
-        self.uri_to_id.insert(uri.to_string(), id);
-        self.id_to_uri.insert(id, uri.to_string());
+        self.pending_events.push(VfsEvent::Created {
+            id,
+            path: path.clone(),
+        });
+
+        self.path_to_id.insert(path.clone(), id);
+        self.id_to_path.insert(id, path);
 
         id
     }
 
-    pub fn file_path(&self, id: FileId) -> Option<&str> {
-        self.id_to_uri.get(&id).map(|x| x.as_ref())
+    pub fn file_path(&self, id: FileId) -> Option<&VfsPath> {
+        self.id_to_path.get(&id)
     }
 
-    pub fn set_overlay(&mut self, id: FileId, text: String) {
-        self.overlays.insert(id, Arc::from(text));
-        self.pending_events.push(VfsEvent::Modify { id });
+    pub fn file_id(&self, path: &VfsPath) -> Option<FileId> {
+        self.path_to_id.get(path).copied()
+    }
+
+    pub fn set_overlay(&mut self, id: FileId, content: Vec<u8>) {
+        self.overlays.insert(id, Arc::from(content));
+        self.pending_events.push(VfsEvent::Modified { id });
     }
 
     pub fn clear_overlay(&mut self, id: FileId) {
         if self.overlays.remove(&id).is_some() {
-            self.pending_events.push(VfsEvent::Modify { id });
+            self.pending_events.push(VfsEvent::Modified { id });
         }
     }
 
-    pub fn take_changes(&mut self) -> Vec<VfsEvent> {
+    pub fn take_events(&mut self) -> Vec<VfsEvent> {
         std::mem::take(&mut self.pending_events)
     }
 
-    pub fn fetch_content(&self, id: FileId) -> std::io::Result<Vec<u8>> {
-        if let Some(text) = self.overlays.get(&id) {
-            return Ok(text.as_bytes().to_vec());
+    pub fn set_file_contents(&mut self, path: VfsPath, content: Option<Vec<u8>>) -> FileId {
+        let file_id = self.alloc_file_id(path);
+        if let Some(content) = content {
+            self.set_overlay(file_id, content);
+        } else {
+            self.clear_overlay(file_id);
         }
-
-        let uri = self
-            .id_to_uri
-            .get(&id)
-            .ok_or_else(|| std::io::Error::other("FileId not found"))?;
-
-        let scheme = uri.split("://").next().unwrap_or("file");
-
-        for handler in &self.handlers {
-            if handler.can_handle(scheme) {
-                return handler.fetch_bytes(uri);
-            }
-        }
-
-        Err(std::io::Error::other(format!(
-            "No handler registered for scheme: {}",
-            scheme
-        )))
+        file_id
     }
 
-    pub fn handle_watcher_message(&mut self, msg: WatcherMessage) {
-        match msg {
-            WatcherMessage::FileSystemChanged(events) => {
-                for event in events {
-                    let path = event.path;
+    pub fn fetch_content(&self, id: FileId) -> std::io::Result<Arc<[u8]>> {
+        if let Some(content) = self.overlays.get(&id) {
+            return Ok(content.clone());
+        }
 
-                    let uri = format!("file://{}", path.to_string_lossy().replace('\\', "/"));
+        let path = self
+            .id_to_path
+            .get(&id)
+            .ok_or_else(|| std::io::Error::new(std::io::ErrorKind::NotFound, "FileId not found"))?;
 
-                    if !path.exists() {
-                        if let Some(&id) = self.uri_to_id.get(&uri) {
-                            self.uri_to_id.remove(&uri);
-                            self.id_to_uri.remove(&id);
-                            self.overlays.remove(&id);
+        match path {
+            VfsPath::Physical(p) => {
+                let bytes = std::fs::read(p)?;
+                Ok(Arc::from(bytes))
+            }
+            VfsPath::Virtual(url) => {
+                let scheme = url.scheme();
 
-                            self.pending_events.push(VfsEvent::Delete { id });
-                        }
-                    } else {
-                        if let Some(&id) = self.uri_to_id.get(&uri) {
-                            if !self.overlays.contains_key(&id) {
-                                self.pending_events.push(VfsEvent::Modify { id });
-                            }
-                        } else {
-                            let id = self.alloc_file_id(&uri);
-                            self.pending_events.push(VfsEvent::Create { id, uri });
-                        }
+                for handler in &self.handlers {
+                    if handler.can_handle(scheme) {
+                        let bytes = handler.fetch_bytes(&url)?;
+                        return Ok(Arc::from(bytes));
                     }
                 }
+                Err(std::io::Error::new(
+                    std::io::ErrorKind::Unsupported,
+                    format!("No handler registered for scheme: {}", scheme),
+                ))
             }
         }
     }
@@ -133,36 +313,7 @@ impl Vfs {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VfsEvent {
-    Create { id: FileId, uri: String },
-    Modify { id: FileId },
-    Delete { id: FileId },
-}
-
-pub enum WatcherMessage {
-    FileSystemChanged(Vec<DebouncedEvent>),
-}
-
-pub struct VfsWatcher {
-    _debouncer: notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>,
-}
-
-impl VfsWatcher {
-    pub fn new(watch_root: PathBuf, sender: Sender<WatcherMessage>) -> std::io::Result<Self> {
-        let mut debouncer = new_debouncer(Duration::from_millis(100), move |res| match res {
-            Ok(events) => {
-                let _ = sender.send(WatcherMessage::FileSystemChanged(events));
-            }
-            Err(e) => eprintln!("VFS Notify error: {:?}", e),
-        })
-        .map_err(|e| std::io::Error::other(format!("Failed to create watcher: {:?}", e)))?;
-
-        debouncer
-            .watcher()
-            .watch(&watch_root, RecursiveMode::Recursive)
-            .map_err(|e| std::io::Error::other(format!("Failed to watch path: {:?}", e)))?;
-
-        Ok(Self {
-            _debouncer: debouncer,
-        })
-    }
+    Created { id: FileId, path: VfsPath },
+    Modified { id: FileId },
+    Deleted { id: FileId },
 }

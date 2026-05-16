@@ -2,6 +2,7 @@ use jimage_rs::JImage;
 use moka::sync::Cache;
 use std::sync::Arc;
 use std::time::Duration;
+use url::Url;
 
 use crate::virtual_path::VirtualPathHandler;
 
@@ -32,22 +33,9 @@ impl JimageManager {
     }
 }
 
+#[derive(Default)]
 pub struct JimageHandler {
     manager: JimageManager,
-}
-
-impl JimageHandler {
-    pub fn new() -> Self {
-        Self {
-            manager: JimageManager::default(),
-        }
-    }
-}
-
-impl Default for JimageHandler {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 impl VirtualPathHandler for JimageHandler {
@@ -55,7 +43,8 @@ impl VirtualPathHandler for JimageHandler {
         protocol == "jrt"
     }
 
-    fn fetch_bytes(&self, path: &str) -> std::io::Result<Vec<u8>> {
+    fn fetch_bytes(&self, url: &Url) -> std::io::Result<Vec<u8>> {
+        let path = url.path();
         let (img_path, resource_path) = path.split_once('!').ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,

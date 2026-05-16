@@ -121,13 +121,13 @@ dependencies = [
  "dashmap",
  "indexmap",
  "java-syntax",
- "ra_ap_vfs",
  "rowan",
  "rustc-hash 2.1.2",
  "salsa",
  "smol_str",
  "tempfile",
  "triomphe",
+ "vfs",
 ]
 
 [[package]]
@@ -229,8 +229,6 @@ dependencies = [
  "num_cpus",
  "parking_lot",
  "ra_ap_line-index",
- "ra_ap_vfs",
- "ra_ap_vfs-notify",
  "rayon",
  "rowan",
  "rustc-hash 2.1.2",
@@ -242,6 +240,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "triomphe",
+ "vfs",
  "windows-sys 0.61.2",
  "zip",
 ]
@@ -649,12 +648,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "fst"
-version = "0.4.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ab85b9b05e3978cc9a9cf8fea7f01b494e1a09ed3037e16ba39edc7a29eb61a"
-
-[[package]]
 name = "futures-core"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -767,13 +760,13 @@ dependencies = [
  "base-db",
  "dashmap",
  "indexmap",
- "ra_ap_vfs",
  "rust-asm",
  "rustc-hash 2.1.2",
  "salsa",
  "serde",
  "smol_str",
  "triomphe",
+ "vfs",
 ]
 
 [[package]]
@@ -900,10 +893,10 @@ dependencies = [
  "hir",
  "jimage-rs",
  "parking_lot",
- "ra_ap_vfs",
  "rowan",
  "salsa",
  "triomphe",
+ "vfs",
  "zip",
 ]
 
@@ -1080,12 +1073,6 @@ dependencies = [
  "getrandom 0.3.4",
  "libc",
 ]
-
-[[package]]
-name = "jod-thread"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a037eddb7d28de1d0fc42411f501b53b75838d313908078d6698d064f3029b24"
 
 [[package]]
 name = "js-sys"
@@ -1301,15 +1288,6 @@ dependencies = [
  "libc",
  "log",
  "wasi",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "miow"
-version = "0.6.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "536bfad37a309d62069485248eeaba1e8d9853aaf951caaeaed0585a95346f08"
-dependencies = [
  "windows-sys 0.61.2",
 ]
 
@@ -1579,64 +1557,6 @@ checksum = "7bed918cbdb7504f9b6e384040f69e8812df7e8b526ea47d5d71bfb3ba11aeb7"
 dependencies = [
  "nohash-hasher",
  "text-size",
-]
-
-[[package]]
-name = "ra_ap_paths"
-version = "0.0.332"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9db2538d3758164fe316b6f4c0fdff8b0f77dc3e62d9aeb950ffa812f72d9b1d"
-dependencies = [
- "camino",
-]
-
-[[package]]
-name = "ra_ap_stdx"
-version = "0.0.332"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f9b22de4468431433c5d76d2f5bcf0e39830ed87456bb6bea2c24d774e9ffc9d"
-dependencies = [
- "crossbeam-channel",
- "crossbeam-utils",
- "itertools",
- "jod-thread",
- "libc",
- "miow",
- "tracing",
- "windows-sys 0.61.2",
-]
-
-[[package]]
-name = "ra_ap_vfs"
-version = "0.0.332"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51c7d6d7846aebdd4636a4383c5202223eeac6fb2823796e5649c0f6473fa371"
-dependencies = [
- "crossbeam-channel",
- "fst",
- "indexmap",
- "nohash-hasher",
- "ra_ap_paths",
- "ra_ap_stdx",
- "rustc-hash 2.1.2",
- "tracing",
-]
-
-[[package]]
-name = "ra_ap_vfs-notify"
-version = "0.0.332"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27c733516b26b1c47ca953bdb8bb9a9e4e9ff30778dbc12c847b2f21c3f87e76"
-dependencies = [
- "crossbeam-channel",
- "notify",
- "ra_ap_paths",
- "ra_ap_stdx",
- "ra_ap_vfs",
- "rayon",
- "rustc-hash 2.1.2",
- "tracing",
- "walkdir",
 ]
 
 [[package]]
@@ -2313,11 +2233,15 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "vfs"
 version = "0.0.0"
 dependencies = [
+ "camino",
+ "crossbeam-channel",
  "jimage-rs",
  "moka",
  "notify-debouncer-mini",
  "parking_lot",
  "rustc-hash 2.1.2",
+ "tracing",
+ "url",
  "zip",
 ]
 

@@ -1,13 +1,11 @@
 use lsp_types::{Position, Url};
 use rowan::TextSize;
-use vfs::FileId;
+use vfs::{FileId, Vfs};
 
-pub fn to_vfs_path(uri: &lsp_types::Url) -> Option<vfs::VfsPath> {
-    let path_buf = uri.to_file_path().ok()?;
-    // Avoid canonicalize() here if your VFS loader didn't also canonicalize
-    Some(vfs::VfsPath::new_real_path(
-        path_buf.to_string_lossy().to_string(),
-    ))
+pub fn file_id_to_url(vfs: &Vfs, file_id: FileId) -> Option<Url> {
+    let path = vfs.file_path(file_id)?;
+
+    Some(path.to_url())
 }
 
 pub fn offset_to_position(text: &str, offset: TextSize) -> Position {
@@ -25,12 +23,28 @@ pub fn offset_to_position(text: &str, offset: TextSize) -> Position {
     Position { line, character }
 }
 
-pub fn file_id_to_url(vfs: &vfs::Vfs, file_id: FileId) -> Option<Url> {
-    let vfs_path = vfs.file_path(file_id);
+pub fn position_to_offset(text: &str, position: Position) -> Option<TextSize> {
+    let mut lines = text.split('\n');
+    let mut bytes_offset = 0;
 
-    if let Some(abs_path) = vfs_path.as_path() {
-        Url::from_file_path(abs_path).ok()
-    } else {
-        Url::parse(&vfs_path.to_string()).ok()
+    for _ in 0..position.line {
+        let line_text = lines.next()?;
+        bytes_offset += line_text.len() + 1; // \n
     }
+
+    let target_line = lines.next()?;
+    let mut current_utf16_idx = 0;
+    let mut utf8_bytes_inside_line = 0;
+
+    for c in target_line.chars() {
+        if current_utf16_idx >= position.character {
+            break;
+        }
+        current_utf16_idx += c.len_utf16() as u32;
+        utf8_bytes_inside_line += c.len_utf8();
+    }
+
+    Some(TextSize::from(
+        (bytes_offset + utf8_bytes_inside_line) as u32,
+    ))
 }

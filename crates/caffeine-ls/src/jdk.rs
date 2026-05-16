@@ -1,6 +1,5 @@
 use std::{io::Read, path::PathBuf};
 
-use base_db::workspace::{Library, LibraryOrigin};
 use hir::{ClassOrModuleData, HirDatabase, bytecode::parse_cafebabe};
 use jimage_rs::JImage;
 use rayon::iter::{IndexedParallelIterator, IntoParallelIterator, ParallelIterator};

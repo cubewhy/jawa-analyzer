@@ -5,6 +5,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+use url::Url;
 use zip::ZipArchive;
 
 use parking_lot::Mutex;
@@ -81,7 +82,8 @@ impl VirtualPathHandler for JarHandler {
         protocol == "jar"
     }
 
-    fn fetch_bytes(&self, path: &str) -> std::io::Result<Vec<u8>> {
+    fn fetch_bytes(&self, url: &Url) -> std::io::Result<Vec<u8>> {
+        let path = url.path();
         let (jar_path_str, entry_path) = path.split_once('!').ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,

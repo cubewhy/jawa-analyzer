@@ -1,7 +1,5 @@
 pub mod input;
-pub mod path_resolver;
 pub mod syntax_error;
-pub mod workspace;
 
 use std::{hash::BuildHasherDefault, sync::atomic::AtomicUsize};
 
@@ -42,12 +40,12 @@ pub trait SourceDatabase: salsa::Database {
     /// Text of the file.
     fn file_text(&self, file_id: vfs::FileId) -> FileText;
 
-    fn set_file(&mut self, file_id: vfs::FileId, text: &str, language: LanguageId);
+    fn set_file(&mut self, file_id: vfs::FileId, text: Arc<str>, language: LanguageId);
 
     fn set_file_with_durability(
         &mut self,
         file_id: vfs::FileId,
-        text: &str,
+        text: Arc<str>,
         language: LanguageId,
         durability: Durability,
     );
@@ -103,17 +101,17 @@ impl Files {
         &self,
         db: &mut dyn SourceDatabase,
         file_id: vfs::FileId,
-        text: &str,
+        text: Arc<str>,
         language: LanguageId,
     ) {
         match self.files.entry(file_id) {
             Entry::Occupied(mut occupied) => {
                 let occupied = occupied.get_mut();
-                occupied.set_text(db).to(Arc::from(text));
+                occupied.set_text(db).to(text);
                 occupied.set_language(db).to(language);
             }
             Entry::Vacant(vacant) => {
-                let text = FileText::new(db, Arc::from(text), language, file_id);
+                let text = FileText::new(db, text, language, file_id);
                 vacant.insert(text);
             }
         };
@@ -123,24 +121,21 @@ impl Files {
         &self,
         db: &mut dyn SourceDatabase,
         file_id: vfs::FileId,
-        text: &str,
+        text: Arc<str>,
         language: LanguageId,
         durability: salsa::Durability,
     ) {
         match self.files.entry(file_id) {
             Entry::Occupied(mut occupied) => {
                 let occupied = occupied.get_mut();
-                occupied
-                    .set_text(db)
-                    .with_durability(durability)
-                    .to(Arc::from(text));
+                occupied.set_text(db).with_durability(durability).to(text);
                 occupied
                     .set_language(db)
                     .with_durability(durability)
                     .to(language);
             }
             Entry::Vacant(vacant) => {
-                let text = FileText::builder(Arc::from(text), language, file_id)
+                let text = FileText::builder(text, language, file_id)
                     .durability(durability)
                     .new(db);
                 vacant.insert(text);

@@ -1,9 +1,6 @@
 use rustc_hash::FxHashMap;
 
-use base_db::{
-    SourceDatabase,
-    workspace::{Library, Module, WorkspaceGraph},
-};
+use base_db::SourceDatabase;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
 
@@ -216,8 +213,6 @@ pub struct ClassSignature<'db> {
 pub struct ModuleSignature<'db> {
     pub name: SmolStr,
     pub data: ModuleData,
-
-    pub physical_module: Module,
 }
 
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq, Hash, Debug)]
@@ -245,36 +240,6 @@ pub struct ModuleOpens {
 pub struct ModuleProvides {
     pub service_interface: TypeRef,
     pub with_implementations: Vec<TypeRef>,
-}
-
-#[derive(Clone, PartialEq, Eq, Debug)]
-pub struct WorkspaceClassIndex {
-    pub fqn_to_file: FxHashMap<SmolStr, vfs::FileId>,
-}
-
-#[salsa::input]
-pub struct GlobalLibraryCache {
-    /// Maps the physical Library ID (from base-db) to its parsed ClassData.
-    #[returns(ref)]
-    pub parsed_classes: FxHashMap<Library, FxHashMap<SmolStr, ClassData>>,
-}
-
-#[salsa::tracked]
-pub fn build_workspace_index(
-    db: &dyn HirDatabase,
-    workspace: WorkspaceGraph,
-) -> WorkspaceClassIndex {
-    let mut index = FxHashMap::default();
-
-    // TODO: compute class signature
-
-    // for &file_id in workspace.file_to_module(db).keys() {
-    //     let class_signature = compute_class_signature(db, file_id);
-    //
-    //     index.insert(class_signature.name(db).clone(), file_id);
-    // }
-
-    WorkspaceClassIndex { fqn_to_file: index }
 }
 
 #[salsa::db]

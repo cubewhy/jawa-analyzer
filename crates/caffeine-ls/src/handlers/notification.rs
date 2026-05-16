@@ -3,8 +3,9 @@ use std::process;
 use base_db::SourceDatabase;
 use line_index::{LineIndex, WideEncoding, WideLineCol};
 use lsp_types::*;
+use vfs::VfsPath;
 
-use crate::{GlobalState, from_proto::to_vfs_path};
+use crate::GlobalState;
 
 pub fn on_exit(state: &mut GlobalState, _: ()) -> anyhow::Result<()> {
     if state.shutdown_requested {
@@ -34,12 +35,9 @@ pub fn on_did_open(
     let text = params.text_document.text;
     let content = text.clone().into_bytes();
 
-    if let Some(vfs_path) = to_vfs_path(&params.text_document.uri) {
-        state.vfs.write().set_file_contents(vfs_path, Some(content));
-        state.handle_vfs_change();
-    } else {
-        tracing::error!("Failed to convert URI: {}", params.text_document.uri);
-    }
+    let vfs_uri = VfsPath::from(&params.text_document.uri);
+    state.vfs.write().set_file_contents(vfs_uri, Some(content));
+    state.handle_vfs_change();
 
     Ok(())
 }
@@ -50,13 +48,11 @@ pub fn on_did_change(
 ) -> anyhow::Result<()> {
     tracing::debug!("didChange {}", params.text_document.uri);
 
-    let Some(vfs_path) = to_vfs_path(&params.text_document.uri) else {
-        anyhow::bail!("Internal error");
-    };
+    let path = VfsPath::from(&params.text_document.uri);
 
     let file_id = {
         let vfs = state.vfs.read();
-        let Some(file_id) = vfs.file_id(&vfs_path).map(|(id, _)| id) else {
+        let Some(file_id) = vfs.file_id(&path) else {
             anyhow::bail!("Internal error");
         };
         file_id
@@ -100,7 +96,7 @@ pub fn on_did_change(
     state
         .vfs
         .write()
-        .set_file_contents(vfs_path, Some(text.into_bytes()));
+        .set_file_contents(path, Some(text.into_bytes()));
 
     state.handle_vfs_change();
 
@@ -113,13 +109,12 @@ pub fn on_did_save(
 ) -> anyhow::Result<()> {
     tracing::info!("didSave {}", params.text_document.uri);
 
-    if let Some(text) = params.text
-        && let Some(vfs_path) = to_vfs_path(&params.text_document.uri)
-    {
+    if let Some(text) = params.text {
+        let path = VfsPath::from(&params.text_document.uri);
         state
             .vfs
             .write()
-            .set_file_contents(vfs_path, Some(text.into_bytes()));
+            .set_file_contents(path, Some(text.into_bytes()));
         state.handle_vfs_change();
     }
 
@@ -131,10 +126,9 @@ pub fn on_did_close(
     params: DidCloseTextDocumentParams,
 ) -> anyhow::Result<()> {
     tracing::info!("didClose {}", params.text_document.uri);
-    if let Some(vfs_path) = to_vfs_path(&params.text_document.uri) {
-        state.vfs.write().set_file_contents(vfs_path, None);
-        state.handle_vfs_change();
-    }
+    let path = VfsPath::from(&params.text_document.uri);
+    state.vfs.write().set_file_contents(path, None);
+    state.handle_vfs_change();
 
     Ok(())
 }

@@ -16,6 +16,7 @@ vfs = { path = "./crates/vfs/" }
 lsp-server = "0.7.9"
 lsp-types = { version = "=0.95.1", features = ["proposed"] }
 line-index = { package = "ra_ap_line-index", version = "0.0.17" }
+crossbeam-channel = "0.5.15"
 bytes = "1.11.1"
 zip = "8.6.0"
 jimage-rs = "0.0.4"
@@ -43,3 +44,4 @@ serde = "1.0"
 serde_json = "1.0"
 smol_str = { version = "0.3.6", features = ["serde"] }
 indexmap = "2.14.0"
+camino = "1.2.2"

@@ -5,7 +5,6 @@ use caffeine_ls::{
     flags::Flags,
     from_json,
 };
-use camino::Utf8PathBuf;
 use clap::Parser;
 use lsp_server::Connection;
 use tracing_subscriber::{EnvFilter, fmt, layer::SubscriberExt, util::SubscriberInitExt};
@@ -132,7 +131,6 @@ fn run_server() -> anyhow::Result<()> {
     let root_path = match root_uri
         .and_then(|it| it.to_file_path().ok())
         .map(patch_path_prefix)
-        .and_then(|it| Utf8PathBuf::from_path_buf(it).ok())
         .and_then(|it| AbsPathBuf::try_from(it).ok())
     {
         Some(it) => it,
@@ -156,7 +154,6 @@ fn run_server() -> anyhow::Result<()> {
                 .into_iter()
                 .filter_map(|it| it.uri.to_file_path().ok())
                 .map(patch_path_prefix)
-                .filter_map(|it| Utf8PathBuf::from_path_buf(it).ok())
                 .filter_map(|it| AbsPathBuf::try_from(it).ok())
                 .collect::<Vec<_>>()
         })

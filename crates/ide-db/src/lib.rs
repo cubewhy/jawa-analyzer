@@ -1,8 +1,6 @@
 use base_db::{Files, LanguageId, Nonce, SourceDatabase};
 use hir::HirDatabase;
-use std::sync::Arc;
-
-pub mod handlers;
+use triomphe::Arc;
 
 #[salsa::db]
 #[derive(Clone)]
@@ -37,7 +35,7 @@ impl SourceDatabase for RootDatabase {
         self.files.file_text(file_id)
     }
 
-    fn set_file(&mut self, file_id: vfs::FileId, text: &str, language: LanguageId) {
+    fn set_file(&mut self, file_id: vfs::FileId, text: Arc<str>, language: LanguageId) {
         let files = self.files.clone();
         files.set_file(self, file_id, text, language);
     }
@@ -45,7 +43,7 @@ impl SourceDatabase for RootDatabase {
     fn set_file_with_durability(
         &mut self,
         file_id: vfs::FileId,
-        text: &str,
+        text: Arc<str>,
         language: LanguageId,
         durability: salsa::Durability,
     ) {

@@ -1,9 +1,10 @@
 use crate::config::ConfigErrors;
 use crate::handlers;
 use crate::handlers::dispatch::{NotificationDispatcher, RequestDispatcher};
-use base_db::workspace::WorkspaceGraph;
 use lsp_types::notification::Notification as _;
 use std::{sync::Arc, time::Instant};
+use vfs::loader::NotifyHandle;
+use vfs::virtual_path::{JarHandler, JimageHandler};
 
 use base_db::{LanguageId, SourceDatabase};
 use crossbeam_channel::{Receiver, Sender, unbounded};
@@ -12,12 +13,12 @@ use lsp_server::{ErrorCode, Notification, Request, Response};
 use lsp_types::*;
 use parking_lot::RwLock;
 
-use vfs::{Vfs, VfsPath};
+use vfs::{Vfs, VfsEvent};
 
 use crate::config::Config;
 
 pub enum BackgroundTaskEvent {
-    WorkspaceLoaded(anyhow::Result<WorkspaceGraph>),
+    // WorkspaceLoaded(anyhow::Result<WorkspaceGraph>),
     Progress(ProgressEvent),
     VfsLoaded,
     AsyncRequestCompleted {
@@ -59,7 +60,6 @@ pub struct GlobalState {
     pub(crate) config: Arc<Config>,
     pub(crate) config_errors: Option<ConfigErrors>,
     pub(crate) analysis_host: AnalysisHost,
-    pub(crate) workspaces: Arc<Vec<WorkspaceGraph>>,
 
     pub(crate) shutdown_requested: bool,
 
@@ -70,16 +70,22 @@ pub struct GlobalState {
 
 impl GlobalState {
     pub fn new(sender: Sender<lsp_server::Message>, config: Config) -> Self {
-        let loader = {
-            let (sender, receiver) = unbounded::<vfs::loader::Message>();
-            let handle: vfs_notify::NotifyHandle = vfs::loader::Handle::spawn(sender);
-            let handle = Box::new(handle) as Box<dyn vfs::loader::Handle>;
-            Handle { handle, receiver }
-        };
-
         let (task_sender, task_receiver) = unbounded();
 
         let thread_pool = threadpool::ThreadPool::new(num_cpus::get());
+
+        let mut vfs = Vfs::new();
+        vfs.register_handler(JarHandler::default());
+        vfs.register_handler(JimageHandler::default());
+
+        let loader = {
+            let (sender, receiver) = unbounded();
+            let handle: NotifyHandle = vfs::loader::Handle::spawn(sender);
+
+            let handle = Box::new(handle) as Box<dyn vfs::loader::Handle>;
+
+            Handle { handle, receiver }
+        };
 
         Self {
             sender,
@@ -93,12 +99,11 @@ impl GlobalState {
             config_errors: None,
 
             analysis_host: AnalysisHost::default(),
-            workspaces: Arc::new(Vec::new()),
 
             shutdown_requested: false,
 
             loader,
-            vfs: Default::default(),
+            vfs: Arc::new(RwLock::new(vfs)),
         }
     }
 
@@ -190,26 +195,7 @@ impl GlobalState {
 
     pub(crate) fn handle_background_task(&mut self, event: BackgroundTaskEvent) {
         match event {
-            BackgroundTaskEvent::WorkspaceLoaded(result) => {
-                match result {
-                    Ok(workspace) => {
-                        tracing::info!("Workspace loaded successfully");
-
-                        // Because self.workspaces is an Arc<Vec<_>>, we clone the inner
-                        // vector, modify it, and wrap it in a new Arc.
-                        let mut current_workspaces = self.workspaces.as_ref().to_vec();
-                        current_workspaces.push(workspace);
-                        self.workspaces = Arc::new(current_workspaces);
-                    }
-                    Err(err) => {
-                        tracing::error!("Failed to load workspace: {:#}", err);
-                        self.show_message(
-                            MessageType::ERROR,
-                            format!("Failed to load workspace: {}", err),
-                        );
-                    }
-                }
-            }
+            // BackgroundTaskEvent::WorkspaceLoaded(result) => {}
             BackgroundTaskEvent::Progress(progress) => {
                 self.report_progress(progress);
             }
@@ -323,8 +309,7 @@ impl GlobalState {
                 {
                     let mut vfs = self.vfs.write();
                     for (path, contents) in files {
-                        let vfs_path: VfsPath = path.into();
-                        vfs.set_file_contents(vfs_path, contents);
+                        vfs.set_file_contents(path, contents);
                     }
                 }
                 self.handle_vfs_change();
@@ -339,37 +324,50 @@ impl GlobalState {
 
     pub fn handle_vfs_change(&mut self) {
         let mut vfs = self.vfs.write();
+        let events = vfs.take_events();
 
-        let changes = vfs.take_changes();
-
-        if changes.is_empty() {
+        if events.is_empty() {
             return;
         }
 
         let db = self.analysis_host.raw_database_mut();
 
-        for (file_id, changed_file) in changes {
-            let vfs_path = vfs.file_path(file_id);
+        for event in events {
+            let file_id = match &event {
+                VfsEvent::Created { id, .. } => *id,
+                VfsEvent::Modified { id } => *id,
+                VfsEvent::Deleted { id } => *id,
+            };
+
+            let Some(vfs_path) = vfs.file_path(file_id) else {
+                tracing::error!(?file_id, "failed to get file uri");
+                continue;
+            };
 
             let language_id = vfs_path
-                .name_and_extension()
-                .and_then(|(_, ext)| ext)
+                .extension()
                 .map(LanguageId::from_extension)
                 .unwrap_or(LanguageId::Unknown);
 
-            if changed_file.is_created_or_deleted() || changed_file.is_modified() {
-                let contents = match changed_file.change {
-                    vfs::Change::Create(items, _) => Some(items),
-                    vfs::Change::Modify(items, _) => Some(items),
-                    vfs::Change::Delete => None,
-                };
-                if let Some(bytes) = contents {
-                    let Ok(text) = String::from_utf8(bytes.to_vec()) else {
-                        tracing::error!(?vfs_path, "failed to decode file content as utf8");
-                        continue;
-                    };
-                    db.set_file(file_id, &text, language_id);
-                } else {
+            match event {
+                VfsEvent::Created { .. } | VfsEvent::Modified { .. } => {
+                    if let Ok(bytes) = vfs.fetch_content(file_id) {
+                        let Ok(text_str) = String::from_utf8(bytes.to_vec()) else {
+                            tracing::error!(?vfs_path, "failed to decode file content as utf8");
+                            continue;
+                        };
+
+                        let arc_text = triomphe::Arc::from(text_str);
+
+                        db.set_file(file_id, arc_text, language_id);
+                    } else {
+                        tracing::warn!(
+                            ?vfs_path,
+                            "received create/modify event, but vfs has no content"
+                        );
+                    }
+                }
+                VfsEvent::Deleted { .. } => {
                     db.remove_file(file_id);
                 }
             }
@@ -392,7 +390,6 @@ impl GlobalState {
             config: Arc::clone(&self.config),
             analysis: self.analysis_host.analysis(),
             vfs: Arc::clone(&self.vfs),
-            workspaces: Arc::clone(&self.workspaces),
         }
     }
 
@@ -407,19 +404,4 @@ pub struct GlobalStateSnapshot {
     pub(crate) config: Arc<Config>,
     pub(crate) analysis: Analysis,
     pub(crate) vfs: Arc<RwLock<Vfs>>,
-    pub(crate) workspaces: Arc<Vec<WorkspaceGraph>>,
-}
-
-/// Returns `None` if the file was excluded.
-pub(crate) fn vfs_path_to_file_id(
-    vfs: &vfs::Vfs,
-    vfs_path: &VfsPath,
-) -> anyhow::Result<Option<vfs::FileId>> {
-    let (file_id, excluded) = vfs
-        .file_id(vfs_path)
-        .ok_or_else(|| anyhow::anyhow!("file not found: {vfs_path}"))?;
-    match excluded {
-        vfs::FileExcluded::Yes => Ok(None),
-        vfs::FileExcluded::No => Ok(Some(file_id)),
-    }
 }

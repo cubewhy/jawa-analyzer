@@ -1,6 +1,7 @@
-use crate::{from_proto::to_vfs_path, global_state::GlobalStateSnapshot};
+use crate::global_state::GlobalStateSnapshot;
 
 use lsp_types::*;
+use vfs::VfsPath;
 
 use crate::lsp::diagnostics;
 
@@ -10,13 +11,11 @@ pub fn on_diagnostic(
 ) -> anyhow::Result<DocumentDiagnosticReportResult> {
     tracing::info!(uri = ?params.text_document.uri, "request diagnostics");
 
-    let Some(vfs_path) = to_vfs_path(&params.text_document.uri) else {
-        anyhow::bail!("Internal error");
-    };
+    let vfs_path = VfsPath::from(&params.text_document.uri);
 
     let file_id = {
         let vfs = state.vfs.read();
-        let Some((id, _)) = vfs.file_id(&vfs_path) else {
+        let Some(id) = vfs.file_id(&vfs_path) else {
             anyhow::bail!("Internal error");
         };
         id

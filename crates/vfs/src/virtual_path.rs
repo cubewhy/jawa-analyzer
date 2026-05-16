@@ -3,6 +3,7 @@ mod jimage;
 
 pub use jar::JarHandler;
 pub use jimage::JimageHandler;
+use url::Url;
 
 pub trait VirtualPathHandler: Send + Sync {
     /// Determine if this handler can parse a certain protocol.
@@ -14,5 +15,5 @@ pub trait VirtualPathHandler: Send + Sync {
     /// For example:
     ///   Raw uri: `protocol:///a.txt`
     ///   Path without protocol: `/a.txt`
-    fn fetch_bytes(&self, path: &str) -> std::io::Result<Vec<u8>>;
+    fn fetch_bytes(&self, url: &Url) -> std::io::Result<Vec<u8>>;
 }
