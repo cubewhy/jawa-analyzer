@@ -298,7 +298,7 @@ impl Vfs {
 
                 for handler in &self.handlers {
                     if handler.can_handle(scheme) {
-                        let bytes = handler.fetch_bytes(&url)?;
+                        let bytes = handler.fetch_bytes(url)?;
                         return Ok(Arc::from(bytes));
                     }
                 }

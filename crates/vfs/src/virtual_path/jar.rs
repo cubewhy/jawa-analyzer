@@ -1,3 +1,4 @@
+use crate::VfsPath;
 use crate::virtual_path::VirtualPathHandler;
 use moka::sync::Cache;
 use std::fs::File;
@@ -113,5 +114,56 @@ impl VirtualPathHandler for JarHandler {
         file.read_to_end(&mut bytes)?;
 
         Ok(bytes)
+    }
+
+    fn list_files(&self, root_url: &Url) -> std::io::Result<Vec<VfsPath>> {
+        let path = root_url.path();
+        let (jar_path_str, entry_path) = path.split_once('!').ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!("Invalid JAR URI missing '!': {}", path),
+            )
+        })?;
+
+        let jar_path = Path::new(jar_path_str);
+        let archive_arc = self.manager.get_archive(jar_path)?;
+        let archive = archive_arc.lock();
+
+        let clean_entry_path = entry_path.strip_prefix('/').unwrap_or(entry_path);
+
+        let exact_dir_prefix = if clean_entry_path.is_empty() {
+            String::new()
+        } else if clean_entry_path.ends_with('/') {
+            clean_entry_path.to_string()
+        } else {
+            format!("{}/", clean_entry_path)
+        };
+
+        let paths: std::io::Result<Vec<VfsPath>> = archive
+            .file_names()
+            .filter_map(|name| {
+                let is_match = if clean_entry_path.is_empty() {
+                    true
+                } else {
+                    name == clean_entry_path || name.starts_with(&exact_dir_prefix)
+                };
+
+                if is_match {
+                    let url_str = format!("jar://{}!/{}", jar_path_str, name);
+
+                    match Url::parse(&url_str) {
+                        Ok(url) => Some(Ok(VfsPath::from(&url))),
+                        Err(e) => Some(Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            format!("Failed to parse generated URL '{}': {}", url_str, e),
+                        ))),
+                    }
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        paths
     }
 }
