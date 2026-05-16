@@ -1,25 +1,34 @@
-use base_db::path_resolver::VirtualPathHandler;
-use dashmap::DashMap;
 use jimage_rs::JImage;
+use moka::sync::Cache;
 use std::sync::Arc;
+use std::time::Duration;
 
-#[derive(Default)]
+use crate::virtual_path::VirtualPathHandler;
+
 pub struct JimageManager {
-    cache: DashMap<String, Arc<JImage>>,
+    cache: Cache<String, Arc<JImage>>,
+}
+
+impl Default for JimageManager {
+    fn default() -> Self {
+        Self {
+            cache: Cache::builder()
+                .max_capacity(10)
+                .time_to_idle(Duration::from_secs(3))
+                .build(),
+        }
+    }
 }
 
 impl JimageManager {
     pub fn get_jimage(&self, path: &str) -> std::io::Result<Arc<JImage>> {
-        if let Some(img) = self.cache.get(path) {
-            return Ok(img.clone());
-        }
-
-        let img = JImage::open(path)
-            .map_err(|e| std::io::Error::other(format!("JImage open error: {:?}", e)))?;
-
-        let arc_img = Arc::new(img);
-        self.cache.insert(path.to_string(), arc_img.clone());
-        Ok(arc_img)
+        self.cache
+            .try_get_with(path.to_string(), || {
+                JImage::open(path)
+                    .map(Arc::new)
+                    .map_err(|e| std::io::Error::other(format!("JImage open error: {:?}", e)))
+            })
+            .map_err(|e| std::io::Error::other(format!("Cache fetch error: {}", e)))
     }
 }
 
@@ -50,7 +59,7 @@ impl VirtualPathHandler for JimageHandler {
         let (img_path, resource_path) = path.split_once('!').ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
-                "Invalid JRT path, missing '!'",
+                format!("Invalid JRT URI missing '!': {}", path),
             )
         })?;
 

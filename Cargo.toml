@@ -11,11 +11,10 @@ java-syntax = { path = "./crates/java-syntax/" }
 kotlin-syntax = { path = "./crates/kotlin-syntax/" }
 rust-asm = { path = "./lib/rust-asm/" }
 lsp-test = { path = "./crates/lsp-test/" }
+vfs = { path = "./crates/vfs/" }
 
 lsp-server = "0.7.9"
 lsp-types = { version = "=0.95.1", features = ["proposed"] }
-vfs = { package = "ra_ap_vfs", version = "0.0.332" }
-vfs-notify = { package = "ra_ap_vfs-notify", version = "0.0.332" }
 line-index = { package = "ra_ap_line-index", version = "0.0.17" }
 bytes = "1.11.1"
 zip = "8.6.0"
