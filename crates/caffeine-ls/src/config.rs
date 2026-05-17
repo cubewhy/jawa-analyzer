@@ -94,6 +94,7 @@ fn merge(a: &mut serde_json::Value, b: &serde_json::Value) {
 #[serde(default)]
 pub struct ClientConfig {
     pub cache_dir: PathBuf,
+    pub java_home: Option<PathBuf>,
 }
 
 #[derive(Debug, Default)]
