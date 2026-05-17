@@ -203,7 +203,7 @@ impl GlobalState {
                     tracing::info!("Workspace graph loaded successfully");
                     self.analysis_host.set_workspace_graph(graph);
 
-                    self.trigger_full_reparse();
+                    // self.trigger_full_reparse();
                 }
                 Err(e) => {
                     tracing::error!("Failed to load workspace: {}", e);
@@ -388,7 +388,15 @@ impl GlobalState {
                     }
                 };
 
-                let Some(project) = graph.resolve_project(file_id) else {
+                let physic_path = match &file_path {
+                    vfs::VfsPath::Physical(path) => path,
+                    vfs::VfsPath::Virtual(url) => {
+                        tracing::error!(?url, "Project dir cannot be virtual");
+                        continue;
+                    }
+                };
+
+                let Some(project) = graph.resolve_project_for_path(physic_path) else {
                     tracing::error!("Failed to resolve project for file {file_path:?}");
                     continue;
                 };

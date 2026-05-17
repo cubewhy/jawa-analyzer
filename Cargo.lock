@@ -1619,9 +1619,14 @@ dependencies = [
 name = "project-model"
 version = "0.0.0"
 dependencies = [
+ "anyhow",
  "index",
  "rustc-hash 2.1.2",
+ "serde",
+ "serde_json",
  "smol_str",
+ "tempfile",
+ "tracing",
  "triomphe",
  "vfs",
 ]
