@@ -3,8 +3,6 @@ resolver = "3"
 members = ["crates/*", "lib/*", "xtask/"]
 
 [workspace.dependencies]
-base-db = { path = "./crates/base-db/" }
-ide-db = { path = "./crates/ide-db/" }
 ide = { path = "./crates/ide/" }
 hir = { path = "./crates/hir/" }
 java-syntax = { path = "./crates/java-syntax/" }
@@ -23,7 +21,6 @@ jimage-rs = "0.0.4"
 indoc = "2.0"
 insta = "1.47.2"
 anyhow = "1"
-salsa = "0.26.1"
 unicode-general-category = "1.1.0"
 drop_bomb = "0.1.5"
 stacksafe = "1.0"
@@ -45,3 +42,5 @@ serde_json = "1.0"
 smol_str = { version = "0.3.6", features = ["serde"] }
 indexmap = "2.14.0"
 camino = "1.2.2"
+lru = "0.18.0"
+postcard = "1.1.3"

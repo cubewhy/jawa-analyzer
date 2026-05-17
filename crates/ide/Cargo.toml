@@ -5,6 +5,4 @@ edition = "2024"
 publish = false
 
 [dependencies]
-salsa.workspace = true
 hir.workspace = true
-ide-db.workspace = true

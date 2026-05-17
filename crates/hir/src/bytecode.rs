@@ -8,15 +8,17 @@ use rust_asm::{
 use smol_str::SmolStr;
 
 use crate::{
-    AnnotationSignature, AnnotationValue, ClassData, ClassOrModuleData, FieldData, MethodData,
-    ModuleData, ModuleExports, ModuleOpens, ModuleProvides, ModuleRequires, ParamData,
-    PrimitiveType, PrimitiveValue, TypeRef,
     bytecode::sig::{SigParser, get_signature},
+    stub::{
+        AnnotationSig, AnnotationValue, ClassOrModuleStub, ClassStub, FieldStub, MethodStub,
+        ModuleExports, ModuleOpens, ModuleProvides, ModuleRequires, ModuleStub, ParamData,
+        PrimitiveType, PrimitiveValue, RecordComponentData, TypeRef,
+    },
 };
 
 pub mod sig;
 
-pub fn parse_cafebabe(bytes: &[u8]) -> anyhow::Result<ClassOrModuleData> {
+pub fn parse_cafebabe(bytes: &[u8]) -> anyhow::Result<ClassOrModuleStub> {
     let node = ClassReader::new(bytes)
         .to_class_node()
         .context("Failed to parse class")?;
@@ -24,10 +26,10 @@ pub fn parse_cafebabe(bytes: &[u8]) -> anyhow::Result<ClassOrModuleData> {
     let model = if let Some(module_node) = node.module {
         // module class
         let module = map_module(&module_node);
-        ClassOrModuleData::Module(module)
+        ClassOrModuleStub::Module(module)
     } else {
         let class = map_class(&node);
-        ClassOrModuleData::Class(class)
+        ClassOrModuleStub::Class(class)
     };
 
     Ok(model)
@@ -40,8 +42,8 @@ fn internal_name_to_type_ref(name: &str) -> TypeRef {
     }
 }
 
-fn map_module(node: &ModuleNode) -> ModuleData {
-    ModuleData {
+fn map_module(node: &ModuleNode) -> ModuleStub {
+    ModuleStub {
         name: SmolStr::new(&node.name),
         flags: node.access_flags,
         version: node.version.as_deref().map(SmolStr::new),
@@ -92,7 +94,7 @@ fn map_module(node: &ModuleNode) -> ModuleData {
     }
 }
 
-fn map_class(node: &ClassNode) -> ClassData {
+fn map_class(node: &ClassNode) -> ClassStub {
     let mut type_params = Vec::new();
     let mut super_class = node.super_name.as_deref().map(internal_name_to_type_ref);
     let mut interfaces: Vec<TypeRef> = node
@@ -109,7 +111,7 @@ fn map_class(node: &ClassNode) -> ClassData {
         interfaces = ifs;
     }
 
-    ClassData {
+    ClassStub {
         name: SmolStr::new(&node.name),
         flags: node.access_flags,
         super_class,
@@ -147,7 +149,7 @@ fn map_class(node: &ClassNode) -> ClassData {
 fn map_record_component(
     node: &rust_asm::nodes::RecordComponentNode,
     constant_pool: &[CpInfo],
-) -> crate::RecordComponentData {
+) -> RecordComponentData {
     let mut chars = node.descriptor.chars().peekable();
     let mut component_type = parse_type_ref(&mut chars);
 
@@ -157,14 +159,14 @@ fn map_record_component(
         component_type = parser.parse_reference_type_signature();
     }
 
-    crate::RecordComponentData {
+    RecordComponentData {
         name: SmolStr::new(&node.name),
         component_type,
         annotations: map_annotations(&node.attributes, constant_pool),
     }
 }
 
-fn map_field(node: &FieldNode, constant_pool: &[CpInfo]) -> FieldData {
+fn map_field(node: &FieldNode, constant_pool: &[CpInfo]) -> FieldStub {
     // A Field's descriptor looks like "I" or "Ljava/lang/String;"
     let mut chars = node.descriptor.chars().peekable();
     let mut field_type = parse_type_ref(&mut chars);
@@ -195,7 +197,7 @@ fn map_field(node: &FieldNode, constant_pool: &[CpInfo]) -> FieldData {
         }
     });
 
-    FieldData {
+    FieldStub {
         flags: node.access_flags,
         field_type,
         annotations: map_annotations(&node.attributes, constant_pool),
@@ -203,7 +205,7 @@ fn map_field(node: &FieldNode, constant_pool: &[CpInfo]) -> FieldData {
     }
 }
 
-fn map_method(node: &MethodNode, constant_pool: &[CpInfo]) -> MethodData {
+fn map_method(node: &MethodNode, constant_pool: &[CpInfo]) -> MethodStub {
     let (mut params, mut return_type) = parse_method_descriptor(&node.descriptor);
     let mut type_params = Vec::new();
     let mut throws_list: Vec<TypeRef> = node
@@ -271,7 +273,7 @@ fn map_method(node: &MethodNode, constant_pool: &[CpInfo]) -> MethodData {
         }
     }
 
-    MethodData {
+    MethodStub {
         flags: node.access_flags,
         name: SmolStr::new(&node.name),
         return_type,
@@ -350,10 +352,7 @@ fn parse_method_descriptor(desc: &str) -> (Vec<ParamData>, TypeRef) {
     (params, return_type)
 }
 
-fn map_annotations(
-    attributes: &[AttributeInfo],
-    constant_pool: &[CpInfo],
-) -> Vec<AnnotationSignature> {
+fn map_annotations(attributes: &[AttributeInfo], constant_pool: &[CpInfo]) -> Vec<AnnotationSig> {
     let mut signatures = Vec::new();
 
     for attr in attributes {
@@ -370,7 +369,7 @@ fn map_annotations(
     signatures
 }
 
-pub fn map_annotation(anno: &Annotation, cp: &[CpInfo]) -> AnnotationSignature {
+pub fn map_annotation(anno: &Annotation, cp: &[CpInfo]) -> AnnotationSig {
     let type_descriptor = cp
         .resolve_utf8(anno.type_descriptor_index)
         .unwrap_or("<missing_annotation_type>");
@@ -391,7 +390,7 @@ pub fn map_annotation(anno: &Annotation, cp: &[CpInfo]) -> AnnotationSignature {
         })
         .collect();
 
-    AnnotationSignature {
+    AnnotationSig {
         annotation_type,
         arguments,
     }

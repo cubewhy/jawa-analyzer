@@ -6,7 +6,7 @@ use rust_asm::{
 };
 use smol_str::SmolStr;
 
-use crate::{PrimitiveType, TypeParameter, TypeRef};
+use crate::stub::{PrimitiveType, TypeParameter, TypeRef};
 
 pub struct SigParser<'a> {
     chars: Peekable<std::str::Chars<'a>>,

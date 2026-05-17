@@ -13,7 +13,7 @@ use lsp_server::{ErrorCode, Notification, Request, Response};
 use lsp_types::*;
 use parking_lot::RwLock;
 
-use vfs::{Vfs, VfsEvent};
+use vfs::{Vfs, VfsEvent, VfsPath};
 
 use crate::config::Config;
 
@@ -331,6 +331,7 @@ impl GlobalState {
         }
 
         let db = self.analysis_host.raw_database_mut();
+        let mut workspace_structure_changed = false;
 
         for event in events {
             let file_id = match &event {
@@ -344,33 +345,58 @@ impl GlobalState {
                 continue;
             };
 
-            let language_id = vfs_path
-                .extension()
-                .map(LanguageId::from_extension)
-                .unwrap_or(LanguageId::Unknown);
+            // 获取扩展名对应的 LanguageId（.java, .class 等）
+            let Some(language_id) = vfs_path.extension().map(LanguageId::from_extension) else {
+                continue;
+            };
 
-            match event {
-                VfsEvent::Created { .. } | VfsEvent::Modified { .. } => {
-                    if let Ok(bytes) = vfs.fetch_content(file_id) {
-                        let Ok(text_str) = String::from_utf8(bytes.to_vec()) else {
-                            tracing::error!(?vfs_path, "failed to decode file content as utf8");
-                            continue;
-                        };
+            match vfs_path {
+                VfsPath::Physical(path) => match event {
+                    VfsEvent::Modified { .. } => {
+                        if let Some(arc_text) = fetch_vfs_text(&vfs, file_id, &vfs_path) {
+                            db.set_file(file_id, arc_text, language_id);
+                        }
+                    }
+                    VfsEvent::Created { .. } => {
+                        if let Some(arc_text) = fetch_vfs_text(&vfs, file_id, &vfs_path) {
+                            db.set_file(file_id, arc_text, language_id);
 
-                        let arc_text = triomphe::Arc::from(text_str);
+                            self.add_file_to_module(db, file_id, &path);
+                            workspace_structure_changed = true;
+                        }
+                    }
+                    VfsEvent::Deleted { .. } => {
+                        db.remove_file(file_id);
 
-                        db.set_file(file_id, arc_text, language_id);
-                    } else {
-                        tracing::warn!(
-                            ?vfs_path,
-                            "received create/modify event, but vfs has no content"
-                        );
+                        self.remove_file_from_module(db, file_id, &path);
+                        workspace_structure_changed = true;
+                    }
+                },
+
+                VfsPath::Virtual(url) => {
+                    match event {
+                        VfsEvent::Created { .. } | VfsEvent::Modified { .. } => {
+                            if let Ok(bytes) = vfs.fetch_content(file_id) {
+                                // db.set_file_bytes(file_id, bytes.to_vec(), language_id);
+
+                                if matches!(event, VfsEvent::Created { .. }) {
+                                    self.add_file_to_library(db, file_id, &url);
+                                    workspace_structure_changed = true;
+                                }
+                            }
+                        }
+                        VfsEvent::Deleted { .. } => {
+                            db.remove_file(file_id);
+                            self.remove_file_from_library(db, file_id, &url);
+                            workspace_structure_changed = true;
+                        }
                     }
                 }
-                VfsEvent::Deleted { .. } => {
-                    db.remove_file(file_id);
-                }
             }
+        }
+
+        if workspace_structure_changed {
+            tracing::info!("Workspace structure changed, modules/libraries updated.");
         }
     }
 

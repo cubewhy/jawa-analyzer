@@ -1,0 +1,16 @@
+[package]
+name = "index"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+dashmap.workspace = true
+vfs.workspace = true
+serde.workspace = true
+smol_str.workspace = true
+triomphe.workspace = true
+lru.workspace = true
+parking_lot.workspace = true
+postcard = { workspace = true, features = ["alloc"] }
+lasso = { version = "0.7", features = ["multi-threaded", "serialize"] }
