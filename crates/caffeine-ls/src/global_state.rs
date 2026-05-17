@@ -2,6 +2,7 @@ use crate::config::ConfigErrors;
 use crate::handlers;
 use crate::handlers::dispatch::{NotificationDispatcher, RequestDispatcher};
 use lsp_types::notification::Notification as _;
+use project_model::WorkspaceGraph;
 use std::{sync::Arc, time::Instant};
 use syntax::LanguageId;
 use vfs::loader::NotifyHandle;
@@ -18,7 +19,7 @@ use vfs::{Vfs, VfsEvent};
 use crate::config::Config;
 
 pub enum BackgroundTaskEvent {
-    // WorkspaceLoaded(anyhow::Result<WorkspaceGraph>),
+    WorkspaceLoaded(anyhow::Result<WorkspaceGraph>),
     Progress(ProgressEvent),
     VfsLoaded,
     AsyncRequestCompleted {
@@ -197,7 +198,18 @@ impl GlobalState {
 
     pub(crate) fn handle_background_task(&mut self, event: BackgroundTaskEvent) {
         match event {
-            // BackgroundTaskEvent::WorkspaceLoaded(result) => {}
+            BackgroundTaskEvent::WorkspaceLoaded(result) => match result {
+                Ok(graph) => {
+                    tracing::info!("Workspace graph loaded successfully");
+                    self.analysis_host.set_workspace_graph(graph);
+
+                    self.trigger_full_reparse();
+                }
+                Err(e) => {
+                    tracing::error!("Failed to load workspace: {}", e);
+                    self.show_message(MessageType::ERROR, format!("Build sync failed: {e}"));
+                }
+            },
             BackgroundTaskEvent::Progress(progress) => {
                 self.report_progress(progress);
             }
