@@ -181,9 +181,13 @@ pub fn build_graph_from_json(workspace: GradleWorkspace) -> WorkspaceGraph {
             .chain(project.test_classpath.iter());
         for jar in all_jars {
             if jar.extension().is_some_and(|ext| ext == "jar") {
-                jar_to_library_id
+                let lib_id = jar_to_library_id
                     .entry(jar.clone())
-                    .or_insert_with(|| LibraryId::from_jar_path(jar));
+                    .or_insert_with(|| LibraryId::from_jar_path(jar).expect("unreachable"));
+
+                if let Ok(abs_jar_path) = AbsPathBuf::try_from(jar.clone()) {
+                    graph.library_paths.insert(*lib_id, abs_jar_path);
+                }
             }
         }
     }
@@ -205,7 +209,7 @@ pub fn build_graph_from_json(workspace: GradleWorkspace) -> WorkspaceGraph {
 
         // Map External Compile Classpath JARs
         for jar in &project.compile_classpath {
-            if let Some(Ok(lib_id)) = jar_to_library_id.get(jar) {
+            if let Some(lib_id) = jar_to_library_id.get(jar) {
                 dependencies.push(Dependency {
                     kind: DependencyKind::External(*lib_id),
                     scope: DependencyScope::Compile,
@@ -215,7 +219,7 @@ pub fn build_graph_from_json(workspace: GradleWorkspace) -> WorkspaceGraph {
 
         // Map External Test Classpath JARs (Only if they aren't already in Compile)
         for jar in &project.test_classpath {
-            if let Some(Ok(lib_id)) = jar_to_library_id.get(jar) {
+            if let Some(lib_id) = jar_to_library_id.get(jar) {
                 let already_in_compile = dependencies.iter().any(|d| {
                     matches!(d.kind, DependencyKind::External(id) if id == *lib_id)
                         && d.scope == DependencyScope::Compile

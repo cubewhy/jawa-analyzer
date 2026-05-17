@@ -55,6 +55,8 @@ pub struct WorkspaceGraph {
 
     /// Maps a directory root (e.g., /path/to/src/main/java) to its ProjectId.
     pub root_to_project: FxHashMap<AbsPathBuf, ProjectId>,
+
+    pub library_paths: FxHashMap<LibraryId, AbsPathBuf>,
 }
 
 impl WorkspaceGraph {
@@ -62,10 +64,10 @@ impl WorkspaceGraph {
     pub fn resolve_project_for_path(&self, file_path: &AbsPathBuf) -> Option<Arc<ProjectData>> {
         // Walk up the directory tree: file -> parent -> grandparent -> etc.
         for ancestor in file_path.ancestors() {
-            if let Ok(abs_ancestor) = AbsPathBuf::try_from(ancestor.to_path_buf()) {
-                if let Some(&project_id) = self.root_to_project.get(&abs_ancestor) {
-                    return self.projects.get(&project_id).cloned();
-                }
+            if let Ok(abs_ancestor) = AbsPathBuf::try_from(ancestor.to_path_buf())
+                && let Some(&project_id) = self.root_to_project.get(&abs_ancestor)
+            {
+                return self.projects.get(&project_id).cloned();
             }
         }
         None
