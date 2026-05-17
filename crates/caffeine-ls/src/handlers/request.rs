@@ -13,15 +13,19 @@ pub fn on_diagnostic(
 
     let vfs_path = VfsPath::from(&params.text_document.uri);
 
-    let file_id = {
+    let (file_id, text) = {
         let vfs = state.vfs.read();
         let Some(id) = vfs.file_id(&vfs_path) else {
-            anyhow::bail!("Internal error");
+            anyhow::bail!("failed to get file id from vfs path: {vfs_path:?}");
         };
-        id
+        let Ok(content) = vfs.fetch_content(id) else {
+            anyhow::bail!("failed to get file content");
+        };
+        let text = String::from_utf8_lossy(&content).to_string();
+        (id, text)
     };
 
-    let diagnostics = diagnostics::collect_diagnostics(state.analysis.raw_database(), file_id)?;
+    let diagnostics = diagnostics::collect_diagnostics(state.analysis, file_id, text)?;
 
     Ok(DocumentDiagnosticReportResult::Report(
         DocumentDiagnosticReport::Full(RelatedFullDocumentDiagnosticReport {

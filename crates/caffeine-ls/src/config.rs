@@ -1,5 +1,6 @@
-use std::fmt;
+use std::{fmt, path::PathBuf};
 
+use directories::ProjectDirs;
 use lsp_types::{ClientCapabilities, ClientInfo};
 use vfs::AbsPathBuf;
 
@@ -24,6 +25,23 @@ impl Config {
             client_info,
             client_config,
         }
+    }
+
+    pub fn get_cache_dir(&self) -> PathBuf {
+        self.client_config
+            .clone()
+            .map(|c| c.cache_dir)
+            .unwrap_or_else(|| {
+                if let Some(proj_dirs) = ProjectDirs::from("org", "cubewhy", "caffeine_ls") {
+                    // Linux: ~/.cache/caffeine_ls/
+                    // macOS: ~/Library/Caches/org.cubewhy.caffeine_ls/
+                    // Win: C:\Users\Alice\AppData\Local\cubewhy\caffeine_ls
+                    proj_dirs.cache_dir().to_path_buf()
+                } else {
+                    // Fallback if no home directory is found (rare, but happens in CI/Docker)
+                    std::env::temp_dir().join("caffeine_ls")
+                }
+            })
     }
 
     pub fn apply_change(mut self, change: ConfigChange) -> (Self, ConfigErrors, bool) {
@@ -73,7 +91,10 @@ fn merge(a: &mut serde_json::Value, b: &serde_json::Value) {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
-pub struct ClientConfig {}
+#[serde(default)]
+pub struct ClientConfig {
+    pub cache_dir: PathBuf,
+}
 
 #[derive(Debug, Default)]
 pub struct ConfigChange {

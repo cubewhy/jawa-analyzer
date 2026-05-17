@@ -1,0 +1,16 @@
+[package]
+name = "syntax"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+rowan.workspace = true
+lasso.workspace = true
+serde.workspace = true
+rust-asm.workspace = true
+anyhow.workspace = true
+smol_str.workspace = true
+
+java-syntax.workspace = true
+kotlin-syntax.workspace = true

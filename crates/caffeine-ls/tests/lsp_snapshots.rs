@@ -94,6 +94,7 @@ fn create_lsp() -> LspHarness {
         let mut config = Config::new(capabilities, workspace_roots, client_info, None);
         if let Some(json) = initialization_options {
             let mut change = ConfigChange::default();
+
             change.change_client_config(json);
 
             let error_sink: ConfigErrors;

@@ -3,17 +3,17 @@ use crate::handlers;
 use crate::handlers::dispatch::{NotificationDispatcher, RequestDispatcher};
 use lsp_types::notification::Notification as _;
 use std::{sync::Arc, time::Instant};
+use syntax::LanguageId;
 use vfs::loader::NotifyHandle;
 use vfs::virtual_path::{JarHandler, JimageHandler};
 
-use base_db::{LanguageId, SourceDatabase};
 use crossbeam_channel::{Receiver, Sender, unbounded};
-use ide::{Analysis, AnalysisHost};
+use ide::{Analysis, AnalysisHost, ParsedFile};
 use lsp_server::{ErrorCode, Notification, Request, Response};
 use lsp_types::*;
 use parking_lot::RwLock;
 
-use vfs::{Vfs, VfsEvent, VfsPath};
+use vfs::{Vfs, VfsEvent};
 
 use crate::config::Config;
 
@@ -87,6 +87,8 @@ impl GlobalState {
             Handle { handle, receiver }
         };
 
+        let cache_dir = config.get_cache_dir();
+
         Self {
             sender,
             req_queue: ReqQueue::default(),
@@ -98,7 +100,7 @@ impl GlobalState {
             config: Arc::new(config),
             config_errors: None,
 
-            analysis_host: AnalysisHost::default(),
+            analysis_host: AnalysisHost::new(&cache_dir),
 
             shutdown_requested: false,
 
@@ -330,74 +332,79 @@ impl GlobalState {
             return;
         }
 
-        let db = self.analysis_host.raw_database_mut();
-        let mut workspace_structure_changed = false;
+        let mut tasks_to_spawn = Vec::new();
 
         for event in events {
-            let file_id = match &event {
-                VfsEvent::Created { id, .. } => *id,
-                VfsEvent::Modified { id } => *id,
-                VfsEvent::Deleted { id } => *id,
-            };
-
-            let Some(vfs_path) = vfs.file_path(file_id) else {
-                tracing::error!(?file_id, "failed to get file uri");
-                continue;
-            };
-
-            // 获取扩展名对应的 LanguageId（.java, .class 等）
-            let Some(language_id) = vfs_path.extension().map(LanguageId::from_extension) else {
-                continue;
-            };
-
-            match vfs_path {
-                VfsPath::Physical(path) => match event {
-                    VfsEvent::Modified { .. } => {
-                        if let Some(arc_text) = fetch_vfs_text(&vfs, file_id, &vfs_path) {
-                            db.set_file(file_id, arc_text, language_id);
-                        }
-                    }
-                    VfsEvent::Created { .. } => {
-                        if let Some(arc_text) = fetch_vfs_text(&vfs, file_id, &vfs_path) {
-                            db.set_file(file_id, arc_text, language_id);
-
-                            self.add_file_to_module(db, file_id, &path);
-                            workspace_structure_changed = true;
-                        }
-                    }
-                    VfsEvent::Deleted { .. } => {
-                        db.remove_file(file_id);
-
-                        self.remove_file_from_module(db, file_id, &path);
-                        workspace_structure_changed = true;
-                    }
-                },
-
-                VfsPath::Virtual(url) => {
-                    match event {
-                        VfsEvent::Created { .. } | VfsEvent::Modified { .. } => {
-                            if let Ok(bytes) = vfs.fetch_content(file_id) {
-                                // db.set_file_bytes(file_id, bytes.to_vec(), language_id);
-
-                                if matches!(event, VfsEvent::Created { .. }) {
-                                    self.add_file_to_library(db, file_id, &url);
-                                    workspace_structure_changed = true;
-                                }
-                            }
-                        }
-                        VfsEvent::Deleted { .. } => {
-                            db.remove_file(file_id);
-                            self.remove_file_from_library(db, file_id, &url);
-                            workspace_structure_changed = true;
-                        }
-                    }
+            match event {
+                VfsEvent::Created { id, .. } | VfsEvent::Modified { id } => {
+                    let new_rev = self.analysis_host.parse_cache.bump_revision(id);
+                    tasks_to_spawn.push((id, new_rev));
                 }
-            }
+                VfsEvent::Deleted { id } => {
+                    self.analysis_host.remove_file(id);
+                }
+            };
         }
 
-        if workspace_structure_changed {
-            tracing::info!("Workspace structure changed, modules/libraries updated.");
+        if !tasks_to_spawn.is_empty() {
+            self.spawn_parsing_task(tasks_to_spawn);
         }
+    }
+
+    fn spawn_parsing_task(&self, tasks: Vec<(vfs::FileId, u64)>) {
+        let vfs = Arc::clone(&self.vfs);
+        let task_sender = self.task_sender.clone();
+        let analysis = self.analysis_host.snapshot();
+
+        self.thread_pool.execute(move || {
+            let graph = analysis.workspace_graph;
+            let parse_cache = analysis.parse_cache;
+            for (file_id, task_revision) in tasks {
+                if parse_cache.is_cancelled(file_id, task_revision) {
+                    continue;
+                }
+
+                let (text, file_path) = {
+                    let vfs_read = vfs.read();
+                    let Some(file_path) = vfs_read.file_path(file_id).cloned() else {
+                        tracing::error!("Failed to get vfs path for file {file_id:?}");
+                        continue;
+                    };
+                    match vfs_read.fetch_content(file_id) {
+                        Ok(bytes) => (String::from_utf8_lossy(&bytes).to_string(), file_path),
+                        Err(_err) => continue,
+                    }
+                };
+
+                let Some(project) = graph.resolve_project(file_id) else {
+                    tracing::error!("Failed to resolve project for file {file_path:?}");
+                    continue;
+                };
+
+                let Some(lang) = file_path.extension().and_then(LanguageId::from_ext) else {
+                    continue;
+                };
+
+                let parse_result =
+                    syntax::parse_file(lang, &text, analysis.symbol_index.get_interner());
+
+                if parse_cache.is_cancelled(file_id, task_revision) {
+                    continue;
+                }
+
+                parse_cache.update(
+                    file_id,
+                    ParsedFile::new(parse_result.tree, parse_result.errors),
+                );
+                analysis.symbol_index.update_workspace_file(
+                    project.library_id,
+                    file_id,
+                    parse_result.stubs,
+                );
+            }
+
+            let _ = task_sender.send(BackgroundTaskEvent::VfsLoaded);
+        });
     }
 
     pub fn reply_internal_error(&self, id: lsp_server::RequestId) {
@@ -414,7 +421,7 @@ impl GlobalState {
     pub fn snapshot(&self) -> GlobalStateSnapshot {
         GlobalStateSnapshot {
             config: Arc::clone(&self.config),
-            analysis: self.analysis_host.analysis(),
+            analysis: self.analysis_host.snapshot(),
             vfs: Arc::clone(&self.vfs),
         }
     }

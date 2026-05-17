@@ -1,5 +1,5 @@
 [package]
-name = "ide"
+name = "semantics"
 version = "0.0.0"
 edition = "2024"
 publish = false
@@ -7,9 +7,6 @@ publish = false
 [dependencies]
 index.workspace = true
 syntax.workspace = true
-semantics.workspace = true
-parking_lot.workspace = true
-dashmap.workspace = true
-rowan.workspace = true
 project-model.workspace = true
-vfs.workspace = true
+
+triomphe.workspace = true

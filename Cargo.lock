@@ -208,8 +208,10 @@ dependencies = [
  "cfg-if",
  "clap",
  "crossbeam-channel",
+ "directories",
  "hir",
  "ide",
+ "index",
  "insta",
  "itertools",
  "jimage-rs",
@@ -219,6 +221,7 @@ dependencies = [
  "mimalloc",
  "num_cpus",
  "parking_lot",
+ "project-model",
  "ra_ap_line-index",
  "rayon",
  "rowan",
@@ -226,6 +229,7 @@ dependencies = [
  "serde",
  "serde_json",
  "smol_str",
+ "syntax",
  "threadpool",
  "tikv-jemallocator",
  "tracing",
@@ -553,6 +557,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "directories"
+version = "6.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "16f5094c54661b38d03bd7e50df373292118db60b585c08a411c6d840017fe7d"
+dependencies = [
+ "dirs-sys",
+]
+
+[[package]]
+name = "dirs-sys"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e01a3366d27ee9890022452ee61b2b63a67e6f13f58900b651ff5665f0bb1fab"
+dependencies = [
+ "libc",
+ "option-ext",
+ "redox_users",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "displaydoc"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -694,6 +719,17 @@ checksum = "85649ca51fd72272d7821adaf274ad91c288277713d9c18820d8499a7ff69e9a"
 dependencies = [
  "typenum",
  "version_check",
+]
+
+[[package]]
+name = "getrandom"
+version = "0.2.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ff2abc00be7fca6ebc474524697ae276ad847ad0a6b3faa4bcb027e9a4614ad0"
+dependencies = [
+ "cfg-if",
+ "libc",
+ "wasi",
 ]
 
 [[package]]
@@ -914,7 +950,14 @@ checksum = "3d3067d79b975e8844ca9eb072e16b31c3c1c36928edf9c6789548c524d0d954"
 name = "ide"
 version = "0.0.0"
 dependencies = [
- "hir",
+ "dashmap",
+ "index",
+ "parking_lot",
+ "project-model",
+ "rowan",
+ "semantics",
+ "syntax",
+ "vfs",
 ]
 
 [[package]]
@@ -949,6 +992,7 @@ dependencies = [
  "postcard",
  "serde",
  "smol_str",
+ "syntax",
  "triomphe",
  "vfs",
 ]
@@ -1174,6 +1218,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2d1eacfa31c33ec25e873c136ba5669f00f9866d0688bea7be4d3f7e43067df6"
 dependencies = [
  "cc",
+]
+
+[[package]]
+name = "libredox"
+version = "0.1.16"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e02f3bb43d335493c96bf3fd3a321600bf6bd07ed34bc64118e9293bdffea46c"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
@@ -1425,6 +1478,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
 
 [[package]]
+name = "option-ext"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
+
+[[package]]
 name = "parking_lot"
 version = "0.12.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1557,6 +1616,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "project-model"
+version = "0.0.0"
+dependencies = [
+ "index",
+ "rustc-hash 2.1.2",
+ "smol_str",
+ "triomphe",
+ "vfs",
+]
+
+[[package]]
 name = "psm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1624,6 +1694,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
  "bitflags 2.11.1",
+]
+
+[[package]]
+name = "redox_users"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4e608c6638b9c18977b00b475ac1f28d14e84b27d8d42f70e0bf1e3dec127ac"
+dependencies = [
+ "getrandom 0.2.17",
+ "libredox",
+ "thiserror",
 ]
 
 [[package]]
@@ -1716,6 +1797,16 @@ name = "scopeguard"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
+
+[[package]]
+name = "semantics"
+version = "0.0.0"
+dependencies = [
+ "index",
+ "project-model",
+ "syntax",
+ "triomphe",
+]
 
 [[package]]
 name = "semver"
@@ -1945,6 +2036,20 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "syntax"
+version = "0.0.0"
+dependencies = [
+ "anyhow",
+ "java-syntax",
+ "kotlin-syntax",
+ "lasso",
+ "rowan",
+ "rust-asm",
+ "serde",
+ "smol_str",
 ]
 
 [[package]]

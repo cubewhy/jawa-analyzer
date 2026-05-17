@@ -1,6 +1,5 @@
 use std::process;
 
-use base_db::SourceDatabase;
 use line_index::{LineIndex, WideEncoding, WideLineCol};
 use lsp_types::*;
 use vfs::VfsPath;
@@ -16,7 +15,6 @@ pub fn on_exit(state: &mut GlobalState, _: ()) -> anyhow::Result<()> {
 }
 
 pub fn on_cancel(state: &mut GlobalState, params: CancelParams) -> anyhow::Result<()> {
-    state.analysis_host.trigger_cancellation();
     let id: lsp_server::RequestId = match params.id {
         lsp_types::NumberOrString::Number(n) => n.into(),
         lsp_types::NumberOrString::String(s) => s.into(),
@@ -50,19 +48,17 @@ pub fn on_did_change(
 
     let path = VfsPath::from(&params.text_document.uri);
 
-    let file_id = {
+    let mut text = {
         let vfs = state.vfs.read();
         let Some(file_id) = vfs.file_id(&path) else {
             anyhow::bail!("Internal error");
         };
-        file_id
-    };
 
-    // Fetch current text directly from Salsa DB
-    let mut text = {
-        let db = state.analysis_host.raw_database();
-        let file_text = db.file_text(file_id);
-        file_text.text(db).to_string()
+        let content = match vfs.fetch_content(file_id) {
+            Ok(content) => content,
+            Err(err) => anyhow::bail!("Failed to get file content: {err:#}"),
+        };
+        String::from_utf8_lossy(&content).to_string()
     };
 
     // Apply edits

@@ -1,26 +1,24 @@
-use base_db::SourceDatabase;
-use ide_db::RootDatabase;
+use ide::Analysis;
 use lsp_types::{Diagnostic, DiagnosticSeverity, Range};
 
 use crate::from_proto::offset_to_position;
 
 pub fn collect_diagnostics(
-    db: &RootDatabase,
+    analysis: Analysis,
     file_id: vfs::FileId,
+    text: String,
 ) -> anyhow::Result<Vec<Diagnostic>> {
-    let Some(parse_result) = db.parse_node(file_id) else {
-        anyhow::bail!("Failed to parse node");
+    let Some(parse_result) = analysis.parse_cache.get_tree(file_id) else {
+        anyhow::bail!("file is not parsed yet");
     };
 
-    let text = db.file_text(file_id).text(db);
-
     let diagnostics = parse_result
-        .errors(db)
-        .into_iter()
+        .syntax_errors
+        .iter()
         .map(|err| {
             let lsp_range = Range {
-                start: offset_to_position(text, err.range.start()),
-                end: offset_to_position(text, err.range.end()),
+                start: offset_to_position(&text, err.range.start()),
+                end: offset_to_position(&text, err.range.end()),
             };
 
             Diagnostic {

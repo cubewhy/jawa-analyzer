@@ -5,6 +5,8 @@ edition = "2024"
 publish = false
 
 [dependencies]
+syntax.workspace = true
+
 dashmap.workspace = true
 vfs.workspace = true
 serde.workspace = true
@@ -13,4 +15,4 @@ triomphe.workspace = true
 lru.workspace = true
 parking_lot.workspace = true
 postcard = { workspace = true, features = ["alloc"] }
-lasso = { version = "0.7", features = ["multi-threaded", "serialize"] }
+lasso.workspace = true

@@ -1,21 +1,24 @@
 use std::iter::Peekable;
 
+use lasso::ThreadedRodeo;
 use rust_asm::{
     class_reader::AttributeInfo,
     constant_pool::{ConstantPoolExt, CpInfo},
 };
 use smol_str::SmolStr;
 
-use crate::stub::{PrimitiveType, TypeParameter, TypeRef};
+use crate::ast::{PrimitiveType, TypeParameter, TypeRef};
 
 pub struct SigParser<'a> {
     chars: Peekable<std::str::Chars<'a>>,
+    interner: &'a ThreadedRodeo,
 }
 
 impl<'a> SigParser<'a> {
-    pub fn new(sig: &'a str) -> Self {
+    pub fn new(sig: &'a str, interner: &'a ThreadedRodeo) -> Self {
         Self {
             chars: sig.chars().peekable(),
+            interner,
         }
     }
 
@@ -54,7 +57,7 @@ impl<'a> SigParser<'a> {
                     bounds.push(self.parse_reference_type_signature());
                 }
                 params.push(TypeParameter {
-                    name: SmolStr::new(name),
+                    name: self.interner.get_or_intern(name),
                     bounds,
                     annotations: Vec::new(),
                 });
@@ -120,7 +123,7 @@ impl<'a> SigParser<'a> {
                     name.push(self.consume().unwrap());
                 }
                 TypeRef::Reference {
-                    name: SmolStr::new(name),
+                    name: self.interner.get_or_intern(name),
                     generic_args: Vec::new(),
                 }
             }
@@ -146,7 +149,7 @@ impl<'a> SigParser<'a> {
                     }
                 }
                 TypeRef::Reference {
-                    name: SmolStr::new(name.replace("/", ".")),
+                    name: self.interner.get_or_intern(name.replace("/", ".")),
                     generic_args,
                 }
             }
@@ -163,7 +166,7 @@ impl<'a> SigParser<'a> {
             Some('*') => {
                 self.consume();
                 TypeRef::Reference {
-                    name: SmolStr::new("?"),
+                    name: self.interner.get_or_intern_static("?"),
                     generic_args: Vec::new(),
                 }
             }
