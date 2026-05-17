@@ -24,7 +24,7 @@ If you want to inspect a tree:
 cargo xtask parse path/to/file.java
 ```
 
-If you want to inspect a tree in a folder:
+If you want to inspect trees in a folder:
 
 ```sh
 cargo xtask batch-parse path/to/folder -o output/
